@@ -1,0 +1,17 @@
+# Reproducibility constraints for the supported Windows installation path.
+# Transitive pure-Python dependencies remain resolver-managed; native and
+# compatibility-sensitive packages are pinned to the verified combination.
+numpy==1.26.4
+torch==2.11.0
+torchaudio==2.11.0
+funasr==1.4.2
+modelscope==1.39.1
+transformers==5.15.0
+PySide6==6.11.1
+PySide6-Addons==6.11.1
+PySide6-Essentials==6.11.1
+shiboken6==6.11.1
+bleak==3.0.2
+asr-decoder==0.1.2
+online-fbank==0.0.4
+pyopenjtalk-plus==0.4.1.post9

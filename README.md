@@ -4,7 +4,7 @@ Proximic Voice 是面向 Ringo 可穿戴设备的近场实时语音输入工具�
 两阶段模型判断用户是否靠近说话，把音频实时发送给可替换的 ASR 后端，并可将最终
 文本注入 Windows 中当前获得焦点的输入框。
 
-当前版本适合课程演示、算法验证和后续产品化开发。
+当前版本提供可直接运行的 Windows 桌面体验，并支持算法验证与后续产品化扩展。
 
 ## 功能
 
@@ -20,10 +20,10 @@ Proximic Voice 是面向 Ringo 可穿戴设备的近场实时语音输入工具�
 ## 系统要求
 
 - Windows 10/11。
-- Python 3.11（64 位）。
+- 64 位 Windows PowerShell；不要求预先安装 Python、Conda 或 Anaconda。
 - 支持蓝牙的电脑和 Ringo 设备。
-- 首次下载 ASR 模型时需要联网。
-- CPU 可以完成首次验证；有兼容 CUDA 环境时可在 UI 中改为 `cuda:0`。
+- 首次安装依赖和首次下载 ASR 模型时需要联网。
+- 标准安装使用经过验证的 CPU 版 PyTorch，UI 中的 ASR 设备保持为 `cpu`。CUDA 属于开发者可选配置，不在标准安装保证范围内。
 
 Fun-ASR-Nano 的模型权重约 2 GB，不包含在 Git 仓库中。第一次使用该后端时会由
 模型库下载到本机缓存。
@@ -36,16 +36,30 @@ cd ProximicVoice
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
+安装脚本会从 `python.org` 下载并校验固定的 64 位 CPython 3.11.9，解压到项目的
+`.runtime/`，再使用它创建项目专用的 `.runtime/venv/`。脚本不会调用电脑中已有的 Python、
+Conda 或 Anaconda。关键原生依赖版本由 `requirements-windows.lock` 固定，安装结束前
+还会实际导入 PyTorch、PySide6 和 UI；只有自检通过才会显示安装完成。
+
 安装完成后启动：
 
 ```powershell
 .\scripts\start-ui.cmd
 ```
 
-也可以在已激活的环境中直接运行：
+安装损坏或需要彻底重建时：
 
 ```powershell
-python -m proximic_ring.ui
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Recreate
+```
+
+`.runtime/`、`.cache/` 都位于项目目录且不会提交到 Git。项目放在哪个盘，
+运行时、依赖和模型缓存就位于哪个盘。
+
+在 VSCode 中开发时，通过 `Python: Select Interpreter` 选择：
+
+```text
+<项目目录>\.runtime\venv\Scripts\python.exe
 ```
 
 ## 界面使用
@@ -75,18 +89,19 @@ third_party/streaming-sensevoice
 third_party/Fun-ASR
 ```
 
-UI 会自动使用这两个目录，不需要老师另行克隆。第三方模型权重不会提交到本仓库，来源和许可证说明见
+UI 会自动使用这两个目录，用户无需另行克隆。第三方模型权重不会提交到本仓库，来源和许可证说明见
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
 
 ## 手动安装
 
-如果不使用脚本：
+正式 Windows 安装请使用 `scripts/setup.ps1`。下面的方式只供开发者在已经自行维护的
+兼容环境中调试，不属于标准用户安装路径：
 
 ```powershell
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -e ".[ring,asr-streaming-sensevoice,asr-funasr-nano,ui]"
+python -m pip install -c requirements-windows.lock -e ".[ring,asr-streaming-sensevoice,asr-funasr-nano,ui]"
 python -m proximic_ring.ui
 ```
 
@@ -123,7 +138,7 @@ experiments/             可复现实验脚本和结果图
 - 不要提交录音、API Key、`.env` 或带有个人信息的日志。
 - 当前仓库尚未为第一方代码选择公开许可证；公开发布前请由项目所有者确定许可证。
 - `src/ring_python_sdk/` 的再分发权限需要由设备/SDK 提供方确认。未确认前建议使用
-  GitHub Private 仓库进行课程评审。
+  GitHub Private 仓库，避免公开分发。
 
 更详细的使用说明见 [`docs/CUSTOMER_UI.md`](docs/CUSTOMER_UI.md) 和
 [`docs/ASR_BACKENDS.md`](docs/ASR_BACKENDS.md)。

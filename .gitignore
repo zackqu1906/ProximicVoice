@@ -1,6 +1,8 @@
 # Python environments and caches
 .venv/
 venv/
+.runtime/
+.cache/
 __pycache__/
 .pytest_cache/
 *.py[cod]
