@@ -246,14 +246,38 @@ ApplicationWindow {
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        clip: true
                         TextArea {
+                            id: editorArea
                             text: appController.editorText
-                            placeholderText: "最终识别结果会累积在这里，可选择、复制和直接编辑。"
                             selectByMouse: true
                             color: root.textMain
                             font.pixelSize: 15
                             wrapMode: TextEdit.Wrap
-                            background: Rectangle { color: root.panelAlt; radius: 10; border.color: root.border }
+                            leftPadding: 16
+                            rightPadding: 16
+                            topPadding: 14
+                            bottomPadding: 14
+                            background: Rectangle {
+                                color: root.panelAlt
+                                radius: 10
+                                border.color: root.border
+
+                                Label {
+                                    anchors.left: parent.left
+                                    anchors.right: parent.right
+                                    anchors.top: parent.top
+                                    anchors.leftMargin: editorArea.leftPadding
+                                    anchors.rightMargin: editorArea.rightPadding
+                                    anchors.topMargin: editorArea.topPadding
+                                    text: "最终识别结果会累积在这里，可选择、复制和直接编辑。"
+                                    color: root.textMuted
+                                    opacity: 0.65
+                                    font: editorArea.font
+                                    wrapMode: Text.Wrap
+                                    visible: editorArea.text.length === 0
+                                }
+                            }
                             onTextChanged: {
                                 if (activeFocus && text !== appController.editorText)
                                     appController.editorText = text

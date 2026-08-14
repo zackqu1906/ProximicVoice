@@ -214,24 +214,30 @@ class AppController(QObject):
     @asrBackend.setter
     def asrBackend(self, value: str) -> None:
         value = str(value)
-        if value == self._asr_backend:
-            return
         known_defaults = {
             "",
             "iic/SenseVoiceSmall",
             "seedasr-streaming",
             "FunAudioLLM/Fun-ASR-Nano-2512",
         }
-        self._asr_backend = value
-        self._settings.setValue("asr/backend", value)
+        backend_changed = value != self._asr_backend
+        model_changed = False
         if self._asr_model in known_defaults:
-            self._asr_model = {
+            model = {
                 "streaming_sensevoice": "iic/SenseVoiceSmall",
                 "volcengine": "seedasr-streaming",
                 # Empty lets the backend prefer
                 # repo/pretrained_models/Fun-ASR-Nano-2512.
                 "funasr_nano": "",
             }.get(value, self._asr_model)
+            model_changed = model != self._asr_model
+            self._asr_model = model
+
+        if not backend_changed and not model_changed:
+            return
+        self._asr_backend = value
+        self._settings.setValue("asr/backend", value)
+        if model_changed:
             self._settings.setValue("asr/model", self._asr_model)
         self.settingsChanged.emit()
 

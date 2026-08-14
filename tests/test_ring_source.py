@@ -9,7 +9,9 @@ def test_ring_pcm_callback_becomes_float32_audio():
     source = RingAudioSource(queue_blocks=4)
     pcm = struct.pack("<4h", 0, 16384, -16384, 32767)
 
+    assert source._ready.is_set() is False
     source._on_pcm(7, pcm)
+    assert source._ready.is_set() is True
     out = source.read(4)
 
     assert out is not None
@@ -21,6 +23,16 @@ def test_ring_pcm_callback_becomes_float32_audio():
     )
     assert source.pcm_callbacks == 1
     assert source.samples_received == 4
+
+
+def test_empty_pcm_callback_does_not_mark_ring_ready():
+    source = RingAudioSource(queue_blocks=4)
+
+    source._on_pcm(7, b"")
+
+    assert source._ready.is_set() is False
+    assert source.pcm_callbacks == 0
+    assert source.samples_received == 0
 
 
 def test_ring_source_can_rechunk_sdk_callbacks():

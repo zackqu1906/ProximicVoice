@@ -71,6 +71,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Recreate
 5. 需要释放硬件时单独点击“断开设备”。
 6. 关闭主窗口会退出程序；终端中的 `Ctrl+C` 也会触发退出。
 
+### 容易混淆的运行状态
+
+| UI 状态 | Ring 音频连接 | ProxiMic 近场检测 | ASR 语音识别 |
+| --- | --- | --- | --- |
+| 设备已连接，识别暂停 | 保持 | 不运行 | 不运行 |
+| 自动监听中 | 保持 | 持续运行 Stage1 + Stage2 | 仅在 Stage2 判定为近场语音后启动 |
+| 按住 `Ctrl+Alt+Space` | 保持 | 仍运行 | 在“语音识别已开启”时强制开始或保持当前会话 |
+| 设备已断开 | 关闭 | 不运行 | 不运行 |
+
+- “开启语音识别”实际是开启 **ProxiMic 自动监听**，并不是把全部声音持续交给 ASR。
+- “暂停语音识别”会同时暂停 ProxiMic 和 ASR，但不会断开 Ring；恢复时不需要重新连接设备。
+- ASR 模型会在连接阶段加载到内存，因此暂停状态下也可能已经占用内存，但不会处理音频。
+- SDK 日志中的 `Connected successfully` 只代表 BLE 层建链；`mic capturing -> ...` 只代表已经发送 MIC ON 并创建录音文件。UI 会在收到有效 PCM 音频后才显示设备已连接。
+
 发布版近场模型位于：
 
 ```text
@@ -91,6 +105,22 @@ third_party/Fun-ASR
 
 UI 会自动使用这两个目录，用户无需另行克隆。第三方模型权重不会提交到本仓库，来源和许可证说明见
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)。
+
+### 源码、依赖和模型不是同一份东西
+
+| 位置 | 内容 | 是否提交到 Git |
+| --- | --- | --- |
+| `third_party/` | 已验证的第三方 ASR 源码快照 | 是 |
+| `.runtime/venv/` | PyTorch、PySide6、FunASR 等可执行 Python 依赖 | 否 |
+| `.cache/modelscope/` | SenseVoice、Fun-ASR-Nano 等模型权重 | 否 |
+
+`third_party/` 中有模型实现源码，不等于已经安装运行依赖，也不包含数 GB 的模型权重。
+三者用途不同，并不是重复安装。
+
+ASR 模型第一次使用时需要下载；以后启动时仍要从硬盘加载到内存，这一步可能需要几十秒，
+但不等于重新下载。日志出现 `Downloading N files` 也可能只是模型库检查缓存；如果随后显示
+`Loading pretrained params from ...\.cache\modelscope\...\model.pt`，使用的是本地权重。
+下载中断产生的 `.incomplete` 文件会在下次运行时继续下载。
 
 ## 手动安装
 

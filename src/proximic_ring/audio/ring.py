@@ -177,6 +177,13 @@ class RingAudioSource(AudioSource):
             self._signal_error(exc)
             return
 
+        # A successful BLE connection and MIC ON acknowledgement do not prove
+        # that the Ring audio path is usable.  Some firmware/SDK failures leave
+        # Bleak reporting ``is_connected`` while no microphone samples arrive.
+        # Only a real, non-empty PCM block may mark this source as ready.
+        if block.size == 0:
+            return
+
         self.pcm_callbacks += 1
         self.samples_received += int(block.size)
         self._last_pcm_monotonic = time.monotonic()
@@ -188,6 +195,11 @@ class RingAudioSource(AudioSource):
                     "Ringo PCM queue overflow: inference is not consuming audio fast enough"
                 )
             )
+            return
+
+        # RingAudioSource.open() and therefore the UI's "connected" state are
+        # released only after the first usable audio frame reaches the pipeline.
+        self._ready.set()
 
     def _signal_error(self, exc: BaseException) -> None:
         if self._error is None:
@@ -463,7 +475,6 @@ class RingAudioSource(AudioSource):
                 raise RuntimeError(f"Ringo microphone did not start.{hint}")
 
             self.capture_path = Path(session.mic.output_path)
-            self._ready.set()
 
             # Start the stall timer from MIC ON.  If the Ring never sends the
             # first callback, that is treated exactly like a stream stall.
