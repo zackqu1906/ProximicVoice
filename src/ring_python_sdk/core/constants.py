@@ -1,0 +1,371 @@
+DEFAULT_NAME_KEYWORD = "Ringo"
+DEFAULT_TIMEOUT_S = 4.0
+DEFAULT_OUTPUT = "ring_audio.wav"
+DEFAULT_IMU_OUTPUT = "ring_imu.csv"
+DEFAULT_COMBO_AUDIO_OUTPUT = "ring_combo.wav"
+DEFAULT_COMBO_IMU_OUTPUT = "ring_combo_imu.csv"
+DEFAULT_MIC_BLOCK_RATE_HZ = 10.0
+DEFAULT_SAMPLE_RATE = 16000
+DEFAULT_SAMPLE_WIDTH_BYTES = 2
+DEFAULT_CHANNELS = 1
+
+NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+NUS_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # write to ring
+NUS_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # notify from ring
+
+CMD_MIC = 0x20
+SUBCMD_MIC_START = 0x00
+SUBCMD_MIC_STOP = 0x01
+SUBCMD_MIC_PACKET = 0x02
+SUBCMD_MIC_PACKET_ADPCM = 0x03
+SUBCMD_MIC_PACKET_OPUS = 0x04
+MIC_HEADER_SIZE = 12  # cmd+subcmd+seq+frag_idx+frag_count+uptime_ms
+MIC_START_PACKET_LEN = 3
+
+MIC_ENCODE_PCM = 0
+MIC_ENCODE_ADPCM = 1
+MIC_ENCODE_OPUS = 2
+
+CMD_IMU = 0x21
+SUBCMD_IMU_START = 0x00
+SUBCMD_IMU_STOP = 0x01
+SUBCMD_IMU_PACKET = 0x02
+SUBCMD_IMU_PACKET_DELTA = 0x04
+SUBCMD_IMU_PACKET_TOKEN = 0x05
+IMU_START_PACKET_LEN = 10
+IMU_START_PACKET_LEN_WITH_ENCODE = 11
+IMU_ENCODE_RAW = 0
+IMU_ENCODE_TOKEN = 1
+IMU_PACKET_HEADER_LEN = 9  # cmd+subcmd+seq+frame_count+uptime_ms
+IMU_BYTES_PER_FRAME = 12
+IMU_TOKEN_VERSION = 0x01
+IMU_TOKEN_VERSION_LEN = 1
+IMU_DELTA_FIRST_FRAME_BYTES = 12
+IMU_DELTA_WIDTH_BYTES = 3
+IMU_DELTA_FIXED_BYTES = IMU_DELTA_FIRST_FRAME_BYTES + IMU_DELTA_WIDTH_BYTES
+DEFAULT_IMU_FRAMES_PER_PACKET = 10
+
+DEFAULT_IMU_GYRO_HZ = 200
+DEFAULT_IMU_ACCEL_HZ = 200
+DEFAULT_IMU_GYRO_FS_DPS = 2000
+DEFAULT_IMU_ACCEL_FS_G = 16
+IMU_CHIPS = ("icm42688", "icm45686")
+DEFAULT_IMU_CHIP = "icm42688"
+
+
+def imu_packet_len(frames_per_packet: int) -> int:
+    return IMU_PACKET_HEADER_LEN + frames_per_packet * IMU_BYTES_PER_FRAME
+
+
+def imu_token_packet_len(frames_per_packet: int) -> int:
+    return (
+        IMU_PACKET_HEADER_LEN
+        + IMU_TOKEN_VERSION_LEN
+        + frames_per_packet * IMU_BYTES_PER_FRAME
+    )
+
+
+def imu_ble_packets_per_second(sample_hz: int, frames_per_packet: int) -> int:
+    if frames_per_packet <= 0:
+        frames_per_packet = DEFAULT_IMU_FRAMES_PER_PACKET
+    return (sample_hz + frames_per_packet - 1) // frames_per_packet
+
+
+CMD_PPG = 0x24
+SUBCMD_PPG_START = 0x00
+SUBCMD_PPG_STOP = 0x01
+SUBCMD_PPG_PACKET = 0x02
+SUBCMD_PPG_WEAR_PACKET = 0x04
+SUBCMD_PPG_WEAR_CALIBRATE = 0x05
+SUBCMD_PPG_WEAR_CALIBRATION_GET = 0x06
+SUBCMD_PPG_WEAR_CALIBRATION_STATUS = 0x07
+PPG_START_PACKET_LEN = 3
+PPG_PACKET_LEN = 13
+PPG_PACKET_HRV_LEN = 17
+PPG_WEAR_HEADER_LEN = 20
+PPG_WEAR_BYTES_PER_SAMPLE = 4
+PPG_WEAR_CAL_STATUS_LEN = 14
+PPG_WEAR_FLAG_CALIBRATED = 1 << 0
+PPG_WEAR_FLAG_SAR_VALID = 1 << 1
+DEFAULT_PPG_OUTPUT = "ring_ppg.csv"
+DEFAULT_WEAR_OUTPUT = "ring_wear.csv"
+
+CMD_PCBA = 0x25
+SUBCMD_PCBA_STATUS_GET = 0x02
+SUBCMD_PCBA_STATUS = 0x02
+PCBA_STATUS_PACKET_LEN = 15
+# Base 15 + raw_adc(i16)+adc_mv(i16)+cw_cond+cw_cond2 + whoami75+whoami72+imu_init_ret(i16)
+PCBA_STATUS_DEBUG_PACKET_LEN = 25
+PCBA_FLAG_BUTTON_PRESSED = 1 << 6
+
+CMD_BATTERY = 0x29
+SUBCMD_BATTERY_GET = 0x01
+SUBCMD_BATTERY_STATUS = 0x02
+# STATUS: cmd + subcmd + battery_mv(u16) + pct + charge|0x80 + raw(i16) + adc_mv(i16) + magic
+BATTERY_STATUS_PACKET_LEN = 11
+BATTERY_STATUS_MAGIC = 0xA5
+# Host polls ring battery via BATTERY GET.
+BATTERY_POLL_INTERVAL_S = 60.0
+CHARGE_STATUS_IDLE = 0
+CHARGE_STATUS_CHARGING = 1
+CHARGE_STATUS_FULL = 2
+CHARGE_STATUS_LABELS = {
+    CHARGE_STATUS_IDLE: "idle",
+    CHARGE_STATUS_CHARGING: "charging",
+    CHARGE_STATUS_FULL: "full",
+}
+
+# Device / firmware model query (host GET → device STATUS notify).
+CMD_INFO = 0x2A
+SUBCMD_INFO_GET = 0x01
+SUBCMD_INFO_STATUS = 0x02
+INFO_FORMAT_VER = 1
+INFO_HEADER_LEN = 9  # cmd+subcmd+format_ver+hw_rev+fw×4+component_count
+INFO_COMPONENT_LEN = 5
+INFO_COMPONENT_COUNT = 8
+INFO_STATUS_PACKET_LEN = INFO_HEADER_LEN + INFO_COMPONENT_COUNT * INFO_COMPONENT_LEN
+INFO_FLAG_PROBE_OK = 1 << 0
+INFO_FLAG_PROBED = 1 << 1
+
+INFO_COMP_IMU = 1
+INFO_COMP_PPG = 2
+INFO_COMP_MIC = 3
+INFO_COMP_FLASH = 4
+INFO_COMP_PMIC = 5
+INFO_COMP_LED_WHITE = 6
+INFO_COMP_BUTTON = 7
+INFO_COMP_SWIPE = 8
+
+INFO_MODEL_UNKNOWN = 0
+INFO_IMU_MODEL_ICM42688 = 1
+INFO_IMU_MODEL_ICM45686 = 2
+INFO_PPG_MODEL_HX3918 = 1
+INFO_MIC_MODEL_PDM = 1
+INFO_FLASH_MODEL_GD25Q256 = 1
+INFO_PMIC_MODEL_CW6305 = 1
+INFO_GPIO_MODEL = 1
+INFO_PWM_MODEL = 2
+INFO_SWIPE_MODEL_NONE = 0
+INFO_SWIPE_MODEL_NNOM = 1
+
+INFO_COMP_LABELS = {
+    INFO_COMP_IMU: "imu",
+    INFO_COMP_PPG: "ppg",
+    INFO_COMP_MIC: "mic",
+    INFO_COMP_FLASH: "flash",
+    INFO_COMP_PMIC: "pmic",
+    INFO_COMP_LED_WHITE: "led",
+    INFO_COMP_BUTTON: "button",
+    INFO_COMP_SWIPE: "swipe",
+}
+
+INFO_MODEL_LABELS: dict[int, dict[int, str]] = {
+    INFO_COMP_IMU: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_IMU_MODEL_ICM42688: "ICM42688",
+        INFO_IMU_MODEL_ICM45686: "ICM45686",
+    },
+    INFO_COMP_PPG: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_PPG_MODEL_HX3918: "HX3918",
+    },
+    INFO_COMP_MIC: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_MIC_MODEL_PDM: "PDM",
+    },
+    INFO_COMP_FLASH: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_FLASH_MODEL_GD25Q256: "GD25Q256",
+    },
+    INFO_COMP_PMIC: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_PMIC_MODEL_CW6305: "CW6305",
+    },
+    INFO_COMP_LED_WHITE: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_GPIO_MODEL: "GPIO",
+        INFO_PWM_MODEL: "PWM",
+    },
+    INFO_COMP_BUTTON: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_GPIO_MODEL: "GPIO",
+    },
+    INFO_COMP_SWIPE: {
+        INFO_SWIPE_MODEL_NONE: "none",
+        INFO_SWIPE_MODEL_NNOM: "NNOM",
+    },
+}
+
+CMD_SWIPE = 0x26
+SUBCMD_SWIPE_START = 0x00
+SUBCMD_SWIPE_STOP = 0x01
+SUBCMD_SWIPE_EVENT = 0x02
+SUBCMD_SWIPE_TRIGGER = 0x03
+# EVENT/TRIGGER: cmd+subcmd+seq(u16)+class_id+scores[7]+uptime(u32)
+SWIPE_EVENT_PACKET_LEN = 16
+SWIPE_TRIGGER_PACKET_LEN = 16
+SWIPE_NUM_SCORES = 7
+DEFAULT_SWIPE_OUTPUT = "ring_swipe.csv"
+SWIPE_CLASS_LABELS = {
+    0: "空",
+    1: "上",
+    2: "下",
+    3: "左",
+    4: "右",
+    5: "点击",
+    6: "弹指",
+}
+# Align with weights_lite32.h 7-class model (adds snap).
+SWIPE_EVENT_MAP = {
+    1: "swipe-up",
+    2: "swipe-down",
+    3: "swipe-left",
+    4: "swipe-right",
+    5: "tap",
+    6: "snap",
+}
+
+CMD_BUTTON = 0x27
+SUBCMD_BUTTON_EVENT = 0x02
+BUTTON_EVENT_PACKET_LEN = 9
+DEFAULT_BUTTON_OUTPUT = "ring_button.csv"
+BUTTON_EVENT_LABELS = {
+    0: "PRESS",
+    1: "RELEASE",
+    2: "CLICK",
+    3: "LONG_PRESS",
+}
+
+CMD_RAISE_TO_WAKE = 0x2B
+SUBCMD_RAISE_TO_WAKE_SET = 0x00
+SUBCMD_RAISE_TO_WAKE_GET = 0x01
+SUBCMD_RAISE_TO_WAKE_EVENT = 0x02
+SUBCMD_RAISE_TO_WAKE_STATUS = 0x03
+RAISE_TO_WAKE_SET_PACKET_LEN = 3
+RAISE_TO_WAKE_STATUS_PACKET_LEN = 3
+RAISE_TO_WAKE_EVENT_PACKET_LEN = 9
+DEFAULT_RAISE_TO_WAKE_OUTPUT = "ring_raise_to_wake.csv"
+RAISE_TO_WAKE_EVENT_LABELS = {
+    1: "WAKE",
+    2: "SLEEP",
+}
+
+
+def build_raise_to_wake_set(enabled: bool) -> bytes:
+    return bytes([CMD_RAISE_TO_WAKE, SUBCMD_RAISE_TO_WAKE_SET, 1 if enabled else 0])
+
+
+def build_raise_to_wake_get() -> bytes:
+    return bytes([CMD_RAISE_TO_WAKE, SUBCMD_RAISE_TO_WAKE_GET])
+
+CMD_POWER = 0x2C
+SUBCMD_POWER_SET = 0x00
+SUBCMD_POWER_GET = 0x01
+SUBCMD_POWER_STATUS = 0x02
+POWER_SET_PACKET_LEN = 3
+POWER_STATUS_PACKET_LEN = 3
+POWER_MODE_NORMAL = 0
+POWER_MODE_SENSE = 1
+POWER_MODE_ENCODE_ONLY = 2
+
+# Identity MAC query (host GET → device STATUS notify).
+CMD_MAC = 0x2D
+SUBCMD_MAC_GET = 0x01
+SUBCMD_MAC_STATUS = 0x02
+# STATUS: cmd + subcmd + addr_type(u8) + mac[6] MSB-first
+MAC_STATUS_PACKET_LEN = 9
+MAC_ADDR_TYPE_PUBLIC = 0
+MAC_ADDR_TYPE_RANDOM = 1
+MAC_ADDR_TYPE_LABELS = {
+    MAC_ADDR_TYPE_PUBLIC: "public",
+    MAC_ADDR_TYPE_RANDOM: "random",
+}
+
+
+def build_power_mode_set(mode: int) -> bytes:
+    return bytes([CMD_POWER, SUBCMD_POWER_SET, mode & 0xFF])
+
+
+def build_power_mute_set(muted: bool) -> bytes:
+    """Backward-compatible helper: True->sense, False->normal."""
+    return build_power_mode_set(POWER_MODE_SENSE if muted else POWER_MODE_NORMAL)
+
+
+def build_power_mute_get() -> bytes:
+    return bytes([CMD_POWER, SUBCMD_POWER_GET])
+
+
+# Shipping mode (CM1126B via Shipping_EN). Host ENTER → device may power off.
+# RESULT notify only on reject/failure (charger holding VSYS, bad confirm, …).
+CMD_SHIPMODE = 0x2F
+SUBCMD_SHIPMODE_ENTER = 0x00
+SUBCMD_SHIPMODE_RESULT = 0x01
+SHIPMODE_ENTER_CONFIRM = 0xA5
+SHIPMODE_ENTER_PACKET_LEN = 3
+SHIPMODE_RESULT_PACKET_LEN = 5
+
+
+def build_shipmode_enter() -> bytes:
+    return bytes([CMD_SHIPMODE, SUBCMD_SHIPMODE_ENTER, SHIPMODE_ENTER_CONFIRM])
+
+
+# HID enable gate (HOGP). SET enable → STATUS; default off on device.
+CMD_HID = 0x30
+SUBCMD_HID_SET = 0x00
+SUBCMD_HID_GET = 0x01
+SUBCMD_HID_STATUS = 0x02
+HID_SET_PACKET_LEN = 3
+HID_STATUS_PACKET_LEN = 3
+
+
+def build_hid_set(enabled: bool) -> bytes:
+    return bytes([CMD_HID, SUBCMD_HID_SET, 1 if enabled else 0])
+
+
+def build_hid_get() -> bytes:
+    return bytes([CMD_HID, SUBCMD_HID_GET])
+
+
+CMD_LED = 0x28
+SUBCMD_LED_SET = 0x00
+SUBCMD_LED_BLINK = 0x01
+SUBCMD_LED_MODE = 0x02
+LED_SET_PACKET_LEN = 3
+LED_BLINK_PACKET_LEN = 4
+LED_MODE_PACKET_LEN = 6
+DEFAULT_LED_BLINK_MS = 1500
+DEFAULT_LED_BLINK_PERIOD_MS = 1000
+DEFAULT_LED_BREATHE_PERIOD_MS = 2000
+LED_MODE_OFF = 0
+LED_MODE_ON = 1
+LED_MODE_BLINK = 2
+LED_MODE_BREATHE = 3
+LED_MODE_PULSE = 4
+DEFAULT_LED_BRIGHTNESS = 255
+
+CMD_BLE_TEST = 0x22
+SUBCMD_BLE_TEST_START = 0x00
+SUBCMD_BLE_TEST_STOP = 0x01
+SUBCMD_BLE_TEST_PACKET = 0x02
+SUBCMD_BLE_TEST_REPORT = 0x03
+BLE_TEST_START_PACKET_LEN = 12
+BLE_TEST_PACKET_HEADER_LEN = 10
+BLE_TEST_REPORT_PACKET_LEN = 14
+BLE_TEST_HISTOGRAM_MAX_S = 360
+
+DEFAULT_BLE_TEST_PAYLOAD_SIZE = 32
+DEFAULT_BLE_TEST_PPS = 200
+DEFAULT_BLE_TEST_DURATION_S = 30
+DEFAULT_BLE_TEST_PACKET_COUNT = 0
+
+# imu-like: 10 frames × 12B payload, 200Hz / 10 = 20 BLE packets/s
+_IMU_LIKE_PAYLOAD = IMU_BYTES_PER_FRAME * DEFAULT_IMU_FRAMES_PER_PACKET
+_IMU_LIKE_PPS = imu_ble_packets_per_second(DEFAULT_IMU_GYRO_HZ, DEFAULT_IMU_FRAMES_PER_PACKET)
+
+BLE_TEST_PRESETS: dict[str, tuple[int, int, int, int]] = {
+    "imu-like": (_IMU_LIKE_PAYLOAD, _IMU_LIKE_PPS, 30, 0),
+    "small-fast": (20, 500, 10, 0),
+    "max-throughput": (0, 0, 10, 0),
+    "long-stable": (64, 100, 300, 0),
+    "fixed-count": (32, 200, 0, 6000),
+}

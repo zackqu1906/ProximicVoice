@@ -1,0 +1,14 @@
+{
+  "recommended_stage2_threshold": 0.8461704552173615,
+  "label_mapping": {
+    "near": 0,
+    "far": 1,
+    "artifact": 1
+  },
+  "binary_task": {
+    "0": "near_speech",
+    "1": "realistic_non_target_audio"
+  },
+  "score_definition": "logits[0] - logits[1]",
+  "metrics_file": "metrics.json"
+}

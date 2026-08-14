@@ -1,0 +1,36 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+.pytest_cache/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# IDE and local configuration
+.vscode/
+.idea/
+.env
+.env.*
+
+# Private recordings and training material
+data/
+datasets/
+noise_preview/
+run.log
+
+# Reproducible training outputs. The release detector is stored in
+# src/proximic_ring/assets/ringo-near-v1.model instead.
+runs/
+
+# Downloaded third-party model weights must remain outside Git history.
+pretrained_models/
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+
+# OS-generated files
+.DS_Store
+Thumbs.db

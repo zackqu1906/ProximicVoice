@@ -1,0 +1,126 @@
+from __future__ import annotations
+
+from pathlib import Path
+import signal
+import sys
+
+
+def main(argv: list[str] | None = None) -> int:
+    try:
+        from PySide6.QtCore import QTimer, QUrl
+        from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap
+        from PySide6.QtQml import QQmlApplicationEngine
+        from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
+    except ImportError as exc:
+        raise SystemExit(
+            'ProxiMic UI requires PySide6. Install with: pip install -e ".[ui]"'
+        ) from exc
+
+    from .controller import AppController
+
+    app = QApplication(list(sys.argv if argv is None else argv))
+    app.setApplicationName("ProxiMic Voice")
+    app.setApplicationDisplayName("ProxiMic Voice")
+    app.setOrganizationName("ProxiMic")
+
+    base = Path(__file__).resolve().parent
+    icon_path = base / "assets" / "proximic.svg"
+    icon = QIcon(str(icon_path))
+    if icon.isNull():
+        pixmap = QPixmap(64, 64)
+        pixmap.fill(QColor("#6C8CFF"))
+        painter = QPainter(pixmap)
+        painter.setPen(QColor("white"))
+        painter.drawText(pixmap.rect(), 0x0084, "P")  # AlignCenter
+        painter.end()
+        icon = QIcon(pixmap)
+    app.setWindowIcon(icon)
+
+    controller = AppController()
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("appController", controller)
+    engine.load(QUrl.fromLocalFile(str(base / "qml" / "Main.qml")))
+    if not engine.rootObjects():
+        return 1
+    window = engine.rootObjects()[0]
+
+    tray_available = QSystemTrayIcon.isSystemTrayAvailable()
+    controller.setTrayAvailable(tray_available)
+    # Closing the main window is an explicit application exit.  The tray is a
+    # convenience controller, not a reason to leave an invisible process alive.
+    app.setQuitOnLastWindowClosed(True)
+    tray = None
+    if tray_available:
+        tray = QSystemTrayIcon(icon, app)
+        tray.setToolTip("ProxiMic Voice · 准备就绪")
+        menu = QMenu()
+        show_action = QAction("显示主窗口", menu)
+        connection_action = QAction("连接设备", menu)
+        recognition_action = QAction("开启语音识别", menu)
+        quit_action = QAction("退出", menu)
+        menu.addAction(show_action)
+        menu.addAction(connection_action)
+        menu.addAction(recognition_action)
+        menu.addSeparator()
+        menu.addAction(quit_action)
+        tray.setContextMenu(menu)
+
+        def show_window() -> None:
+            window.show()
+            window.raise_()
+            window.requestActivate()
+
+        def toggle_connection() -> None:
+            if controller.connected:
+                controller.disconnectDevice()
+            else:
+                controller.connectDevice()
+
+        def refresh_tray() -> None:
+            connection_action.setText("断开设备" if controller.connected else "连接设备")
+            connection_action.setEnabled(not controller.busy)
+            recognition_action.setText(
+                "暂停语音识别" if controller.recognitionEnabled else "开启语音识别"
+            )
+            recognition_action.setEnabled(controller.connected and not controller.busy)
+            tray.setToolTip(f"ProxiMic Voice · {controller.statusTitle}")
+
+        show_action.triggered.connect(show_window)
+        connection_action.triggered.connect(toggle_connection)
+        recognition_action.triggered.connect(controller.toggleRecognition)
+        quit_action.triggered.connect(controller.requestQuit)
+        controller.connectedChanged.connect(refresh_tray)
+        controller.recognitionEnabledChanged.connect(refresh_tray)
+        controller.busyChanged.connect(refresh_tray)
+        controller.statusChanged.connect(refresh_tray)
+        tray.activated.connect(
+            lambda reason: show_window()
+            if reason in (
+                QSystemTrayIcon.ActivationReason.Trigger,
+                QSystemTrayIcon.ActivationReason.DoubleClick,
+            )
+            else None
+        )
+        app.aboutToQuit.connect(tray.hide)
+        refresh_tray()
+        tray.show()
+
+    # A small Qt timer gives Python regular opportunities to dispatch console
+    # signals while the native Qt event loop is running.
+    heartbeat = QTimer(app)
+    heartbeat.setInterval(200)
+    heartbeat.timeout.connect(lambda: None)
+    heartbeat.start()
+
+    def handle_console_signal(_signum, _frame) -> None:
+        controller.requestQuit()
+
+    signal.signal(signal.SIGINT, handle_console_signal)
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, handle_console_signal)
+
+    return app.exec()
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

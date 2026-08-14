@@ -1,0 +1,182 @@
+# Fun-ASR-Nano on llama.cpp / GGUF
+
+Run **Fun-ASR-Nano** entirely on the [llama.cpp](https://github.com/ggml-org/llama.cpp)
+/ ggml stack — **CPU, edge, a single binary, no Python at runtime**. This is to
+Fun-ASR what [whisper.cpp](https://github.com/ggml-org/whisper.cpp) is to Whisper.
+
+## Why this exists
+
+Fun-ASR-Nano normally runs on PyTorch / vLLM (GPU). That is great for a server
+serving many requests, but it cannot run where there is no GPU and no Python.
+This runtime ports the model to **ggml + GGUF**, so Fun-ASR-Nano can run:
+
+- on a laptop / phone / Raspberry Pi / edge box, offline, CPU-only;
+- embedded directly into a C/C++ application (one static binary);
+- with quantized weights (Q8 / Q4), shrinking the model to ~1.3 GB total.
+
+| | vLLM (existing) | this runtime (llama.cpp) |
+|---|---|---|
+| target | GPU server, high QPS | CPU / edge / embedded |
+| deps | Python + CUDA + PyTorch | none (C/C++ single binary) |
+| weights | HF fp16/bf16 | GGUF, quantized |
+| best for | online service, batch | offline, on-device |
+
+## Architecture
+
+Fun-ASR-Nano = **SenseVoice SAN-M encoder (70 layers) + adaptor + Qwen3-0.6B LLM**.
+The whole pipeline runs in C++:
+
+```
+ audio.wav (16k mono)
+      │  kaldi 80-mel fbank + LFR            (C++)
+      ▼
+   features [T, 560]
+      │  SAN-M encoder + adaptor             (ggml)   ── funasr-encoder.gguf
+      ▼
+   audio embeds [T', 1024]
+      │  keep first fake_token_len frames (low-frame-rate)
+      ▼
+ [ prefix tokens | audio embeds | suffix tokens ]
+      │  Qwen3-0.6B, embeds injected via llama_decode (llava/mtmd style)  ── qwen3-0.6b.gguf
+      ▼
+   transcription
+```
+
+The audio embeddings are fed into the LLM through `llama_decode`'s embedding-input
+path — exactly how llava/mtmd inject vision embeddings.
+
+## Download pre-built GGUF (fastest — no Python ML env)
+```bash
+./download-funasr-model.sh nano                # pulls encoder + Qwen3-0.6B + fsmn-vad GGUF from Hugging Face
+llama-funasr-cli --enc funasr-gguf/funasr-encoder-f16.gguf -m funasr-gguf/qwen3-0.6b-q8_0.gguf \
+    -a audio.wav --vad funasr-gguf/fsmn-vad.gguf
+```
+Pre-converted GGUF: [FunAudioLLM/Fun-ASR-Nano-GGUF](https://huggingface.co/FunAudioLLM/Fun-ASR-Nano-GGUF) · [fsmn-vad-GGUF](https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF). Or convert yourself: `python convert-funasr-to-gguf.py nano-encoder --wtype f16`.
+
+`fsmn-vad.gguf` is intentionally published in the separate [FunAudioLLM/fsmn-vad-GGUF](https://huggingface.co/FunAudioLLM/fsmn-vad-GGUF) repo so Nano, SenseVoice, and Paraformer can share the same VAD file. The `nano` command above downloads it automatically; if you are browsing the Hugging Face UI, open the VAD repo directly, or fetch it with:
+
+```bash
+hf download FunAudioLLM/fsmn-vad-GGUF --include "*.gguf" --local-dir funasr-gguf
+```
+
+## Build (standalone, CI-friendly)
+```bash
+cmake -B build -DCMAKE_BUILD_TYPE=Release      # fetches pinned llama.cpp; static, self-contained
+cmake --build build -j                          # -> build/bin/llama-funasr-*
+```
+## Quickstart
+
+**1. Build** (drop the examples into a llama.cpp checkout):
+```bash
+git clone https://github.com/ggml-org/llama.cpp && cd llama.cpp
+cp -r /path/to/runtime/llama.cpp/funasr-common examples/   # shared audio loader (miniaudio); each example CMake adds ../funasr-common
+cp -r /path/to/runtime/llama.cpp/funasr-cli examples/
+echo 'add_subdirectory(funasr-cli)' >> examples/CMakeLists.txt
+cmake -B build -DGGML_NATIVE=ON -DLLAMA_CURL=OFF
+cmake --build build -j --target llama-funasr-cli
+```
+
+**2. Convert weights to GGUF** (one-time; needs the checkpoint, e.g.
+`FunAudioLLM/Fun-ASR-Nano-2512`):
+```bash
+# LLM half — Qwen3-0.6B is natively supported by llama.cpp
+python llama.cpp/convert_hf_to_gguf.py <model>/Qwen3-0.6B-vllm \
+    --outfile qwen3-0.6b-f32.gguf --outtype f32
+build/bin/llama-quantize qwen3-0.6b-f32.gguf qwen3-0.6b-q8_0.gguf Q8_0   # smaller, recommended
+
+# audio half — SenseVoice encoder + adaptor
+python runtime/llama.cpp/export_encoder_gguf.py \
+    --model_pt <model>/model.pt --out funasr-encoder.gguf              # f32, 935 MB
+python runtime/llama.cpp/export_encoder_gguf.py \
+    --model_pt <model>/model.pt --out funasr-encoder-f16.gguf --wtype f16   # 469 MB
+```
+
+**3. Transcribe:**
+```bash
+build/bin/llama-funasr-cli \
+    --enc funasr-encoder.gguf -m qwen3-0.6b-q8_0.gguf \
+    -a audio.wav --chunk 15
+```
+Expected output (one of the benchmark clips):
+```
+我想问我在滨海新区有房我一直没有照顾孩子但是我想要抚养权...你觉得这是正常的想法吗
+[done] 7.40s ; chunk=15s
+```
+
+**Long audio — built-in FSMN-VAD (recommended, no Python front end):**
+```bash
+python runtime/llama.cpp/export_vad_gguf.py \
+    --model_pt <fsmn-vad>/model.pt --mvn <fsmn-vad>/am.mvn --out fsmn-vad.gguf
+build/bin/llama-funasr-cli --enc funasr-encoder.gguf -m qwen3-0.6b-q8_0.gguf \
+    -a long.wav --vad fsmn-vad.gguf            # segments internally (replaces --chunk)
+```
+`--vad` runs a native ggml FSMN-VAD inside the binary (segment boundaries within ~10 ms
+of the PyTorch front end) and decodes each speech segment — closing the fixed-window gap
+(full-184 micro-CER **8.30**, vs 9.5 % with `--chunk 15`). See [BENCHMARKS.md](BENCHMARKS.md).
+
+## Models & sizes
+
+| file | dtype | size |
+|---|---|---|
+| funasr-encoder.gguf | f32 | 935 MB |
+| funasr-encoder-f16.gguf | f16 (matmul weights) | 469 MB |
+| qwen3-0.6b-f32.gguf | f32 | 3.0 GB |
+| qwen3-0.6b-q8_0.gguf | Q8_0 | 805 MB |
+| qwen3-0.6b-q4km.gguf | Q4_K_M | 484 MB |
+
+Fully-quantized config (f16 encoder + Q8 LLM) ≈ **1.3 GB**, edge-friendly.
+
+## Accuracy & validation
+
+Validated against the PyTorch reference on the 184-file benchmark:
+
+- **Encoder + adaptor (ggml) vs PyTorch:** cosine **1.000000**, max_abs_diff **5e-3** (f32).
+- **kaldi fbank (C++) vs torchaudio:** cosine **1.000000**.
+- **End-to-end CER, identical conditions (f32 LLM, 15 s chunking):**
+  C++ macro 17.41% / micro 11.68%  vs  PyTorch macro 17.42% / micro 11.70%
+  → aggregate CER matches to **0.02%**; the port is faithful.
+- Best practical config (Q8 LLM + 15 s chunking): **micro-CER 9.51%** (production
+  VAD-segmented reference is ~8.2%; the gap is fixed-window vs VAD, not the port).
+
+## Tips & gotchas
+
+- **Use `--vad fsmn-vad.gguf`** for long audio (built-in FSMN-VAD, best CER); `--chunk 15`
+  is the simpler fixed-window fallback. Decoding a whole 60 s clip in one segment is
+  out-of-distribution and makes greedy decoding loop; VAD/chunking fix it
+  (micro-CER 29% → 8.3% with VAD, 9.5% with 15 s windows).
+- **Low-frame-rate truncation** is required: only the first `fake_token_len`
+  adaptor frames are real audio tokens. The CLI does this automatically; feeding
+  all frames makes the LLM repeat.
+- **Use bf16/fp32, avoid fp16 for the audio path** — the adaptor output has large
+  magnitude (std ≈ 28, |max| ≈ 1187); fp16 can overflow. The GGUFs here are f32/f16
+  weights with f32 activations, which is safe.
+- **WAV input** currently assumes 16 kHz mono PCM16. Resample first if needed.
+- Q8 quantization slightly *helps* greedy stability (quant noise regularizes away
+  from repetition loops), so Q8 is a good default.
+
+## Implementation notes
+
+- FSMN depthwise memory is an exact f32 shift-accumulate (avoids the F16-only,
+  upstream-flagged `ggml_conv_1d_dw`).
+- LayerNorm eps = 1e-5; sinusoidal position encoding depth = input feature dim (560),
+  positions start at 1; encoder input pre-scaled by sqrt(512).
+- Prompt is fed as tokens via `llama_tokenize(parse_special=true)` (prefix = 18
+  tokens, matching the HF tokenizer), so no Python embedding table is needed.
+
+## Files
+```
+funasr-cli/        integrated binary: WAV → transcription
+funasr-encoder/    encoder+adaptor only (ggml) — validation/debugging
+funasr-embd/       LLM decode from precomputed embeds — validation/debugging
+export_encoder_gguf.py   export the audio encoder + adaptor to GGUF
+funasr-vad/        built-in FSMN-VAD tool + --vad library (funasr-common/funasr_vad.h)
+export_vad_gguf.py export the FSMN-VAD encoder + CMVN to GGUF
+```
+
+## Roadmap
+- ✅ **Built-in FSMN-VAD segmentation** (`--vad`, native ggml) — done; bare binary 8.30 micro-CER.
+- Arbitrary WAV formats / resampling; encoder Q8 quantization; single packaged GGUF.
+
+## Further reading
+
+See [DESIGN.md](DESIGN.md) for the full system design — architecture, the shared SAN-M encoder, GGUF weight format, numerical-fidelity and validation methodology, design trade-offs, and gotchas.
