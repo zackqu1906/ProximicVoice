@@ -446,16 +446,26 @@ ApplicationWindow {
                         text: "识别完成后输入到当前光标"
                         checked: appController.desktopOutputEnabled
                         onToggled: appController.desktopOutputEnabled = checked
+                        visible: Qt.platform.os === "windows"
                     }
                     Switch {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         text: "启用 Ctrl+Alt+Space 按住说话"
                         checked: appController.pushToTalkEnabled
                         onToggled: appController.pushToTalkEnabled = checked
+                        visible: Qt.platform.os === "windows"
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "设备连接和语音识别相互独立；暂停识别不会断开 Ring。识别开启时，按键优先于自动靠近检测。"
+                        text: "macOS 当前支持 Ring、ProxiMic 和语音识别；全局按键与跨应用文字注入仅支持 Windows。"
+                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                        visible: Qt.platform.os !== "windows"
+                    }
+                    Label {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: Qt.platform.os === "windows"
+                            ? "设备连接和语音识别相互独立；暂停识别不会断开 Ring。识别开启时，按键优先于自动靠近检测。"
+                            : "设备连接和语音识别相互独立；暂停识别不会断开 Ring。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
                     Item { Layout.preferredHeight: 22 }

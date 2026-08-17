@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import sys
 import time
+import tomllib
 import types
+from pathlib import Path
 
 import numpy as np
 
@@ -10,6 +12,14 @@ from proximic_ring.asr.backends.streaming_sensevoice import StreamingSenseVoiceA
 from proximic_ring.asr.backends.funasr_nano import FunASRNanoStreamingASR
 from proximic_ring.asr.factory import asr_backend_kind, available_asr_backends
 from proximic_ring.asr.streaming import StreamingASRWorker
+
+
+def test_streaming_sensevoice_extra_includes_torchaudio():
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    dependencies = config["project"]["optional-dependencies"]["asr-streaming-sensevoice"]
+
+    assert any(item.startswith("torchaudio") for item in dependencies)
 
 
 class FakeStreamingBackend:

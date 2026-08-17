@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,13 @@ def test_qml_customer_window_loads(tmp_path):
     app = QApplication.instance() or QApplication(["ui-test", "-platform", "offscreen"])
     QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path))
     controller = AppController()
+    if os.name != "nt":
+        assert controller.desktopOutputEnabled is False
+        assert controller.pushToTalkEnabled is False
+        controller.desktopOutputEnabled = True
+        controller.pushToTalkEnabled = True
+        assert controller.desktopOutputEnabled is False
+        assert controller.pushToTalkEnabled is False
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("appController", controller)
     qml = (
