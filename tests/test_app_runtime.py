@@ -1,6 +1,15 @@
+import os
 from pathlib import Path
 
 from proximic_ring.app_runtime import RuntimeSettings, SilentTranscriptOverlay
+
+
+def test_runtime_defaults_only_enable_windows_desktop_features():
+    args = RuntimeSettings().to_namespace()
+
+    expected = os.name == "nt"
+    assert args.desktop_output is expected
+    assert args.push_to_talk is expected
 
 
 def test_runtime_settings_preserve_working_detector_and_asr_values():

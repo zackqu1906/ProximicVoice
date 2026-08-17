@@ -4,7 +4,8 @@ Proximic Voice 是面向 Ringo 可穿戴设备的近场实时语音输入工具�
 两阶段模型判断用户是否靠近说话，把音频实时发送给可替换的 ASR 后端，并可将最终
 文本注入 Windows 中当前获得焦点的输入框。
 
-当前版本提供可直接运行的 Windows 桌面体验，并支持算法验证与后续产品化扩展。
+当前版本提供可直接运行的 Windows 桌面体验，以及 Apple Silicon Mac 的开发运行路径，
+并支持算法验证与后续产品化扩展。
 
 ## 功能
 
@@ -19,8 +20,8 @@ Proximic Voice 是面向 Ringo 可穿戴设备的近场实时语音输入工具�
 
 ## 系统要求
 
-- Windows 10/11。
-- 64 位 Windows PowerShell；不要求预先安装 Python、Conda 或 Anaconda。
+- Windows 10/11，或 Apple Silicon Mac（macOS 13+）。
+- Windows 安装不要求预先安装 Python；Mac 需要 Python 3.11。
 - 支持蓝牙的电脑和 Ringo 设备。
 - 首次安装依赖和首次下载 ASR 模型时需要联网。
 - 标准安装使用经过验证的 CPU 版 PyTorch，UI 中的 ASR 设备保持为 `cpu`。CUDA 属于开发者可选配置，不在标准安装保证范围内。
@@ -28,7 +29,7 @@ Proximic Voice 是面向 Ringo 可穿戴设备的近场实时语音输入工具�
 Fun-ASR-Nano 的模型权重约 2 GB，不包含在 Git 仓库中。第一次使用该后端时会由
 模型库下载到本机缓存。
 
-## 最快安装方式
+## Windows 安装
 
 ```powershell
 git clone <你的仓库地址>
@@ -53,14 +54,46 @@ Conda 或 Anaconda。关键原生依赖版本由 `requirements-windows.lock` 固
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Recreate
 ```
 
-`.runtime/`、`.cache/` 都位于项目目录且不会提交到 Git。项目放在哪个盘，
-运行时、依赖和模型缓存就位于哪个盘。
-
 在 VSCode 中开发时，通过 `Python: Select Interpreter` 选择：
 
 ```text
 <项目目录>\.runtime\venv\Scripts\python.exe
 ```
+
+## macOS（Apple Silicon）
+
+Mac 使用项目内独立环境和缓存，不读取 Windows 依赖锁。首次安装：
+
+```bash
+./scripts/setup-macos.sh
+```
+
+如果尚未安装 Python 3.11：
+
+```bash
+brew install python@3.11
+```
+
+也可以显式指定解释器：
+
+```bash
+PROXIMIC_PYTHON=/opt/homebrew/bin/python3.11 ./scripts/setup-macos.sh
+```
+
+安装完成后启动：
+
+```bash
+./scripts/start-ui.sh
+```
+
+首次连接 Ring 时，允许 Terminal 或 Python 使用蓝牙。若曾拒绝授权，请在
+“系统设置 → 隐私与安全性 → 蓝牙”中重新开启。
+
+macOS 当前支持 Ring BLE、ProxiMic 检测、实时 ASR、字幕与编辑区。Windows Unicode
+文字注入和 `Ctrl+Alt+Space` 全局按住说话在 Mac 上会自动关闭，不影响其余识别链路。
+
+`.runtime/`、`.cache/` 都位于项目目录且不会提交到 Git。项目放在哪个盘，
+运行时、依赖和模型缓存就位于哪个盘。
 
 ## 界面使用
 

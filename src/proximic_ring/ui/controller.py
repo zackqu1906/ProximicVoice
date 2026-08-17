@@ -5,7 +5,11 @@ import threading
 
 from PySide6.QtCore import QObject, Property, QCoreApplication, QSettings, QTimer, Signal, Slot
 
-from ..app_runtime import RecognitionRuntime, RuntimeSettings
+from ..app_runtime import (
+    WINDOWS_DESKTOP_INPUT_SUPPORTED,
+    RecognitionRuntime,
+    RuntimeSettings,
+)
 
 
 class AppController(QObject):
@@ -88,8 +92,14 @@ class AppController(QObject):
                 str(default_funasr_repo) if default_funasr_repo.exists() else "",
             )
         )
-        self._desktop_output = self._bool_setting("input/desktopOutput", True)
-        self._push_to_talk = self._bool_setting("input/pushToTalk", True)
+        self._desktop_output = (
+            WINDOWS_DESKTOP_INPUT_SUPPORTED
+            and self._bool_setting("input/desktopOutput", True)
+        )
+        self._push_to_talk = (
+            WINDOWS_DESKTOP_INPUT_SUPPORTED
+            and self._bool_setting("input/pushToTalk", True)
+        )
 
         self._hide_overlay_timer = QTimer(self)
         self._hide_overlay_timer.setSingleShot(True)
@@ -287,7 +297,11 @@ class AppController(QObject):
 
     @desktopOutputEnabled.setter
     def desktopOutputEnabled(self, value: bool) -> None:
-        self._set_setting("_desktop_output", bool(value), "input/desktopOutput")
+        self._set_setting(
+            "_desktop_output",
+            bool(value) and WINDOWS_DESKTOP_INPUT_SUPPORTED,
+            "input/desktopOutput",
+        )
 
     @Property(bool, notify=settingsChanged)
     def pushToTalkEnabled(self) -> bool:
@@ -295,7 +309,11 @@ class AppController(QObject):
 
     @pushToTalkEnabled.setter
     def pushToTalkEnabled(self, value: bool) -> None:
-        self._set_setting("_push_to_talk", bool(value), "input/pushToTalk")
+        self._set_setting(
+            "_push_to_talk",
+            bool(value) and WINDOWS_DESKTOP_INPUT_SUPPORTED,
+            "input/pushToTalk",
+        )
 
     def _set_setting(self, attr: str, value, key: str) -> None:
         if getattr(self, attr) == value:
@@ -354,7 +372,10 @@ class AppController(QObject):
         self._recognition_enabled = True
         self.recognitionEnabledChanged.emit()
         self.runningChanged.emit()
-        self._set_status("自动监听中", "靠近说话，或按住 Ctrl+Alt+Space", "running")
+        detail = "靠近说话"
+        if self._push_to_talk:
+            detail += "，或按住 Ctrl+Alt+Space"
+        self._set_status("自动监听中", detail, "running")
         self._append_log("语音识别已开启（设备保持连接）")
 
     @Slot()

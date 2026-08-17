@@ -20,6 +20,9 @@ from .audio import RingAudioSource
 from .cli import _build_detector, _build_session_controller
 
 
+WINDOWS_DESKTOP_INPUT_SUPPORTED = os.name == "nt"
+
+
 class SilentTranscriptOverlay:
     """Disable the legacy Tk preview when QML owns the transcript overlay."""
 
@@ -82,8 +85,8 @@ class RuntimeSettings:
     asr_min_duration_s: float = 0.40
     asr_max_duration_s: float = 15.0
 
-    desktop_output: bool = True
-    push_to_talk: bool = True
+    desktop_output: bool = WINDOWS_DESKTOP_INPUT_SUPPORTED
+    push_to_talk: bool = WINDOWS_DESKTOP_INPUT_SUPPORTED
 
     def to_namespace(self) -> Namespace:
         backend = self.asr_backend.strip().lower().replace("-", "_")
