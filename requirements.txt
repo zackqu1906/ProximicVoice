@@ -1,3 +1,3 @@
 # Convenience entry point for source checkouts. Dependency definitions live in
 # pyproject.toml so there is only one canonical package configuration.
--e .[ring,asr-streaming-sensevoice,asr-funasr-nano,ui]
+-e .[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]

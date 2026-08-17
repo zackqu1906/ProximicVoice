@@ -1,6 +1,5 @@
-# Reproducibility constraints for the supported Windows installation path.
-# Transitive pure-Python dependencies remain resolver-managed; native and
-# compatibility-sensitive packages are pinned to the verified combination.
+# Compatibility constraints for the supported Apple Silicon / Python 3.11 path.
+# Pure-Python transitive dependencies remain resolver-managed.
 numpy==1.26.4
 torch==2.11.0
 torchaudio==2.11.0
@@ -14,5 +13,6 @@ shiboken6==6.11.1
 bleak==3.0.2
 asr-decoder==0.1.2
 online-fbank==0.0.4
+kaldi-native-fbank==1.22.3
 pyopenjtalk-plus==0.4.1.post9
 websocket-client==1.9.0

@@ -1,0 +1,78 @@
+import asyncio
+from types import SimpleNamespace
+
+from ring_python_sdk.ble import control
+from ring_python_sdk.session import connection
+
+
+def _device(name: str | None, identifier: str):
+    return SimpleNamespace(name=name, address=identifier)
+
+
+def _advertisement(*, local_name: str | None = None, rssi: int | None = None):
+    return SimpleNamespace(local_name=local_name, rssi=rssi)
+
+
+def test_scan_all_devices_keeps_non_ringo_and_macos_identifiers(monkeypatch):
+    printer = _device("Office Printer", "AA:BB:CC:DD:EE:01")
+    unnamed_ring = _device(None, "57A74F5D-18EA-4C3B-83B2-987ED0512456")
+
+    async def discover(**_kwargs):
+        return {
+            "printer": (printer, _advertisement(rssi=-70)),
+            "ring": (unnamed_ring, _advertisement(local_name="My Voice Ring", rssi=-42)),
+        }
+
+    monkeypatch.setattr(control.BleakScanner, "discover", discover)
+
+    found = asyncio.run(control.scan_all_devices(0.01))
+
+    assert [item.name for item in found] == ["My Voice Ring", "Office Printer"]
+    assert found[0].identifier == "57A74F5D-18EA-4C3B-83B2-987ED0512456"
+    assert found[0].rssi == -42
+
+
+def test_legacy_scan_rings_still_supports_cli_name_filter(monkeypatch):
+    async def scan_all(_timeout):
+        return [
+            control.DiscoveredBLEDevice(_device("Ringo One", "1"), "Ringo One", "1"),
+            control.DiscoveredBLEDevice(_device("Other Device", "2"), "Other Device", "2"),
+        ]
+
+    monkeypatch.setattr(control, "scan_all_devices", scan_all)
+
+    found = asyncio.run(control.scan_rings("ringo", 0.01))
+
+    assert [item.address for item in found] == ["1"]
+
+
+def test_connect_target_rescans_without_name_filter(monkeypatch):
+    selected = _device("Custom Device", "MACOS-OPAQUE-UUID")
+
+    async def scan_all(_timeout):
+        return [
+            control.DiscoveredBLEDevice(
+                selected,
+                "Custom Device",
+                "MACOS-OPAQUE-UUID",
+            )
+        ]
+
+    monkeypatch.setattr(connection, "scan_all_devices", scan_all)
+
+    class FakeConnection(connection.ConnectionMixin):
+        name_keyword = "Ringo"
+        timeout_s = 0.01
+        scanned = []
+
+        async def _connect_device(self, target, *, new_session):
+            self.connected_target = target
+            self.new_session = new_session
+            return True
+
+    session = FakeConnection()
+    connected = asyncio.run(session.connect_target("MACOS-OPAQUE-UUID"))
+
+    assert connected is True
+    assert session.connected_target is selected
+    assert session.new_session is True

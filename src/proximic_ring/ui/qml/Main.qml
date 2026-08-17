@@ -40,6 +40,177 @@ ApplicationWindow {
         appController.requestQuit()
     }
 
+    Connections {
+        target: appController
+        function onDevicePickerRequested() {
+            devicePicker.open()
+        }
+    }
+
+    Dialog {
+        id: devicePicker
+        objectName: "devicePicker"
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        width: Math.min(620, parent.width - 48)
+        height: Math.min(520, parent.height - 48)
+        modal: true
+        popupType: Popup.Item
+        title: "选择蓝牙设备"
+        closePolicy: Popup.CloseOnEscape
+        onClosed: appController.stopDeviceDiscovery()
+
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 8
+
+                TextField {
+                    id: deviceSearchField
+                    objectName: "deviceSearchField"
+                    Layout.fillWidth: true
+                    text: appController.deviceSearch
+                    placeholderText: "搜索设备名称或标识"
+                    selectByMouse: true
+                    onTextEdited: appController.deviceSearch = text
+                }
+
+                Button {
+                    text: "清除"
+                    enabled: deviceSearchField.text.length > 0
+                    onClicked: {
+                        deviceSearchField.clear()
+                        appController.deviceSearch = ""
+                        deviceSearchField.forceActiveFocus()
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    Layout.fillWidth: true
+                    text: appController.scanMessage
+                    color: root.textMuted
+                    font.pixelSize: 13
+                    wrapMode: Text.Wrap
+                }
+                BusyIndicator {
+                    running: appController.scanBusy
+                    visible: running
+                    implicitWidth: 30
+                    implicitHeight: 30
+                }
+            }
+
+            Rectangle {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                radius: 12
+                color: root.panelAlt
+                border.color: root.border
+                clip: true
+
+                ListView {
+                    id: deviceList
+                    objectName: "deviceList"
+                    anchors.fill: parent
+                    anchors.margins: 6
+                    spacing: 6
+                    clip: true
+                    model: appController.availableDevices
+                    ScrollBar.vertical: ScrollBar { }
+
+                    delegate: Rectangle {
+                        required property var modelData
+                        width: deviceList.width
+                        height: 70
+                        radius: 9
+                        color: connectButton.hovered ? "#20293A" : "transparent"
+                        border.color: connectButton.hovered ? root.primary : "transparent"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.leftMargin: 14
+                            anchors.rightMargin: 10
+                            spacing: 12
+
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 3
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.name
+                                    color: root.textMain
+                                    font.pixelSize: 14
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: modelData.identifier
+                                          + (modelData.rssi === "" ? "" : "  ·  " + modelData.rssi + " dBm")
+                                    color: root.textMuted
+                                    font.pixelSize: 11
+                                    elide: Text.ElideMiddle
+                                }
+                            }
+
+                            Button {
+                                id: connectButton
+                                text: "连接"
+                                enabled: !appController.busy
+                                onClicked: {
+                                    devicePicker.close()
+                                    appController.connectToDevice(modelData.identifier, modelData.name)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Item { Layout.fillWidth: true }
+                Button {
+                    text: appController.scanBusy ? "实时扫描中…" : "重新开始扫描"
+                    enabled: !appController.scanBusy && !appController.busy
+                    onClicked: appController.scanDevices()
+                }
+                Button {
+                    text: "取消"
+                    onClicked: devicePicker.close()
+                }
+            }
+        }
+    }
+
+    Dialog {
+        id: gpuInstallDialog
+        objectName: "gpuInstallDialog"
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        width: Math.min(500, parent.width - 48)
+        modal: true
+        popupType: Popup.Item
+        title: "安装 NVIDIA GPU 加速"
+        standardButtons: Dialog.Ok | Dialog.Cancel
+        onAccepted: appController.installGpuSupport()
+
+        contentItem: Label {
+            width: gpuInstallDialog.availableWidth
+            text: "安装需要下载数 GB 文件。应用将退出并打开独立安装窗口；安装验证成功后会自动重新启动。是否继续？"
+            color: root.textMain
+            font.pixelSize: 13
+            wrapMode: Text.Wrap
+        }
+    }
+
     header: Rectangle {
         height: 78
         color: "#0D1118"
@@ -173,15 +344,15 @@ ApplicationWindow {
                         Button {
                             Layout.preferredWidth: appController.connected ? 170 : 220
                             Layout.preferredHeight: 44
-                            enabled: !appController.busy
+                            enabled: !appController.busy && !appController.scanBusy
                             text: appController.connected
                                   ? (appController.recognitionEnabled ? "暂停语音识别" : "开启语音识别")
-                                  : "连接设备"
+                                  : (appController.scanBusy ? "正在扫描设备…" : "选择并连接设备")
                             font.pixelSize: 14
                             font.bold: true
                             onClicked: appController.connected
                                        ? appController.toggleRecognition()
-                                       : appController.connectDevice()
+                                       : appController.requestDevicePicker()
                             contentItem: Label {
                                 text: parent.text
                                 color: "white"
@@ -340,20 +511,14 @@ ApplicationWindow {
                     Label { text: "设备与识别设置"; color: root.textMain; font.pixelSize: 17; font.bold: true; Layout.leftMargin: 20 }
                     Label { text: "设置会自动保存，下次启动继续使用"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
 
-                    Label { text: "Ring 设备名称"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    TextField {
+                    Label { text: "Ring 设备"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.deviceName
-                        onEditingFinished: appController.deviceName = text
+                        text: "通过主界面的“选择并连接设备”扫描附近设备，再点击对应设备连接。"
+                        color: root.textMain
+                        font.pixelSize: 12
+                        wrapMode: Text.Wrap
                     }
-                    Label { text: "设备选择器（可选）"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    TextField {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.selector
-                        placeholderText: "索引、名称或 BLE 地址"
-                        onEditingFinished: appController.selector = text
-                    }
-
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
                     Label { text: "ProxiMic 模型"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
@@ -392,8 +557,18 @@ ApplicationWindow {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; spacing: 10
                         ColumnLayout {
                             Layout.fillWidth: true
-                            Label { text: "运行设备"; color: root.textMuted; font.pixelSize: 12 }
-                            TextField { Layout.fillWidth: true; text: appController.asrDevice; onEditingFinished: appController.asrDevice = text }
+                            Label { text: "运行设备（本地 ASR）"; color: root.textMuted; font.pixelSize: 12 }
+                            ComboBox {
+                                id: asrDeviceCombo
+                                objectName: "asrDeviceCombo"
+                                Layout.fillWidth: true
+                                model: appController.computeDevices
+                                textRole: "label"
+                                valueRole: "value"
+                                enabled: appController.asrBackend !== "volcengine"
+                                currentIndex: Math.max(0, indexOfValue(appController.asrDevice))
+                                onActivated: appController.asrDevice = currentValue
+                            }
                         }
                         ColumnLayout {
                             Layout.preferredWidth: 110
@@ -405,6 +580,29 @@ ApplicationWindow {
                                 onActivated: appController.asrLanguage = currentText
                             }
                         }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: appController.asrBackend === "volcengine"
+                              ? "火山引擎是云端识别，不使用本机 CPU 或 GPU。"
+                              : appController.gpuStatusText
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
+                    Button {
+                        id: gpuInstallButton
+                        objectName: "gpuInstallButton"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "安装 NVIDIA GPU 加速"
+                        visible: appController.gpuInstallerAvailable
+                                 && appController.asrBackend !== "volcengine"
+                        enabled: !appController.connected && !appController.busy
+                        onClicked: gpuInstallDialog.open()
                     }
                     Label {
                         text: "streaming-sensevoice 目录"

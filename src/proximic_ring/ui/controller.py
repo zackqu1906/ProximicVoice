@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
+import subprocess
+import sys
 import threading
 
 from PySide6.QtCore import QObject, Property, QCoreApplication, QSettings, QTimer, Signal, Slot
@@ -23,12 +26,17 @@ class AppController(QObject):
     logChanged = Signal()
     settingsChanged = Signal()
     trayAvailableChanged = Signal()
+    devicesChanged = Signal()
+    scanBusyChanged = Signal()
+    deviceSearchChanged = Signal()
+    devicePickerRequested = Signal()
 
     _runtimeStatus = Signal(str)
     _runtimeStarted = Signal()
     _runtimeUpdate = Signal(str, bool, str)
     _runtimeFinished = Signal(str)
     _pushToTalkChanged = Signal(bool)
+    _scanFinished = Signal(object, str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -36,6 +44,7 @@ class AppController(QObject):
         self._connected = False
         self._recognition_enabled = False
         self._busy = False
+        self._scan_busy = False
         self._quitting = False
         self._quit_wait_ticks = 0
         self._tray_available = False
@@ -49,12 +58,19 @@ class AppController(QObject):
         self._log_lines: list[str] = []
         self._ptt_active = False
         self._worker: threading.Thread | None = None
+        self._scan_worker: threading.Thread | None = None
+        self._available_devices: list[dict[str, object]] = []
+        self._device_search = "Ringo"
+        self._discovery_active = False
+        self._pending_device_connection = False
+        self._scan_message = "打开设备列表后会实时发现附近的蓝牙设备"
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
 
         # Resolve bundled resources from the installed source tree instead of
         # depending on the terminal's current working directory.
         project_root = Path(__file__).resolve().parents[3]
+        self._project_root = project_root
         assets = Path(__file__).resolve().parents[1] / "assets"
         default_model = assets / "ringo-near-v1.model"
         default_repo = project_root / "third_party" / "streaming-sensevoice"
@@ -76,9 +92,27 @@ class AppController(QObject):
         self._asr_model = str(
             self._settings.value("asr/model", "iic/SenseVoiceSmall")
         )
-        # CPU is the safest first-run default for a cloned project. Users with
-        # a compatible CUDA environment can select cuda:0 in the UI.
-        self._asr_device = str(self._settings.value("asr/device", "cpu"))
+        self._nvidia_gpu_name = self._detect_nvidia_gpu_name()
+        self._compute_devices, self._gpu_status_text = self._detect_compute_devices(
+            self._nvidia_gpu_name
+        )
+        default_asr_device = next(
+            (
+                str(item["value"])
+                for item in self._compute_devices
+                if str(item["value"]).startswith("cuda:")
+            ),
+            "cpu",
+        )
+        self._asr_device = str(
+            self._settings.value("asr/device", default_asr_device)
+        )
+        available_device_values = {
+            str(item["value"]) for item in self._compute_devices
+        }
+        if self._asr_device not in available_device_values:
+            self._asr_device = "cpu"
+            self._settings.setValue("asr/device", self._asr_device)
         self._asr_language = str(self._settings.value("asr/language", "zh"))
         self._streaming_repo = str(
             self._settings.value(
@@ -107,12 +141,77 @@ class AppController(QObject):
         self._quit_timer = QTimer(self)
         self._quit_timer.setInterval(100)
         self._quit_timer.timeout.connect(self._finish_quit)
+        self._rescan_timer = QTimer(self)
+        self._rescan_timer.setSingleShot(True)
+        self._rescan_timer.setInterval(600)
+        self._rescan_timer.timeout.connect(self._scan_devices_once)
 
         self._runtimeStatus.connect(self._apply_runtime_status)
         self._runtimeStarted.connect(self._apply_runtime_started)
         self._runtimeUpdate.connect(self._apply_runtime_update)
         self._runtimeFinished.connect(self._apply_runtime_finished)
         self._pushToTalkChanged.connect(self._apply_push_to_talk)
+        self._scanFinished.connect(self._apply_scan_finished)
+
+    @staticmethod
+    def _detect_compute_devices(
+        nvidia_gpu_name: str = "",
+    ) -> tuple[list[dict[str, str]], str]:
+        devices = [{"label": "CPU（兼容性最佳）", "value": "cpu"}]
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                count = int(torch.cuda.device_count())
+                for index in range(count):
+                    try:
+                        name = str(torch.cuda.get_device_name(index)).strip()
+                    except BaseException:
+                        name = "NVIDIA GPU"
+                    devices.append(
+                        {
+                            "label": f"GPU {index + 1} · {name}",
+                            "value": f"cuda:{index}",
+                        }
+                    )
+                return devices, f"检测到 {count} 张可用的 NVIDIA GPU，切换后下次连接生效。"
+        except BaseException:
+            pass
+
+        if sys.platform == "darwin":
+            message = "macOS 当前使用 CPU；ASR 的 Apple GPU 加速尚未开放。"
+        elif nvidia_gpu_name:
+            message = (
+                f"检测到 {nvidia_gpu_name}，但当前是 CPU 版 PyTorch。"
+                "可以在下方安装 NVIDIA GPU 加速。"
+            )
+        else:
+            message = (
+                "未检测到可用的 NVIDIA GPU；如本机有独立显卡，请安装 CUDA 版 "
+                "PyTorch 后重启应用。"
+            )
+        return devices, message
+
+    @staticmethod
+    def _detect_nvidia_gpu_name() -> str:
+        if sys.platform != "win32":
+            return ""
+        creation_flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        try:
+            result = subprocess.run(
+                ["nvidia-smi.exe", "--query-gpu=name", "--format=csv,noheader"],
+                check=False,
+                capture_output=True,
+                text=True,
+                timeout=5,
+                creationflags=creation_flags,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return ""
+        if result.returncode != 0:
+            return ""
+        names = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+        return ", ".join(names)
 
     def _bool_setting(self, key: str, default: bool) -> bool:
         value = self._settings.value(key, default)
@@ -137,6 +236,40 @@ class AppController(QObject):
     @Property(bool, notify=busyChanged)
     def busy(self) -> bool:
         return self._busy
+
+    @Property(bool, notify=scanBusyChanged)
+    def scanBusy(self) -> bool:
+        return self._scan_busy
+
+    @Property("QVariantList", notify=devicesChanged)
+    def availableDevices(self) -> list[dict[str, object]]:
+        query = self._device_search.strip().casefold()
+        if not query:
+            return list(self._available_devices)
+        return [
+            item
+            for item in self._available_devices
+            if query in str(item.get("name", "")).casefold()
+            or query in str(item.get("identifier", "")).casefold()
+        ]
+
+    @Property(str, notify=deviceSearchChanged)
+    def deviceSearch(self) -> str:
+        return self._device_search
+
+    @deviceSearch.setter
+    def deviceSearch(self, value: str) -> None:
+        value = str(value)
+        if value == self._device_search:
+            return
+        self._device_search = value
+        self.deviceSearchChanged.emit()
+        self._refresh_scan_message()
+        self.devicesChanged.emit()
+
+    @Property(str, notify=devicesChanged)
+    def scanMessage(self) -> str:
+        return self._scan_message
 
     @Property(str, notify=statusChanged)
     def statusTitle(self) -> str:
@@ -267,6 +400,25 @@ class AppController(QObject):
     def asrDevice(self, value: str) -> None:
         self._set_setting("_asr_device", str(value), "asr/device")
 
+    @Property("QVariantList", constant=True)
+    def computeDevices(self) -> list[dict[str, str]]:
+        return list(self._compute_devices)
+
+    @Property(str, constant=True)
+    def gpuStatusText(self) -> str:
+        return self._gpu_status_text
+
+    @Property(bool, constant=True)
+    def gpuInstallerAvailable(self) -> bool:
+        if sys.platform != "win32" or not self._nvidia_gpu_name:
+            return False
+        if any(
+            str(item["value"]).startswith("cuda:")
+            for item in self._compute_devices
+        ):
+            return False
+        return (self._project_root / "scripts" / "install-gpu.ps1").is_file()
+
     @Property(str, notify=settingsChanged)
     def asrLanguage(self) -> str:
         return self._asr_language
@@ -324,7 +476,156 @@ class AppController(QObject):
 
     # Commands ------------------------------------------------------------------
     @Slot()
+    def installGpuSupport(self) -> None:
+        if not self.gpuInstallerAvailable:
+            self._set_status(
+                "无法安装 GPU 加速",
+                "未检测到可升级的 NVIDIA GPU 环境",
+                "error",
+            )
+            return
+        if self._connected or self._busy:
+            self._set_status(
+                "请先断开设备",
+                "安装 GPU 运行库前需要停止当前识别和设备连接",
+                "error",
+            )
+            return
+
+        script = self._project_root / "scripts" / "install-gpu.ps1"
+        command = [
+            "powershell.exe",
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            str(script),
+            "-WaitForProcessId",
+            str(QCoreApplication.applicationPid()),
+            "-Restart",
+            "-Interactive",
+        ]
+        try:
+            subprocess.Popen(
+                command,
+                cwd=str(self._project_root),
+                creationflags=getattr(subprocess, "CREATE_NEW_CONSOLE", 0),
+            )
+        except OSError as exc:
+            self._set_status("无法启动安装程序", str(exc), "error")
+            self._append_log(f"GPU 安装程序启动失败：{exc}")
+            return
+
+        self._append_log("已启动 NVIDIA GPU 安装程序，应用即将退出")
+        self._set_status(
+            "正在切换到 GPU 版本",
+            "请在安装窗口中查看进度，完成后应用会自动重启",
+            "stopping",
+        )
+        QTimer.singleShot(250, self.requestQuit)
+
+    @Slot()
     def connectDevice(self) -> None:
+        """Open the device picker instead of connecting by a name heuristic."""
+        self.requestDevicePicker()
+
+    @Slot()
+    def requestDevicePicker(self) -> None:
+        if self._connected or self._busy:
+            return
+        self.devicePickerRequested.emit()
+        self.scanDevices()
+
+    @Slot()
+    def scanDevices(self) -> None:
+        if self._connected or self._busy or self._scan_busy:
+            return
+        self._discovery_active = True
+        self._pending_device_connection = False
+        self._rescan_timer.stop()
+        self._available_devices = []
+        self._scan_message = "正在实时发现附近的蓝牙设备…"
+        self.devicesChanged.emit()
+        self._set_status("正在扫描", "请选择列表中的设备进行连接", "starting")
+        self._append_log("开始实时发现附近的蓝牙设备（不按名称过滤）")
+        self._scan_devices_once()
+
+    @Slot()
+    def stopDeviceDiscovery(self) -> None:
+        self._discovery_active = False
+        self._rescan_timer.stop()
+
+    @Slot()
+    def _scan_devices_once(self) -> None:
+        if (
+            not self._discovery_active
+            or self._connected
+            or self._busy
+            or self._scan_busy
+        ):
+            return
+        worker = self._scan_worker
+        if worker is not None and worker.is_alive():
+            return
+
+        self._scan_busy = True
+        self.scanBusyChanged.emit()
+        self._refresh_scan_message()
+
+        timeout_s = 3.0
+
+        def scan_main() -> None:
+            rows: list[dict[str, object]] = []
+            error = ""
+            try:
+                from ring_python_sdk.ble import scan_all_devices
+
+                discovered = asyncio.run(scan_all_devices(timeout_s))
+                rows = [
+                    {
+                        "name": item.name or "未命名设备",
+                        "identifier": item.identifier,
+                        "rssi": item.rssi if item.rssi is not None else "",
+                    }
+                    for item in discovered
+                ]
+            except BaseException as exc:
+                error = str(exc)
+            self._scanFinished.emit(rows, error)
+
+        self._scan_worker = threading.Thread(
+            target=scan_main,
+            name="ProxiMicBleScan",
+            daemon=True,
+        )
+        self._scan_worker.start()
+
+    @Slot(str, str)
+    def connectToDevice(self, identifier: str, name: str) -> None:
+        if self._connected or self._busy:
+            return
+        identifier = str(identifier).strip()
+        if not identifier:
+            self._set_status("无法连接", "设备标识为空，请重新扫描", "error")
+            return
+        display_name = str(name).strip() or "未命名设备"
+        self._selector = identifier
+        self._device_name = display_name
+        self._settings.setValue("ring/selector", identifier)
+        self._settings.setValue("ring/name", display_name)
+        self.settingsChanged.emit()
+        self.stopDeviceDiscovery()
+        if self._scan_busy:
+            self._pending_device_connection = True
+            self._set_status(
+                "正在连接",
+                f"正在结束扫描并连接 {self._device_name}",
+                "starting",
+            )
+            return
+        self._start_selected_device()
+
+    def _start_selected_device(self) -> None:
         if self._worker is not None and self._worker.is_alive():
             return
         try:
@@ -338,8 +639,12 @@ class AppController(QObject):
         self._recognition_event = threading.Event()
         self._busy = True
         self.busyChanged.emit()
-        self._set_status("正在连接", "正在准备检测模型、语音模型和 Ring 设备", "starting")
-        self._append_log("开始连接语音设备")
+        self._set_status(
+            "正在连接",
+            f"正在准备模型并连接 {self._device_name}",
+            "starting",
+        )
+        self._append_log(f"开始连接设备：{self._device_name} ({self._selector})")
         runtime = RecognitionRuntime(settings)
 
         def worker_main() -> None:
@@ -436,6 +741,7 @@ class AppController(QObject):
 
     @Slot()
     def requestQuit(self) -> None:
+        self.stopDeviceDiscovery()
         if self._quitting:
             # A second close/Ctrl+C is an explicit request not to wait for
             # graceful device cleanup any longer.
@@ -466,6 +772,101 @@ class AppController(QObject):
         ):
             self._quit_timer.stop()
             QCoreApplication.quit()
+
+    @Slot(object, str)
+    def _apply_scan_finished(self, devices: object, error: str) -> None:
+        self._scan_worker = None
+        self._scan_busy = False
+        self.scanBusyChanged.emit()
+
+        rows = list(devices) if isinstance(devices, list) else []
+        added = self._merge_discovered_devices(rows)
+
+        if self._pending_device_connection:
+            self._pending_device_connection = False
+            self._start_selected_device()
+            return
+
+        # The picker may have been cancelled while the platform scan was still
+        # finishing.  Do not change the main-window status after it is closed.
+        if not self._discovery_active:
+            return
+
+        if error:
+            if self._discovery_active:
+                self._scan_message = f"本轮扫描失败，稍后自动重试：{error}"
+                self.devicesChanged.emit()
+                self._append_log(f"蓝牙扫描本轮失败，将自动重试：{error}")
+                self._rescan_timer.start(1200)
+                return
+            self._scan_message = f"扫描失败：{error}"
+            self.devicesChanged.emit()
+            self._set_status("扫描失败", error, "error")
+            self._append_log(f"蓝牙扫描失败：{error}")
+            return
+
+        count = len(self._available_devices)
+        if count:
+            self._refresh_scan_message()
+            self._set_status("请选择设备", self._scan_message, "idle")
+            if added:
+                self._append_log(f"发现 {added} 个新设备，当前共 {count} 个")
+        else:
+            self._scan_message = (
+                "正在实时发现设备，请确认设备可被发现以及系统蓝牙权限"
+                if self._discovery_active
+                else "没有发现蓝牙设备，请确认蓝牙权限后重新扫描"
+            )
+            self._set_status("未发现设备", self._scan_message, "idle")
+        if added or not count:
+            self.devicesChanged.emit()
+        if self._discovery_active and not self._connected and not self._busy:
+            self._rescan_timer.start()
+
+    def _merge_discovered_devices(self, rows: list[object]) -> int:
+        """Merge scan results without moving rows already visible to the user."""
+        existing = {
+            str(item.get("identifier", "")).casefold(): item
+            for item in self._available_devices
+        }
+        added = 0
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            identifier = str(row.get("identifier", "")).strip()
+            if not identifier:
+                continue
+            key = identifier.casefold()
+            current = existing.get(key)
+            if current is None:
+                current = {
+                    "name": str(row.get("name", "")).strip() or "未命名设备",
+                    "identifier": identifier,
+                    "rssi": row.get("rssi", ""),
+                }
+                self._available_devices.append(current)
+                existing[key] = current
+                added += 1
+            else:
+                current["name"] = (
+                    str(row.get("name", "")).strip()
+                    or str(current.get("name", ""))
+                    or "未命名设备"
+                )
+                current["rssi"] = row.get("rssi", current.get("rssi", ""))
+        return added
+
+    def _refresh_scan_message(self) -> None:
+        total = len(self._available_devices)
+        visible = len(self.availableDevices)
+        query = self._device_search.strip()
+        if query:
+            message = f"已发现 {total} 个设备，显示 {visible} 个匹配“{query}”的设备"
+        else:
+            message = f"已发现 {total} 个设备"
+        if self._discovery_active:
+            message += "；列表正在实时更新"
+        self._scan_message = message
 
     # Worker event application --------------------------------------------------
     def _publish_update(self, update) -> None:
@@ -590,8 +991,8 @@ class AppController(QObject):
                 raise ValueError("Fun-ASR-Nano 必须配置 Fun-ASR-main 目录")
             if not (funasr_repo / "model.py").is_file():
                 raise ValueError(f"Fun-ASR 目录中没有 model.py：{funasr_repo}")
-        if not self._device_name.strip():
-            raise ValueError("设备名称不能为空")
+        if not self._selector.strip():
+            raise ValueError("请先扫描并选择要连接的设备")
         if self._stage1_threshold <= 0:
             raise ValueError("Stage1 threshold 必须大于 0")
         return RuntimeSettings(

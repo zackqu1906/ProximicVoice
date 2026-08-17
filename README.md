@@ -24,7 +24,8 @@ Proximic Voice 是面向 Ringo 可穿戴设备的近场实时语音输入工具�
 - Windows 安装不要求预先安装 Python；Mac 需要 Python 3.11。
 - 支持蓝牙的电脑和 Ringo 设备。
 - 首次安装依赖和首次下载 ASR 模型时需要联网。
-- 标准安装使用经过验证的 CPU 版 PyTorch，UI 中的 ASR 设备保持为 `cpu`。CUDA 属于开发者可选配置，不在标准安装保证范围内。
+- Windows 安装时可选择兼容性更好的 CPU 模式，或经过验证的 NVIDIA GPU 模式。
+  Apple Silicon macOS 当前使用 CPU。
 
 Fun-ASR-Nano 的模型权重约 2 GB，不包含在 Git 仓库中。第一次使用该后端时会由
 模型库下载到本机缓存。
@@ -35,6 +36,18 @@ Fun-ASR-Nano 的模型权重约 2 GB，不包含在 Git 仓库中。第一次使
 git clone <你的仓库地址>
 cd ProximicVoice
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+安装脚本会显示 CPU/GPU 选择。CPU 适用于所有支持的 Windows 电脑；检测到 NVIDIA
+显卡时可以选择 GPU，脚本会直接安装 CUDA 版 PyTorch，不会先下载 CPU 版再覆盖。
+无人值守或需要明确指定时使用：
+
+```powershell
+# CPU
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Compute cpu
+
+# NVIDIA GPU（CUDA 12.8）
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Compute cuda
 ```
 
 安装脚本会从 `python.org` 下载并校验固定的 64 位 CPython 3.11.9，解压到项目的
@@ -62,7 +75,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Recreate
 
 ## macOS（Apple Silicon）
 
-Mac 使用项目内独立环境和缓存，不读取 Windows 依赖锁。首次安装：
+Mac 使用项目内独立环境和缓存，并通过 `requirements-macos.lock` 固定关键原生依赖。
+首次安装：
 
 ```bash
 ./scripts/setup-macos.sh
@@ -89,20 +103,35 @@ PROXIMIC_PYTHON=/opt/homebrew/bin/python3.11 ./scripts/setup-macos.sh
 首次连接 Ring 时，允许 Terminal 或 Python 使用蓝牙。若曾拒绝授权，请在
 “系统设置 → 隐私与安全性 → 蓝牙”中重新开启。
 
-macOS 当前支持 Ring BLE、ProxiMic 检测、实时 ASR、字幕与编辑区。Windows Unicode
+macOS 当前支持 Ring BLE、ProxiMic 检测、三个 UI 可选 ASR 后端、字幕与编辑区。Windows Unicode
 文字注入和 `Ctrl+Alt+Space` 全局按住说话在 Mac 上会自动关闭，不影响其余识别链路。
+Mac 安装脚本使用原生 Apple Silicon PyTorch，但本项目当前尚未开放 MPS ASR 加速，
+所以“运行设备”只显示 CPU。
 
 `.runtime/`、`.cache/` 都位于项目目录且不会提交到 Git。项目放在哪个盘，
 运行时、依赖和模型缓存就位于哪个盘。
 
 ## 界面使用
 
-1. 检查 Ring 名称、ProxiMic 模型、Stage1 threshold 和 ASR 后端。
-2. 点击“连接设备”，加载模型并建立 Ring 连接。
-3. 点击“开启语音识别”开始自动近场识别。
-4. “暂停语音识别”只暂停检测和 ASR，Ring 仍保持连接。
-5. 需要释放硬件时单独点击“断开设备”。
-6. 关闭主窗口会退出程序；终端中的 `Ctrl+C` 也会触发退出。
+1. 检查 ProxiMic 模型、Stage1 threshold 和 ASR 后端。
+2. 点击“选择并连接设备”，应用会实时发现附近的 BLE 设备。
+3. 搜索框默认填写 `Ringo`，用于缩小显示范围；可以修改搜索词，也可以清空后查看全部设备。
+4. 在列表中确认设备名称和标识，点击对应设备右侧的“连接”。程序不会自动选择设备。
+5. 连接成功后点击“开启语音识别”，开始 ProxiMic 自动近场监听。
+6. “暂停语音识别”只暂停检测和 ASR，Ring 仍保持连接。
+7. 需要释放硬件时单独点击“断开设备”。
+8. 关闭主窗口会退出程序；终端中的 `Ctrl+C` 也会触发退出。
+
+“运行设备”使用下拉选择：始终提供 CPU，并自动列出当前 PyTorch 能识别的 NVIDIA GPU
+及其名称。用户不需要手动填写 `cuda:0`；如果没有显示 GPU，请安装 CUDA 版 PyTorch
+并重启应用。如果 Windows 检测到 NVIDIA 显卡、但当前安装的是 CPU 版 PyTorch，设置区
+会显示“安装 NVIDIA GPU 加速”按钮；确认后应用退出，由独立脚本完成安装、验证并重启。
+macOS 当前保持使用 CPU，不会显示该 Windows 专用安装按钮。
+
+扫描本身不会按名称过滤，搜索框只控制列表中显示的项目。设备首次出现后位置保持不变，
+后续扫描只更新已有信息并把新设备追加到末尾，避免实时刷新导致列表反复重排。Windows
+通常显示 MAC 地址，macOS 通常显示 CoreBluetooth UUID。点击连接后还会检查设备是否提供项目需要的 NUS 服务，普通 BLE
+设备连接失败时会给出错误，不会被当作 Ring 使用。
 
 ### 容易混淆的运行状态
 
@@ -164,7 +193,7 @@ ASR 模型第一次使用时需要下载；以后启动时仍要从硬盘加载�
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -c requirements-windows.lock -e ".[ring,asr-streaming-sensevoice,asr-funasr-nano,ui]"
+python -m pip install -c requirements-windows.lock -e ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]"
 python -m proximic_ring.ui
 ```
 

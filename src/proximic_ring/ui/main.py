@@ -74,11 +74,12 @@ def main(argv: list[str] | None = None) -> int:
             if controller.connected:
                 controller.disconnectDevice()
             else:
-                controller.connectDevice()
+                show_window()
+                controller.requestDevicePicker()
 
         def refresh_tray() -> None:
             connection_action.setText("断开设备" if controller.connected else "连接设备")
-            connection_action.setEnabled(not controller.busy)
+            connection_action.setEnabled(not controller.busy and not controller.scanBusy)
             recognition_action.setText(
                 "暂停语音识别" if controller.recognitionEnabled else "开启语音识别"
             )
@@ -92,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         controller.connectedChanged.connect(refresh_tray)
         controller.recognitionEnabledChanged.connect(refresh_tray)
         controller.busyChanged.connect(refresh_tray)
+        controller.scanBusyChanged.connect(refresh_tray)
         controller.statusChanged.connect(refresh_tray)
         tray.activated.connect(
             lambda reason: show_window()

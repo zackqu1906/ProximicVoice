@@ -29,6 +29,12 @@ fi
 RUNTIME_ROOT="$PROJECT_ROOT/.runtime"
 VENV_ROOT="$RUNTIME_ROOT/venv"
 VENV_PYTHON="$VENV_ROOT/bin/python"
+CONSTRAINT_FILE="$PROJECT_ROOT/requirements-macos.lock"
+
+if [[ ! -f "$CONSTRAINT_FILE" ]]; then
+    echo "Missing requirements-macos.lock. Clone or download the complete project." >&2
+    exit 1
+fi
 
 mkdir -p \
     "$PROJECT_ROOT/.cache/pip" \
@@ -48,9 +54,9 @@ elif ! "$VENV_PYTHON" -c 'import sys; raise SystemExit(sys.version_info[:2] != (
     exit 1
 fi
 
-"$VENV_PYTHON" -m pip install --upgrade pip "setuptools<82" wheel
-"$VENV_PYTHON" -m pip install -e ".[ring,asr-streaming-sensevoice,ui]"
-"$VENV_PYTHON" -c 'import torch, torchaudio, PySide6, bleak, funasr, proximic_ring; import proximic_ring.ui.main; print("macOS installation self-check passed.")'
+"$VENV_PYTHON" -m pip install --upgrade "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
+"$VENV_PYTHON" -m pip install -c "$CONSTRAINT_FILE" -e ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]"
+"$VENV_PYTHON" -c 'import torch, torchaudio, PySide6, bleak, funasr, modelscope, transformers, websocket, asr_decoder, online_fbank, zhconv, pyopenjtalk, proximic_ring; import proximic_ring.ui.main; assert torch.version.cuda is None; print("Torch:", torch.__version__); print("Compute: cpu"); print("macOS installation self-check passed.")'
 
 echo
 echo "Installation completed. Start Proximic Voice with:"

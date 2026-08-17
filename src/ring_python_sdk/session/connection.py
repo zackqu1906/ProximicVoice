@@ -10,6 +10,7 @@ from bleak import BleakClient, BleakError
 from ring_python_sdk.ble import (
     ensure_nus_characteristics,
     find_ring,
+    scan_all_devices,
     scan_rings,
     send_battery_get,
     send_hid_get,
@@ -33,11 +34,19 @@ class ConnectionMixin:
             return False
         return await self._connect_device(target, new_session=True)
 
-    async def scan(self, *, quiet: bool = False) -> list[Any]:
-        self.scanned = await scan_rings(self.name_keyword, self.timeout_s)
+    async def scan(self, *, quiet: bool = False, all_devices: bool = False) -> list[Any]:
+        if all_devices:
+            self.scanned = [
+                item.device for item in await scan_all_devices(self.timeout_s)
+            ]
+        else:
+            self.scanned = await scan_rings(self.name_keyword, self.timeout_s)
         if not self.scanned:
             if not quiet:
-                print(f"No devices matching {self.name_keyword!r}.")
+                if all_devices:
+                    print("No BLE devices found.")
+                else:
+                    print(f"No devices matching {self.name_keyword!r}.")
             return []
         if not quiet:
             print(f"Found {len(self.scanned)} device(s):")
@@ -57,7 +66,7 @@ class ConnectionMixin:
     async def connect_target(self, selector: str) -> bool:
         """Switch to one ring (disconnects current). selector: index / name / address."""
         if not self.scanned:
-            await self.scan()
+            await self.scan(all_devices=True)
         if not self.scanned:
             return False
 
@@ -77,8 +86,11 @@ class ConnectionMixin:
                     target = dev
                     break
             if target is None:
-                # Try fresh scan for exact address / name
-                matches = await scan_rings(sel if ":" not in sel else self.name_keyword, self.timeout_s)
+                # Try a fresh unfiltered scan for the selected opaque identifier
+                # or name.  macOS identifiers are UUIDs rather than MAC addresses.
+                matches = [
+                    item.device for item in await scan_all_devices(self.timeout_s)
+                ]
                 for dev in matches:
                     if sel.lower() == dev.address.lower() or (
                         dev.name and sel.lower() in dev.name.lower()
@@ -183,9 +195,10 @@ class ConnectionMixin:
                 pass
 
             try:
-                matches = await scan_rings(
-                    self.name_keyword, min(self.timeout_s, 3.0)
-                )
+                matches = [
+                    item.device
+                    for item in await scan_all_devices(min(self.timeout_s, 3.0))
+                ]
                 for dev in matches:
                     if dev.address.lower() == self.target_address.lower() or (
                         self.target_name

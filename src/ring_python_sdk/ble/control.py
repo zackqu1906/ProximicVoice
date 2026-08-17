@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import struct
+from typing import Any
 
 from bleak import BleakClient, BleakError, BleakScanner
 
@@ -62,6 +64,69 @@ from ring_python_sdk.core.mac_status import build_mac_get
 from ring_python_sdk.core.pcba_status import build_pcba_status_get
 from ring_python_sdk.core.shipmode import build_shipmode_enter
 
+
+@dataclass(frozen=True)
+class DiscoveredBLEDevice:
+    """A platform-neutral BLE scan result suitable for UI presentation."""
+
+    device: Any
+    name: str
+    identifier: str
+    rssi: int | None = None
+
+
+async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
+    """Return every nearby BLE device without applying a name filter.
+
+    On Windows ``identifier`` is normally a MAC address.  On macOS Bleak uses
+    CoreBluetooth identifiers, which are UUID strings and must be preserved as
+    opaque values.
+    """
+
+    print(f"Scanning BLE devices for {timeout:.1f}s ...")
+    discovered = await BleakScanner.discover(timeout=timeout, return_adv=True)
+    if isinstance(discovered, dict):
+        items = discovered.values()
+    else:
+        items = [(device, None) for device in discovered]
+
+    by_identifier: dict[str, DiscoveredBLEDevice] = {}
+    for item in items:
+        if isinstance(item, tuple):
+            device, advertisement = item
+        else:
+            device, advertisement = item, None
+        identifier = str(getattr(device, "address", "") or "").strip()
+        if not identifier:
+            continue
+        name = str(
+            getattr(device, "name", None)
+            or (getattr(advertisement, "local_name", None) if advertisement else None)
+            or ""
+        ).strip()
+        raw_rssi = getattr(advertisement, "rssi", None) if advertisement else None
+        try:
+            rssi = int(raw_rssi) if raw_rssi is not None else None
+        except (TypeError, ValueError):
+            rssi = None
+        by_identifier[identifier.casefold()] = DiscoveredBLEDevice(
+            device=device,
+            name=name,
+            identifier=identifier,
+            rssi=rssi,
+        )
+
+    results = list(by_identifier.values())
+    results.sort(
+        key=lambda item: (
+            not bool(item.name),
+            item.name.casefold(),
+            item.identifier.casefold(),
+        )
+    )
+    return results
+
+
 async def find_ring(name_keyword: str, timeout: float):
     matches = await scan_rings(name_keyword, timeout)
     return matches[0] if matches else None
@@ -69,27 +134,12 @@ async def find_ring(name_keyword: str, timeout: float):
 
 async def scan_rings(name_keyword: str, timeout: float):
     """Scan and return all devices whose name contains name_keyword (case-insensitive)."""
-    print(f"Scanning BLE devices for {timeout:.1f}s ...")
-    discovered = await BleakScanner.discover(timeout=timeout, return_adv=True)
-    keyword = name_keyword.lower()
-    matches = []
-    # discover(..., return_adv=True) -> dict[str, tuple[BLEDevice, AdvertisementData]]
-    if isinstance(discovered, dict):
-        items = discovered.values()
-    else:
-        items = [(d, None) for d in discovered]
-
-    for item in items:
-        if isinstance(item, tuple):
-            dev, adv = item
-        else:
-            dev, adv = item, None
-        name = dev.name or (getattr(adv, "local_name", None) if adv else None)
-        if name and keyword in name.lower():
-            matches.append(dev)
-
-    matches.sort(key=lambda d: (d.name or "", d.address))
-    return matches
+    keyword = name_keyword.casefold()
+    return [
+        item.device
+        for item in await scan_all_devices(timeout)
+        if item.name and keyword in item.name.casefold()
+    ]
 
 
 def ensure_nus_characteristics(client: BleakClient) -> tuple[str, str]:

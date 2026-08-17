@@ -1,6 +1,8 @@
 param(
     [switch]$SkipFunASR,
-    [switch]$Recreate
+    [switch]$Recreate,
+    [ValidateSet("prompt", "cpu", "cuda")]
+    [string]$Compute = "prompt"
 )
 
 $ErrorActionPreference = "Stop"
@@ -42,11 +44,58 @@ function Remove-ProjectDirectory([string]$Path, [string]$ExpectedName) {
     }
 }
 
+function Get-NvidiaGpuNames {
+    $NvidiaSmi = Get-Command "nvidia-smi.exe" -ErrorAction SilentlyContinue
+    if ($null -eq $NvidiaSmi) {
+        return @()
+    }
+    $Output = & $NvidiaSmi.Source --query-gpu=name --format=csv,noheader 2>$null
+    if ($LASTEXITCODE -ne 0) {
+        return @()
+    }
+    return @($Output | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Resolve-ComputeMode([string]$RequestedMode, [string[]]$GpuNames) {
+    if ($RequestedMode -eq "cuda") {
+        if ($GpuNames.Count -eq 0) {
+            throw "-Compute cuda was requested, but no working NVIDIA driver was detected."
+        }
+        return "cuda"
+    }
+    if ($RequestedMode -eq "cpu") {
+        return "cpu"
+    }
+
+    Write-Host ""
+    Write-Host "Choose the local ASR compute mode:"
+    Write-Host "  [1] CPU - works on every supported Windows computer (default)"
+    if ($GpuNames.Count -gt 0) {
+        Write-Host "  [2] NVIDIA GPU - faster, but downloads several additional GB"
+        Write-Host "      Detected: $($GpuNames -join ', ')"
+        $Choice = Read-Host "Enter 1 or 2"
+        if ($Choice.Trim() -eq "2") {
+            return "cuda"
+        }
+    } else {
+        Write-Host "  NVIDIA GPU option unavailable: no working NVIDIA driver was detected."
+    }
+    return "cpu"
+}
+
 if (-not [Environment]::Is64BitOperatingSystem) {
     throw "Proximic Voice requires 64-bit Windows."
 }
 
-Write-Host "[1/7] Checking bundled source repositories..."
+$NvidiaGpuNames = @(Get-NvidiaGpuNames)
+$ResolvedCompute = Resolve-ComputeMode -RequestedMode $Compute -GpuNames $NvidiaGpuNames
+$TorchIndexUrl = if ($ResolvedCompute -eq "cuda") {
+    "https://download.pytorch.org/whl/cu128"
+} else {
+    "https://download.pytorch.org/whl/cpu"
+}
+
+Write-Host "[1/8] Checking bundled source repositories..."
 $StreamingRepo = Join-Path $ProjectRoot "third_party\streaming-sensevoice"
 $FunRepo = Join-Path $ProjectRoot "third_party\Fun-ASR"
 if (-not (Test-Path -LiteralPath (Join-Path $StreamingRepo "streaming_sensevoice"))) {
@@ -59,7 +108,7 @@ if (-not (Test-Path -LiteralPath $ConstraintFile)) {
     throw "Missing requirements-windows.lock. Clone or download the complete project."
 }
 
-Write-Host "[2/7] Preparing project-local Python $PythonVersion..."
+Write-Host "[2/8] Preparing project-local Python $PythonVersion..."
 New-Item -ItemType Directory -Force -Path $DownloadRoot, $CacheRoot | Out-Null
 if (-not (Test-Path -LiteralPath $PythonArchive)) {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
@@ -78,14 +127,14 @@ if (-not (Test-Path -LiteralPath $RuntimePython)) {
 & $RuntimePython -c "import sys; assert sys.version_info[:3] == (3, 11, 9); print(sys.version)"
 Assert-LastCommand "project-local Python validation"
 
-Write-Host "[3/7] Preparing project-local caches..."
+Write-Host "[3/8] Preparing project-local caches..."
 $env:PIP_CACHE_DIR = Join-Path $CacheRoot "pip"
 $env:MODELSCOPE_CACHE = Join-Path $CacheRoot "modelscope"
 $env:HF_HOME = Join-Path $CacheRoot "huggingface"
 $env:TORCH_HOME = Join-Path $CacheRoot "torch"
 New-Item -ItemType Directory -Force -Path $env:PIP_CACHE_DIR, $env:MODELSCOPE_CACHE, $env:HF_HOME, $env:TORCH_HOME | Out-Null
 
-Write-Host "[4/7] Creating the isolated virtual environment..."
+Write-Host "[4/8] Creating the isolated virtual environment..."
 $MustRecreate = $Recreate.IsPresent
 if (Test-Path -LiteralPath $VenvPython) {
     $VenvConfig = Join-Path $VenvRoot "pyvenv.cfg"
@@ -104,24 +153,43 @@ if (-not (Test-Path -LiteralPath $VenvPython)) {
     Assert-LastCommand "virtual environment creation"
 }
 
-Write-Host "[5/7] Installing pinned packaging tools..."
+Write-Host "[5/8] Installing pinned packaging tools..."
 & $VenvPython -m pip install --upgrade "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
 Assert-LastCommand "pip bootstrap"
 
-Write-Host "[6/7] Installing Proximic Voice and ASR dependencies..."
-$Extras = if ($SkipFunASR) {
-    ".[ring,asr-streaming-sensevoice,ui]"
+Write-Host "[6/8] Installing the $ResolvedCompute PyTorch runtime..."
+$InstalledTorchFlavor = & $VenvPython -c "import torch; print('cuda' if torch.version.cuda else 'cpu')" 2>$null
+if ($LASTEXITCODE -ne 0) {
+    $InstalledTorchFlavor = ""
+}
+$InstalledTorchFlavor = "$InstalledTorchFlavor".Trim()
+if ($InstalledTorchFlavor -ne $ResolvedCompute) {
+    & $VenvPython -m pip install --force-reinstall --no-deps `
+        "torch==2.11.0" "torchaudio==2.11.0" --index-url $TorchIndexUrl
+    Assert-LastCommand "$ResolvedCompute PyTorch installation"
 } else {
-    ".[ring,asr-streaming-sensevoice,asr-funasr-nano,ui]"
+    Write-Host "The requested PyTorch runtime is already installed."
+}
+
+Write-Host "[7/8] Installing Proximic Voice and ASR dependencies..."
+$Extras = if ($SkipFunASR) {
+    ".[ring,asr-streaming-sensevoice,asr-volcengine,ui]"
+} else {
+    ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]"
 }
 & $VenvPython -m pip install -c $ConstraintFile -e $Extras
 Assert-LastCommand "project dependency installation"
 
-Write-Host "[7/7] Verifying native libraries and UI imports..."
-$SelfCheck = if ($SkipFunASR) {
-    "import sys, torch, PySide6, proximic_ring; import proximic_ring.ui.main; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('PySide6:', PySide6.__version__); print('Project:', proximic_ring.__file__); print('Installation self-check passed.')"
+Write-Host "[8/8] Verifying native libraries and UI imports..."
+$ComputeCheck = if ($ResolvedCompute -eq "cuda") {
+    "assert torch.version.cuda is not None; assert torch.cuda.is_available(); print('GPU:', torch.cuda.get_device_name(0))"
 } else {
-    "import sys, torch, torchaudio, PySide6, proximic_ring; import proximic_ring.ui.main; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('TorchAudio:', torchaudio.__version__); print('PySide6:', PySide6.__version__); print('Project:', proximic_ring.__file__); print('Installation self-check passed.')"
+    "assert torch.version.cuda is None"
+}
+$SelfCheck = if ($SkipFunASR) {
+    "import sys, torch, PySide6, proximic_ring; import proximic_ring.ui.main; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); $ComputeCheck; print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('PySide6:', PySide6.__version__); print('Project:', proximic_ring.__file__); print('Installation self-check passed.')"
+} else {
+    "import sys, torch, torchaudio, PySide6, proximic_ring; import proximic_ring.ui.main; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); $ComputeCheck; print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('TorchAudio:', torchaudio.__version__); print('PySide6:', PySide6.__version__); print('Project:', proximic_ring.__file__); print('Installation self-check passed.')"
 }
 & $VenvPython -c $SelfCheck
 Assert-LastCommand "installation self-check"
@@ -133,4 +201,5 @@ Write-Host ""
 Write-Host "Runtime: $PythonRoot"
 Write-Host "Environment: $VenvRoot"
 Write-Host "Cache: $CacheRoot"
+Write-Host "Compute: $ResolvedCompute"
 Write-Host "The first ASR run may download model weights. Fun-ASR-Nano is approximately 2 GB."

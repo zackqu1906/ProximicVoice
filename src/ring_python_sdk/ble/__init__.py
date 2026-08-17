@@ -1,8 +1,10 @@
 """BLE exports for ring control."""
 
 from ring_python_sdk.ble.control import (
+    DiscoveredBLEDevice,
     ensure_nus_characteristics,
     find_ring,
+    scan_all_devices,
     scan_rings,
     send_ble_test_start,
     send_ble_test_stop,
@@ -30,8 +32,10 @@ from ring_python_sdk.ble.control import (
 )
 
 __all__ = [
+    "DiscoveredBLEDevice",
     "ensure_nus_characteristics",
     "find_ring",
+    "scan_all_devices",
     "scan_rings",
     "send_ble_test_start",
     "send_ble_test_stop",

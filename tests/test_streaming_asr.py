@@ -22,6 +22,16 @@ def test_streaming_sensevoice_extra_includes_torchaudio():
     assert any(item.startswith("torchaudio") for item in dependencies)
 
 
+def test_all_extra_contains_streaming_and_volcengine_runtime_dependencies():
+    pyproject = Path(__file__).parents[1] / "pyproject.toml"
+    config = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    dependencies = config["project"]["optional-dependencies"]["all"]
+
+    assert "asr-decoder" in dependencies
+    assert "online-fbank" in dependencies
+    assert any(item.startswith("websocket-client") for item in dependencies)
+
+
 class FakeStreamingBackend:
     backend_name = "fake_stream"
     model_name = "fake-model"
