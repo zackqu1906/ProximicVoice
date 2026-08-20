@@ -214,7 +214,7 @@ def _add_asr_args(parser: argparse.ArgumentParser) -> None:
         "--push-to-talk",
         action="store_true",
         help=(
-            "Windows: hold Ctrl+Alt+Space to force the existing ProxiMic ASR session active. "
+            "Windows: hold right Alt to force the existing ProxiMic ASR session active. "
             "Release returns endpoint control to the automatic detector."
         ),
     )
@@ -254,6 +254,7 @@ def _build_session_controller(
     show_streaming_console: bool = True,
     push_to_talk_observer=None,
     desktop_should_inject=None,
+    backend_cache=None,
 ):
     selected = _selected_asr_backends(args)
     if not selected:
@@ -349,13 +350,29 @@ def _build_session_controller(
             options=option_map.get(name, {}),
         )
         kind = asr_backend_kind(name)
-        print(f"Loading ASR backend {name!r} ({kind}) ...")
+        backend = (
+            backend_cache.get(name, kind, settings)
+            if backend_cache is not None
+            else None
+        )
+
+        if backend is None:
+            print(f"Loading ASR backend {name!r} ({kind}) ...")
+            if kind == "batch":
+                backend = create_asr_backend(name, settings)
+            elif kind == "streaming":
+                backend = create_streaming_asr_backend(name, settings)
+            else:  # pragma: no cover - factory invariant
+                raise AssertionError(kind)
+            if backend_cache is not None:
+                backend_cache.put(name, kind, settings, backend)
+        else:
+            print(f"Reusing loaded ASR backend {name!r} ({kind}) ...")
+            on_state(f"正在复用已加载语音模型 {name}…")
 
         if kind == "batch":
-            backend = create_asr_backend(name, settings)
             batch_workers.append(ASRWorker(backend, on_result=_format_asr_result))
         elif kind == "streaming":
-            backend = create_streaming_asr_backend(name, settings)
             session_sinks.append(
                 StreamingASRWorker(backend, on_update=publish_streaming_update)
             )

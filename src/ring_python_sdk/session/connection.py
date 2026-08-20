@@ -105,6 +105,17 @@ class ConnectionMixin:
         print(f"Switching to {target.name!r} ({target.address}) ...")
         return await self._connect_device(target, new_session=True)
 
+    async def connect_device(self, target: Any) -> bool:
+        """Connect a BLEDevice returned by discovery without scanning again."""
+        if target is None:
+            return False
+        print(
+            "Using selected scan result: "
+            f"{getattr(target, 'name', None)!r} "
+            f"({getattr(target, 'address', '?')})"
+        )
+        return await self._connect_device(target, new_session=True)
+
     async def _connect_device(self, target: Any, *, new_session: bool) -> bool:
         """Connect to exactly one device; drop any previous link first."""
         async with self._connect_lock:

@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass, replace
+from datetime import datetime
+import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -8,11 +12,77 @@ import threading
 
 from PySide6.QtCore import QObject, Property, QCoreApplication, QSettings, QTimer, Signal, Slot
 
+from ..asr import ASRBackendCache
 from ..app_runtime import (
     WINDOWS_DESKTOP_INPUT_SUPPORTED,
     RecognitionRuntime,
     RuntimeSettings,
+    normalize_funasr_nano_hotwords,
 )
+from ..desktop_target import DesktopTargetRef, DesktopTextSnapshot
+from ..text_processing import (
+    DEFAULT_ARK_API_KEY_ENV,
+    DEFAULT_ARK_BASE_URL,
+    DEFAULT_ARK_MODEL,
+    DEFAULT_LOCAL_BASE_URL,
+    DEFAULT_LOCAL_CONTEXT_SIZE,
+    DEFAULT_LOCAL_MODEL,
+    DEFAULT_LOCAL_MODEL_PATH,
+    DEFAULT_LOCAL_REASONING,
+    DEFAULT_LOCAL_SERVER_PATH,
+    INPUT_MODE_DICTATION,
+    INPUT_MODE_EDIT,
+    LLM_PROVIDER_LOCAL,
+    LLM_PROVIDER_OPENAI,
+    LLM_PROVIDER_VOLCENGINE,
+    LLMSettings,
+    TextProcessingRequest,
+    TextProcessingResult,
+    TextProcessingWorker,
+    normalize_input_mode,
+    normalize_llm_provider,
+    validate_edit_target_text,
+)
+from ..voice_actions import (
+    ACTION_CANCEL,
+    ACTION_CONFIRM,
+    ACTION_EDIT,
+    ACTION_INPUT,
+    ACTION_RETRY,
+)
+
+
+@dataclass
+class _PendingInteraction:
+    target: DesktopTargetRef | None = None
+    snapshot: DesktopTextSnapshot | None = None
+
+
+@dataclass
+class _EditReview:
+    request_id: int
+    session_id: int
+    instruction: str
+    proposed_text: str
+    snapshot: DesktopTextSnapshot
+
+
+def _is_explicit_emptying_edit_plan(plan: object) -> bool:
+    """Return whether a validated operation plan explicitly removes text."""
+
+    if not isinstance(plan, dict) or plan.get("kind") != "operations":
+        return False
+    operations = plan.get("operations")
+    if not isinstance(operations, list):
+        return False
+    for operation in operations:
+        if not isinstance(operation, dict):
+            continue
+        if operation.get("op") == "delete":
+            return True
+        if operation.get("op") == "replace" and operation.get("value") == "":
+            return True
+    return False
 
 
 class AppController(QObject):
@@ -22,7 +92,8 @@ class AppController(QObject):
     busyChanged = Signal()
     statusChanged = Signal()
     transcriptChanged = Signal()
-    editorChanged = Signal()
+    sessionHistoryChanged = Signal()
+    interactionChanged = Signal()
     logChanged = Signal()
     settingsChanged = Signal()
     trayAvailableChanged = Signal()
@@ -30,13 +101,21 @@ class AppController(QObject):
     scanBusyChanged = Signal()
     deviceSearchChanged = Signal()
     devicePickerRequested = Signal()
+    reconnectAvailabilityChanged = Signal()
+    inputModeChanged = Signal()
+    textProcessingChanged = Signal()
 
     _runtimeStatus = Signal(str)
+    _runtimeConnected = Signal()
+    _runtimeDisconnected = Signal()
     _runtimeStarted = Signal()
-    _runtimeUpdate = Signal(str, bool, str)
+    _runtimeUpdate = Signal(str, bool, str, int)
     _runtimeFinished = Signal(str)
     _pushToTalkChanged = Signal(bool)
     _scanFinished = Signal(object, str)
+    _textProcessed = Signal(object)
+    _llmWarmupFinished = Signal(str, float)
+    _voiceActionRequested = Signal(str)
 
     def __init__(self) -> None:
         super().__init__()
@@ -54,15 +133,99 @@ class AppController(QObject):
         self._transcript_text = ""
         self._transcript_final = False
         self._transcript_visible = False
-        self._editor_text = ""
+        self._session_history_lines: list[str] = []
+        self._interaction_state = "idle"
+        self._edit_review: _EditReview | None = None
+        self._retry_snapshot: DesktopTextSnapshot | None = None
         self._log_lines: list[str] = []
         self._ptt_active = False
+        self._input_mode = normalize_input_mode(
+            str(self._settings.value("input/mode", INPUT_MODE_DICTATION))
+        )
+        self._llm_enabled = self._bool_setting("llm/enabled", False)
+        saved_llm_provider = str(self._settings.value("llm/provider", "")).strip()
+        saved_llm_base_url = str(self._settings.value("llm/baseUrl", "")).strip()
+        if saved_llm_provider:
+            self._llm_provider = normalize_llm_provider(saved_llm_provider)
+        elif saved_llm_base_url:
+            local_hosts = ("http://127.0.0.1", "http://localhost", "http://[::1]")
+            self._llm_provider = (
+                LLM_PROVIDER_LOCAL
+                if saved_llm_base_url.lower().startswith(local_hosts)
+                else LLM_PROVIDER_OPENAI
+            )
+        else:
+            self._llm_provider = LLM_PROVIDER_LOCAL
+        self._llm_base_url = saved_llm_base_url or (
+            DEFAULT_LOCAL_BASE_URL
+            if self._llm_provider == LLM_PROVIDER_LOCAL
+            else (
+                DEFAULT_ARK_BASE_URL
+                if self._llm_provider == LLM_PROVIDER_VOLCENGINE
+                else "https://api.openai.com/v1"
+            )
+        )
+        default_llm_model = (
+            DEFAULT_LOCAL_MODEL
+            if self._llm_provider == LLM_PROVIDER_LOCAL
+            else (
+                DEFAULT_ARK_MODEL
+                if self._llm_provider == LLM_PROVIDER_VOLCENGINE
+                else "gpt-5.6-luna"
+            )
+        )
+        self._llm_model = str(
+            self._settings.value("llm/model", default_llm_model)
+        ).strip()
+        default_key_env = ""
+        if self._llm_provider == LLM_PROVIDER_VOLCENGINE:
+            default_key_env = DEFAULT_ARK_API_KEY_ENV
+        elif self._llm_provider != LLM_PROVIDER_LOCAL:
+            default_key_env = "OPENAI_API_KEY"
+        self._llm_api_key_env = str(
+            self._settings.value("llm/apiKeyEnv", default_key_env)
+        ).strip()
+        self._llm_local_server_path = str(
+            self._settings.value(
+                "llm/localServerPath",
+                os.environ.get("LOCAL_LLM_SERVER_PATH", DEFAULT_LOCAL_SERVER_PATH),
+            )
+        )
+        self._llm_local_model_path = str(
+            self._settings.value(
+                "llm/localModelPath",
+                os.environ.get("LOCAL_LLM_MODEL_PATH", DEFAULT_LOCAL_MODEL_PATH),
+            )
+        )
+        try:
+            saved_llm_timeout = float(
+                self._settings.value("llm/timeoutSeconds", 30.0)
+            )
+        except (TypeError, ValueError):
+            saved_llm_timeout = 30.0
+        self._llm_timeout_s = max(1.0, min(saved_llm_timeout, 300.0))
+        self._text_request_id = 0
+        self._llm_warmup_requested = False
+        self._pending_text_requests: set[int] = set()
+        self._pending_interactions: dict[int, _PendingInteraction] = {}
+        self._session_input_modes: dict[int, str] = {}
+        self._session_targets: dict[int, DesktopTargetRef | None] = {}
+        self._desktop_target = None
         self._worker: threading.Thread | None = None
+        self._runtime_active = False
+        self._runtime_had_connection = False
+        self._asr_backend_cache = ASRBackendCache()
         self._scan_worker: threading.Thread | None = None
         self._available_devices: list[dict[str, object]] = []
+        self._device_handles: dict[str, object] = {}
+        self._selected_device: object | None = None
         self._device_search = "Ringo"
         self._discovery_active = False
         self._pending_device_connection = False
+        # A persisted selector is only a convenience for settings.  "Reconnect"
+        # becomes available after the user has selected/attempted a device in
+        # this application session, never merely because the app just opened.
+        self._can_reconnect = False
         self._scan_message = "打开设备列表后会实时发现附近的蓝牙设备"
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
@@ -77,6 +240,27 @@ class AppController(QObject):
         default_funasr_repo = project_root / "third_party" / "Fun-ASR"
         self._device_name = str(self._settings.value("ring/name", "Ringo"))
         self._selector = str(self._settings.value("ring/selector", ""))
+        try:
+            encoding_default_version = int(
+                self._settings.value("ring/audioEncodingDefaultVersion", 0)
+            )
+        except (TypeError, ValueError):
+            encoding_default_version = 0
+        if encoding_default_version < 1:
+            # One-time migration from the short-lived ADPCM UI default.  Later
+            # explicit user selections remain persistent.
+            saved_audio_encoding = "pcm"
+            self._settings.setValue("ring/audioEncoding", saved_audio_encoding)
+            self._settings.setValue("ring/audioEncodingDefaultVersion", 1)
+        else:
+            saved_audio_encoding = str(
+                self._settings.value("ring/audioEncoding", "pcm")
+            ).strip().lower()
+        self._audio_encoding = (
+            saved_audio_encoding
+            if saved_audio_encoding in {"adpcm", "pcm", "opus"}
+            else "pcm"
+        )
         self._model_path = str(
             self._settings.value(
                 "detector/model",
@@ -126,6 +310,11 @@ class AppController(QObject):
                 str(default_funasr_repo) if default_funasr_repo.exists() else "",
             )
         )
+        self._funasr_hotwords = "\n".join(
+            normalize_funasr_nano_hotwords(
+                str(self._settings.value("asr/funasrNanoHotwords", ""))
+            )
+        )
         self._desktop_output = (
             WINDOWS_DESKTOP_INPUT_SUPPORTED
             and self._bool_setting("input/desktopOutput", True)
@@ -147,11 +336,22 @@ class AppController(QObject):
         self._rescan_timer.timeout.connect(self._scan_devices_once)
 
         self._runtimeStatus.connect(self._apply_runtime_status)
+        self._runtimeConnected.connect(self._apply_runtime_connected)
+        self._runtimeDisconnected.connect(self._apply_runtime_disconnected)
         self._runtimeStarted.connect(self._apply_runtime_started)
         self._runtimeUpdate.connect(self._apply_runtime_update)
         self._runtimeFinished.connect(self._apply_runtime_finished)
         self._pushToTalkChanged.connect(self._apply_push_to_talk)
         self._scanFinished.connect(self._apply_scan_finished)
+        self._textProcessed.connect(self._apply_text_processed)
+        self._llmWarmupFinished.connect(self._apply_llm_warmup_finished)
+        self._voiceActionRequested.connect(self._apply_voice_action)
+        self._text_processing_worker = TextProcessingWorker(
+            on_result=self._textProcessed.emit,
+            on_warmup=lambda error, latency: self._llmWarmupFinished.emit(
+                error or "", latency
+            ),
+        )
 
     @staticmethod
     def _detect_compute_devices(
@@ -229,6 +429,14 @@ class AppController(QObject):
     def connected(self) -> bool:
         return self._connected
 
+    @Property(bool, notify=settingsChanged)
+    def hasSelectedDevice(self) -> bool:
+        return bool(self._selector.strip())
+
+    @Property(bool, notify=reconnectAvailabilityChanged)
+    def canReconnect(self) -> bool:
+        return self._can_reconnect and bool(self._selector.strip())
+
     @Property(bool, notify=recognitionEnabledChanged)
     def recognitionEnabled(self) -> bool:
         return self._recognition_enabled
@@ -295,17 +503,17 @@ class AppController(QObject):
     def transcriptVisible(self) -> bool:
         return self._transcript_visible
 
-    @Property(str, notify=editorChanged)
-    def editorText(self) -> str:
-        return self._editor_text
+    @Property(str, notify=sessionHistoryChanged)
+    def sessionHistoryText(self) -> str:
+        return "\n\n".join(self._session_history_lines)
 
-    @editorText.setter
-    def editorText(self, value: str) -> None:
-        value = str(value)
-        if value == self._editor_text:
-            return
-        self._editor_text = value
-        self.editorChanged.emit()
+    @Property(str, notify=interactionChanged)
+    def interactionState(self) -> str:
+        return self._interaction_state
+
+    @Property(bool, notify=interactionChanged)
+    def reviewPending(self) -> bool:
+        return self._edit_review is not None
 
     @Property(str, notify=logChanged)
     def logText(self) -> str:
@@ -314,6 +522,25 @@ class AppController(QObject):
     @Property(bool, notify=trayAvailableChanged)
     def trayAvailable(self) -> bool:
         return self._tray_available
+
+    @Property(str, notify=inputModeChanged)
+    def inputMode(self) -> str:
+        return self._input_mode
+
+    @inputMode.setter
+    def inputMode(self, value: str) -> None:
+        mode = normalize_input_mode(value)
+        if mode == self._input_mode:
+            return
+        self._input_mode = mode
+        self._settings.setValue("input/mode", mode)
+        self.inputModeChanged.emit()
+        label = "修改" if mode == INPUT_MODE_EDIT else "输入"
+        self._append_log(f"输入模式已切换为：{label}")
+
+    @Property(bool, notify=textProcessingChanged)
+    def textProcessing(self) -> bool:
+        return bool(self._pending_text_requests)
 
     # Editable settings ---------------------------------------------------------
     @Property(str, notify=settingsChanged)
@@ -331,6 +558,17 @@ class AppController(QObject):
     @selector.setter
     def selector(self, value: str) -> None:
         self._set_setting("_selector", str(value), "ring/selector")
+
+    @Property(str, notify=settingsChanged)
+    def audioEncoding(self) -> str:
+        return self._audio_encoding
+
+    @audioEncoding.setter
+    def audioEncoding(self, value: str) -> None:
+        normalized = str(value).strip().lower()
+        if normalized not in {"adpcm", "pcm", "opus"}:
+            return
+        self._set_setting("_audio_encoding", normalized, "ring/audioEncoding")
 
     @Property(str, notify=settingsChanged)
     def modelPath(self) -> str:
@@ -443,6 +681,19 @@ class AppController(QObject):
     def funasrRepo(self, value: str) -> None:
         self._set_setting("_funasr_repo", str(value), "asr/funasrRepo")
 
+    @Property(str, notify=settingsChanged)
+    def asrHotwords(self) -> str:
+        return self._funasr_hotwords
+
+    @asrHotwords.setter
+    def asrHotwords(self, value: str) -> None:
+        normalized = "\n".join(normalize_funasr_nano_hotwords(str(value)))
+        self._set_setting(
+            "_funasr_hotwords",
+            normalized,
+            "asr/funasrNanoHotwords",
+        )
+
     @Property(bool, notify=settingsChanged)
     def desktopOutputEnabled(self) -> bool:
         return self._desktop_output
@@ -466,6 +717,105 @@ class AppController(QObject):
             bool(value) and WINDOWS_DESKTOP_INPUT_SUPPORTED,
             "input/pushToTalk",
         )
+
+    @Property(bool, notify=settingsChanged)
+    def llmEnabled(self) -> bool:
+        return self._llm_enabled
+
+    @llmEnabled.setter
+    def llmEnabled(self, value: bool) -> None:
+        self._set_setting("_llm_enabled", bool(value), "llm/enabled")
+
+    @Property(str, notify=settingsChanged)
+    def llmProvider(self) -> str:
+        return self._llm_provider
+
+    @llmProvider.setter
+    def llmProvider(self, value: str) -> None:
+        provider = normalize_llm_provider(value)
+        if provider == self._llm_provider:
+            return
+        previous = self._llm_provider
+        self._llm_provider = provider
+        self._settings.setValue("llm/provider", provider)
+        if provider == LLM_PROVIDER_LOCAL:
+            # Keep the remote profile intact so switching back online restores
+            # the user's Ark endpoint, model ID and environment-variable name.
+            pass
+        elif previous == LLM_PROVIDER_LOCAL:
+            if not self._llm_base_url.strip() or self._llm_base_url == DEFAULT_LOCAL_BASE_URL:
+                self._llm_base_url = (
+                    DEFAULT_ARK_BASE_URL
+                    if provider == LLM_PROVIDER_VOLCENGINE
+                    else "https://api.openai.com/v1"
+                )
+                self._settings.setValue("llm/baseUrl", self._llm_base_url)
+            if not self._llm_model.strip() or self._llm_model == DEFAULT_LOCAL_MODEL:
+                self._llm_model = (
+                    DEFAULT_ARK_MODEL
+                    if provider == LLM_PROVIDER_VOLCENGINE
+                    else "gpt-5.6-luna"
+                )
+                self._settings.setValue("llm/model", self._llm_model)
+            if not self._llm_api_key_env:
+                self._llm_api_key_env = (
+                    DEFAULT_ARK_API_KEY_ENV
+                    if provider == LLM_PROVIDER_VOLCENGINE
+                    else "OPENAI_API_KEY"
+                )
+                self._settings.setValue("llm/apiKeyEnv", self._llm_api_key_env)
+        self.settingsChanged.emit()
+
+    @Property(str, notify=settingsChanged)
+    def llmBaseUrl(self) -> str:
+        return self._llm_base_url
+
+    @llmBaseUrl.setter
+    def llmBaseUrl(self, value: str) -> None:
+        self._set_setting("_llm_base_url", str(value), "llm/baseUrl")
+
+    @Property(str, notify=settingsChanged)
+    def llmModel(self) -> str:
+        return self._llm_model
+
+    @llmModel.setter
+    def llmModel(self, value: str) -> None:
+        self._set_setting("_llm_model", str(value), "llm/model")
+
+    @Property(str, notify=settingsChanged)
+    def llmApiKeyEnv(self) -> str:
+        return self._llm_api_key_env
+
+    @llmApiKeyEnv.setter
+    def llmApiKeyEnv(self, value: str) -> None:
+        self._set_setting("_llm_api_key_env", str(value), "llm/apiKeyEnv")
+
+    @Property(str, notify=settingsChanged)
+    def llmLocalServerPath(self) -> str:
+        return self._llm_local_server_path
+
+    @llmLocalServerPath.setter
+    def llmLocalServerPath(self, value: str) -> None:
+        self._set_setting(
+            "_llm_local_server_path", str(value), "llm/localServerPath"
+        )
+
+    @Property(str, notify=settingsChanged)
+    def llmLocalModelPath(self) -> str:
+        return self._llm_local_model_path
+
+    @llmLocalModelPath.setter
+    def llmLocalModelPath(self, value: str) -> None:
+        self._set_setting("_llm_local_model_path", str(value), "llm/localModelPath")
+
+    @Property(float, notify=settingsChanged)
+    def llmTimeoutSeconds(self) -> float:
+        return self._llm_timeout_s
+
+    @llmTimeoutSeconds.setter
+    def llmTimeoutSeconds(self, value: float) -> None:
+        timeout = max(1.0, min(float(value), 300.0))
+        self._set_setting("_llm_timeout_s", timeout, "llm/timeoutSeconds")
 
     def _set_setting(self, attr: str, value, key: str) -> None:
         if getattr(self, attr) == value:
@@ -530,6 +880,16 @@ class AppController(QObject):
         self.requestDevicePicker()
 
     @Slot()
+    def reconnectDevice(self) -> None:
+        """Reconnect only after an explicit user action."""
+        if self._connected or self._busy:
+            return
+        if not self.canReconnect:
+            self.requestDevicePicker()
+            return
+        self._start_selected_device()
+
+    @Slot()
     def requestDevicePicker(self) -> None:
         if self._connected or self._busy:
             return
@@ -544,6 +904,7 @@ class AppController(QObject):
         self._pending_device_connection = False
         self._rescan_timer.stop()
         self._available_devices = []
+        self._device_handles = {}
         self._scan_message = "正在实时发现附近的蓝牙设备…"
         self.devicesChanged.emit()
         self._set_status("正在扫描", "请选择列表中的设备进行连接", "starting")
@@ -586,6 +947,7 @@ class AppController(QObject):
                         "name": item.name or "未命名设备",
                         "identifier": item.identifier,
                         "rssi": item.rssi if item.rssi is not None else "",
+                        "_device": item.device,
                     }
                     for item in discovered
                 ]
@@ -609,11 +971,15 @@ class AppController(QObject):
             self._set_status("无法连接", "设备标识为空，请重新扫描", "error")
             return
         display_name = str(name).strip() or "未命名设备"
+        self._selected_device = self._device_handles.get(identifier.casefold())
         self._selector = identifier
         self._device_name = display_name
         self._settings.setValue("ring/selector", identifier)
         self._settings.setValue("ring/name", display_name)
         self.settingsChanged.emit()
+        if not self._can_reconnect:
+            self._can_reconnect = True
+            self.reconnectAvailabilityChanged.emit()
         self.stopDeviceDiscovery()
         if self._scan_busy:
             self._pending_device_connection = True
@@ -637,15 +1003,20 @@ class AppController(QObject):
 
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
+        self._runtime_active = True
+        self._runtime_had_connection = False
         self._busy = True
         self.busyChanged.emit()
         self._set_status(
-            "正在连接",
-            f"正在准备模型并连接 {self._device_name}",
+            "正在连接设备",
+            f"正在连接 {self._device_name}",
             "starting",
         )
         self._append_log(f"开始连接设备：{self._device_name} ({self._selector})")
-        runtime = RecognitionRuntime(settings)
+        runtime = RecognitionRuntime(
+            settings,
+            asr_backend_cache=self._asr_backend_cache,
+        )
 
         def worker_main() -> None:
             error = ""
@@ -655,11 +1026,14 @@ class AppController(QObject):
                     self._recognition_event,
                     on_update=self._publish_update,
                     on_state=self._runtimeStatus.emit,
+                    on_connected=self._runtimeConnected.emit,
+                    on_disconnected=self._runtimeDisconnected.emit,
                     on_started=self._runtimeStarted.emit,
                     on_push_to_talk=self._pushToTalkChanged.emit,
                 )
             except BaseException as exc:
                 error = str(exc)
+                print(f"[runtime] {error}")
             self._runtimeFinished.emit(error)
 
         self._worker = threading.Thread(
@@ -679,7 +1053,7 @@ class AppController(QObject):
         self.runningChanged.emit()
         detail = "靠近说话"
         if self._push_to_talk:
-            detail += "，或按住 Ctrl+Alt+Space"
+            detail += "，或按住右 Alt"
         self._set_status("自动监听中", detail, "running")
         self._append_log("语音识别已开启（设备保持连接）")
 
@@ -688,6 +1062,7 @@ class AppController(QObject):
         if not self._connected or not self._recognition_enabled:
             return
         self._recognition_event.clear()
+        self._session_input_modes.clear()
         self._recognition_enabled = False
         self._ptt_active = False
         self.recognitionEnabledChanged.emit()
@@ -707,6 +1082,8 @@ class AppController(QObject):
         worker = self._worker
         if worker is None or not worker.is_alive():
             return
+        self._cancel_pending_text_processing()
+        self._session_input_modes.clear()
         self._recognition_event.clear()
         if self._recognition_enabled:
             self._recognition_enabled = False
@@ -715,8 +1092,8 @@ class AppController(QObject):
         self._disconnect_event.set()
         self._busy = True
         self.busyChanged.emit()
-        self._set_status("正在断开", "正在完成当前识别并释放设备", "stopping")
-        self._append_log("正在断开语音设备")
+        self._set_status("正在断开", "正在停止识别并优先断开设备", "stopping")
+        self._append_log("已停止接收新的识别任务，正在优先断开语音设备")
 
     # Compatibility for older callers.  New UI code uses the explicit methods.
     @Slot()
@@ -728,16 +1105,37 @@ class AppController(QObject):
         self.disconnectDevice()
 
     @Slot()
-    def clearEditor(self) -> None:
-        if not self._editor_text:
+    def clearSessionHistory(self) -> None:
+        if not self._session_history_lines:
             return
-        self._editor_text = ""
-        self.editorChanged.emit()
+        self._session_history_lines.clear()
+        self.sessionHistoryChanged.emit()
 
     @Slot()
     def clearLog(self) -> None:
         self._log_lines.clear()
         self.logChanged.emit()
+
+    @Slot()
+    def warmLocalModel(self) -> None:
+        if self._llm_provider != LLM_PROVIDER_LOCAL:
+            self._append_log("已选择火山方舟，收到语音结果后将按需调用线上模型")
+            return
+        if self._llm_warmup_requested or self._quitting:
+            return
+        self._llm_warmup_requested = True
+        self._append_log("正在后台加载并预热本地文本模型…")
+        self._text_processing_worker.warmup(self._voice_llm_settings())
+
+    @Slot(str, float)
+    def _apply_llm_warmup_finished(self, error: str, latency_s: float) -> None:
+        if error:
+            self._llm_warmup_requested = False
+            self._append_log(f"本地文本模型预热失败：{error}")
+            return
+        self._append_log(
+            f"本地文本模型已加载，输入/修改提示词预热完成（{latency_s:.2f}s）"
+        )
 
     @Slot()
     def requestQuit(self) -> None:
@@ -748,6 +1146,8 @@ class AppController(QObject):
             QCoreApplication.quit()
             return
         self._quitting = True
+        self._cancel_pending_text_processing()
+        self._text_processing_worker.close(wait=False)
         self._quit_wait_ticks = 0
         self.disconnectDevice()
         if self._worker is not None and self._worker.is_alive():
@@ -780,6 +1180,13 @@ class AppController(QObject):
         self.scanBusyChanged.emit()
 
         rows = list(devices) if isinstance(devices, list) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            identifier = str(row.get("identifier", "")).strip()
+            device = row.get("_device")
+            if identifier and device is not None:
+                self._device_handles[identifier.casefold()] = device
         added = self._merge_discovered_devices(rows)
 
         if self._pending_device_connection:
@@ -871,7 +1278,10 @@ class AppController(QObject):
     # Worker event application --------------------------------------------------
     def _publish_update(self, update) -> None:
         self._runtimeUpdate.emit(
-            str(update.text or ""), bool(update.is_final), str(update.error or "")
+            str(update.text or ""),
+            bool(update.is_final),
+            str(update.error or ""),
+            int(getattr(update, "session_id", 0)),
         )
 
     @Slot(str)
@@ -880,25 +1290,111 @@ class AppController(QObject):
         if not text:
             return
         self._append_log(text)
-        if self._status_kind in {"starting", "running", "listening", "stopping"}:
+        if text.startswith("正在连接设备"):
+            self._set_status("正在连接设备", text, "starting")
+        elif text.startswith("正在验证 Ring"):
+            self._set_status("正在验证设备音频", text, "starting")
+        elif text.startswith("正在加载 ProxiMic"):
+            self._set_status("正在加载检测模型", text, "starting")
+        elif text.startswith("设备音频验证通过"):
+            self._set_status("设备已连接", text, "starting")
+        elif text.startswith("正在加载语音模型"):
+            self._set_status("正在加载语音模型", text, "starting")
+        elif text.startswith("正在复用已加载语音模型"):
+            self._set_status("正在复用语音模型", text, "starting")
+        elif text.startswith("正在准备实时识别"):
+            self._set_status("正在准备识别", text, "starting")
+        elif text.startswith("模型加载完成，正在确认实时音频"):
+            self._set_status("正在确认实时音频", text, "starting")
+        elif text.startswith("STAGE2 "):
+            # Keep detector telemetry in the log without replacing the
+            # user-facing status text every detector cycle.
+            return
+        elif text.startswith("设备连接已中断"):
+            self._set_status("设备连接异常", text, "error")
+        elif self._status_kind in {"running", "listening"}:
             self._status_detail = text
             self.statusChanged.emit()
 
     @Slot()
-    def _apply_runtime_started(self) -> None:
+    def _apply_runtime_connected(self) -> None:
+        if self._disconnect_event.is_set():
+            return
         self._connected = True
-        self._busy = False
+        self._runtime_had_connection = True
         self.connectedChanged.emit()
-        self.busyChanged.emit()
-        self._set_status("设备已连接", "识别当前暂停，点击“开启语音识别”开始", "paused")
-        self._append_log("Ringo 已连接；设备会保持连接直到主动断开")
+        self._set_status(
+            "设备已连接",
+            "蓝牙与设备服务验证通过，正在准备识别组件",
+            "starting",
+        )
+        self._append_log("设备连接验证通过；不会在异常后自动重连")
 
-    @Slot(str, bool, str)
-    def _apply_runtime_update(self, text: str, is_final: bool, error: str) -> None:
+    @Slot()
+    def _apply_runtime_disconnected(self) -> None:
+        if not self._runtime_active:
+            return
+        was_connected = self._connected
+        was_recognizing = self._recognition_enabled
+        self._connected = False
+        self._recognition_enabled = False
+        self._ptt_active = False
+        if was_connected:
+            self.connectedChanged.emit()
+        if was_recognizing:
+            self.recognitionEnabledChanged.emit()
+            self.runningChanged.emit()
+
+        if self._runtime_had_connection:
+            self._set_status(
+                "设备已断开",
+                "蓝牙和麦克风已经释放，正在结束后台模型初始化或识别任务",
+                "stopping",
+            )
+            self._append_log("物理设备已断开；后台任务正在安全结束")
+        else:
+            self._set_status(
+                "连接未完成",
+                "设备已自动断开，正在清理本次连接任务",
+                "stopping",
+            )
+            self._append_log("设备连接未完成，已自动断开并开始清理")
+
+    @Slot()
+    def _apply_runtime_started(self) -> None:
+        if self._disconnect_event.is_set():
+            return
+        if not self._connected:
+            self._connected = True
+            self.connectedChanged.emit()
+        self._busy = False
+        self.busyChanged.emit()
+        self._set_status("准备就绪", "设备已连接，点击“开启语音识别”开始", "paused")
+        self._append_log("设备和识别组件已就绪；识别当前暂停")
+
+    @Slot(str, bool, str, int)
+    def _apply_runtime_update(
+        self,
+        text: str,
+        is_final: bool,
+        error: str,
+        session_id: int = 0,
+    ) -> None:
+        if self._status_kind == "stopping":
+            return
+        # A review is modal at the interaction layer even though its overlay
+        # never steals focus.  Stray proximity activations must not replace the
+        # preview or start another LLM edit before the user chooses an action.
+        if self._edit_review is not None and not error:
+            return
         if error:
+            if session_id:
+                self._session_input_modes.pop(int(session_id), None)
+                self._session_targets.pop(int(session_id), None)
             self._transcript_text = error
             self._transcript_final = True
             self._transcript_visible = True
+            self._set_interaction_state("error")
             self.transcriptChanged.emit()
             self._hide_overlay_timer.start(3500)
             self._append_log(f"ASR 错误：{error}")
@@ -906,27 +1402,470 @@ class AppController(QObject):
         text = text.strip()
         if not text:
             return
+        normalized_session_id = int(session_id)
+        if normalized_session_id:
+            mode = self._session_input_modes.setdefault(
+                normalized_session_id, self._input_mode
+            )
+            if normalized_session_id not in self._session_targets:
+                self._session_targets[normalized_session_id] = (
+                    self._capture_desktop_reference()
+                )
+        else:
+            mode = self._input_mode
         self._transcript_text = text
         self._transcript_final = is_final
         self._transcript_visible = True
+        self._set_interaction_state("listening" if not is_final else "processing")
         self.transcriptChanged.emit()
         if is_final:
-            separator = "" if not self._editor_text or self._editor_text[-1:].isspace() else "\n"
-            self._editor_text += separator + text
-            self.editorChanged.emit()
-            self._hide_overlay_timer.start(1800)
+            if normalized_session_id:
+                self._session_input_modes.pop(normalized_session_id, None)
+                target = self._session_targets.pop(normalized_session_id, None)
+            else:
+                target = self._capture_desktop_reference()
             self._append_log(f"识别完成：{text}")
-            if self._recognition_enabled:
-                self._set_status("自动监听中", "等待下一段语音", "running")
+            if mode == INPUT_MODE_EDIT:
+                if self._edit_review is not None:
+                    self._reject_edit_request(
+                        "上一条修改仍在等待确认，请先确认、取消或选择重说"
+                    )
+                    return
+                retrying_same_target = self._interaction_state == "retry"
+                snapshot = self._retry_snapshot if retrying_same_target else None
+                if not retrying_same_target:
+                    # A failed/noop edit must not pin all future edits to the
+                    # old field.  Only an explicit retry action may reuse it.
+                    self._retry_snapshot = None
+                if snapshot is None:
+                    if target is None:
+                        self._reject_edit_request(
+                            "没有锁定外部文本框，请先把光标放入要修改的文本框"
+                        )
+                        return
+                    try:
+                        snapshot = self._desktop_target_adapter().capture_text(target)
+                        validate_edit_target_text(snapshot.text)
+                        self._log_edit_target_snapshot(snapshot)
+                    except BaseException as exc:
+                        try:
+                            self._desktop_target_adapter().release_selection(target)
+                        except BaseException:
+                            pass
+                        self._reject_edit_request(str(exc))
+                        return
+                else:
+                    # Consume the explicit retry snapshot.  A later failure
+                    # may offer it again, but an unrelated edit will recapture.
+                    self._retry_snapshot = None
+                self._submit_text_processing(
+                    text,
+                    normalized_session_id,
+                    mode,
+                    target_text=snapshot.text,
+                    target=target or snapshot.target,
+                    snapshot=snapshot,
+                )
+            else:
+                self._submit_text_processing(
+                    text,
+                    normalized_session_id,
+                    mode,
+                    target=target,
+                )
         else:
             self._hide_overlay_timer.stop()
             if self._recognition_enabled:
                 self._set_status("正在识别", text, "listening")
 
+    def _reject_edit_request(self, message: str) -> None:
+        self._transcript_text = message
+        self._transcript_final = True
+        self._transcript_visible = True
+        self._set_interaction_state("error")
+        self.transcriptChanged.emit()
+        self._hide_overlay_timer.start(3500)
+        self._append_log(f"修改未执行：{message}")
+        self._record_history("修改 · 未执行", detail=message)
+        if self._recognition_enabled:
+            self._set_status("自动监听中", message, "running")
+
+    def _submit_text_processing(
+        self,
+        text: str,
+        session_id: int,
+        mode: str,
+        *,
+        target_text: str = "",
+        target: DesktopTargetRef | None = None,
+        snapshot: DesktopTextSnapshot | None = None,
+    ) -> None:
+        self._text_request_id += 1
+        request_id = self._text_request_id
+        request = TextProcessingRequest(
+            request_id=request_id,
+            session_id=int(session_id),
+            mode=mode,
+            raw_text=text,
+            settings=self._voice_llm_settings(),
+            target_text=target_text,
+        )
+        was_processing = bool(self._pending_text_requests)
+        self._pending_text_requests.add(request_id)
+        self._pending_interactions[request_id] = _PendingInteraction(
+            target=target,
+            snapshot=snapshot,
+        )
+        if not was_processing:
+            self.textProcessingChanged.emit()
+        label = "修改" if mode == INPUT_MODE_EDIT else "输入"
+        self._transcript_text = f"{label}处理中…\n{text}"
+        self._transcript_final = False
+        self._transcript_visible = True
+        self._set_interaction_state("processing")
+        self.transcriptChanged.emit()
+        self._hide_overlay_timer.stop()
+        self._append_log(f"已提交大模型{label}处理：{text}")
+        if self._recognition_enabled:
+            self._set_status("正在处理文本", f"大模型正在处理{label}内容", "starting")
+        self._text_processing_worker.submit(request)
+
+    @Slot(object)
+    def _apply_text_processed(self, result: object) -> None:
+        if not isinstance(result, TextProcessingResult):
+            return
+        if result.request_id not in self._pending_text_requests:
+            return
+        self._pending_text_requests.remove(result.request_id)
+        context = self._pending_interactions.pop(
+            result.request_id, _PendingInteraction()
+        )
+        if not self._pending_text_requests:
+            self.textProcessingChanged.emit()
+        if self._quitting or self._status_kind == "stopping":
+            return
+        label = "修改" if result.mode == INPUT_MODE_EDIT else "输入"
+        edit_plan_kind = ""
+        parsed_edit_plan: object = None
+        if result.model_output:
+            model_output = result.model_output.strip()
+            if result.mode == INPUT_MODE_EDIT:
+                try:
+                    parsed_output = json.loads(model_output)
+                    if isinstance(parsed_output, dict):
+                        parsed_edit_plan = parsed_output
+                        edit_plan_kind = str(parsed_output.get("kind") or "").lower()
+                    model_output = json.dumps(
+                        parsed_output,
+                        ensure_ascii=False,
+                        indent=2,
+                    )
+                except (TypeError, json.JSONDecodeError):
+                    pass
+            self._append_log(f"大模型{label}原始返回：\n{model_output}")
+        if result.error:
+            self._append_log(
+                f"大模型{label}处理失败：{result.error}"
+            )
+            if result.mode == INPUT_MODE_EDIT:
+                if context.snapshot is not None:
+                    self._retry_snapshot = context.snapshot
+                self._reject_edit_request(
+                    f"大模型修改失败，外部文本保持不变：{result.error}"
+                )
+                return
+        else:
+            if result.mode == INPUT_MODE_EDIT:
+                outcome = (
+                    "noop，目标保持不变"
+                    if edit_plan_kind == "noop"
+                    else f"已生成候选（{len(result.final_text)} 个字符）"
+                )
+                self._append_log(
+                    f"大模型修改处理完成（{result.latency_s:.2f}s）：{outcome}"
+                )
+            else:
+                self._append_log(
+                    f"大模型输入处理完成（{result.latency_s:.2f}s）："
+                    f"{result.final_text}"
+                )
+        if result.mode == INPUT_MODE_EDIT:
+            if context.snapshot is None:
+                self._reject_edit_request("修改目标快照已经失效")
+                return
+            if edit_plan_kind == "noop":
+                self._retry_snapshot = context.snapshot
+                self._reject_edit_request(
+                    "大模型未找到可可靠执行的修改。请确认说话前光标位于"
+                    "包含目标词的外部文本框，再按住右 Alt 重说"
+                )
+                return
+            self._begin_edit_review(
+                result,
+                context.snapshot,
+                allow_empty=_is_explicit_emptying_edit_plan(parsed_edit_plan),
+            )
+            return
+        self._commit_input_text(result, context.target)
+
+    def _commit_input_text(
+        self,
+        result: TextProcessingResult,
+        target: DesktopTargetRef | None,
+    ) -> None:
+        text = result.final_text
+        final_text = str(text or "").strip()
+        if not final_text:
+            return
+        self._transcript_text = final_text
+        self._transcript_final = True
+        self._transcript_visible = True
+        self._set_interaction_state("applied")
+        self.transcriptChanged.emit()
+        self._hide_overlay_timer.start(1800)
+        applied = False
+        detail = ""
+        if not self._desktop_output:
+            detail = "跨应用注入已关闭"
+        elif target is None:
+            detail = "未锁定外部文本框，结果仅保存在后台记录"
+        else:
+            try:
+                self._desktop_target_adapter().inject(target, final_text)
+                applied = True
+                detail = f"已注入 {target.window_title or '外部文本框'}"
+            except BaseException as exc:
+                detail = f"注入失败：{exc}"
+                self._append_log(detail)
+        if result.error:
+            fallback = f"大模型处理失败，已回退 ASR 原文：{result.error}"
+            detail = f"{detail}；{fallback}" if detail else fallback
+        status = "已注入" if applied else "未注入"
+        self._record_history(
+            f"输入 · {status}",
+            raw=result.raw_text,
+            result=final_text,
+            detail=detail,
+        )
+        if self._recognition_enabled:
+            self._set_status("自动监听中", "输入完成，等待下一段语音", "running")
+
+    def _begin_edit_review(
+        self,
+        result: TextProcessingResult,
+        snapshot: DesktopTextSnapshot,
+        *,
+        allow_empty: bool = False,
+    ) -> None:
+        proposed = str(result.final_text or "").strip()
+        if not proposed and not allow_empty:
+            self._reject_edit_request("大模型返回了空修改结果")
+            return
+        if proposed == snapshot.text.strip():
+            self._retry_snapshot = snapshot
+            self._reject_edit_request("没有识别出可可靠执行的修改，请按住右 Alt 重说")
+            return
+        self._retry_snapshot = None
+        self._edit_review = _EditReview(
+            request_id=result.request_id,
+            session_id=result.session_id,
+            instruction=result.raw_text,
+            proposed_text=proposed,
+            snapshot=snapshot,
+        )
+        empty_warning = "\n⚠ 确认后将清空目标文本框\n" if not proposed else "\n"
+        self._transcript_text = (
+            f"修改指令：{result.raw_text}\n"
+            f"{empty_warning}\n"
+            "Enter 确认  ·  Esc 取消  ·  按住右 Alt 重说"
+        )
+        self._transcript_final = True
+        self._transcript_visible = True
+        self._hide_overlay_timer.stop()
+        self._set_interaction_state("review")
+        self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._record_history(
+            "修改 · 等待确认",
+            raw=result.raw_text,
+            result=proposed,
+            detail=(
+                f"目标：{snapshot.target.window_title or '外部文本框'}"
+                + ("；确认后将清空目标文本框" if not proposed else "")
+            ),
+        )
+        if proposed:
+            self._append_log("修改预览已生成，等待确认、取消或重说指令")
+        else:
+            self._append_log("清空文本预览已生成，等待 Enter 确认或 Esc 取消")
+        if self._recognition_enabled:
+            detail = (
+                "确认后将清空外部文本框"
+                if not proposed
+                else "确认后才会覆盖外部文本"
+            )
+            self._set_status("等待确认修改", detail, "manual")
+
+    @Slot()
+    def confirmEdit(self) -> None:
+        review = self._edit_review
+        if review is None:
+            return
+        try:
+            self._desktop_target_adapter().replace(
+                review.snapshot, review.proposed_text
+            )
+        except BaseException as exc:
+            self._record_history("修改 · 应用失败", detail=str(exc))
+            self._finish_edit_review(
+                message=f"修改未应用：{exc}", state="error", hide_ms=4000
+            )
+            return
+        self._record_history(
+            "修改 · 已应用",
+            raw=review.instruction,
+            result=review.proposed_text,
+            detail=f"已替换 {review.snapshot.target.window_title or '外部文本框'}",
+        )
+        self._finish_edit_review(
+            message="修改已应用到原文本框", state="applied", hide_ms=2200
+        )
+
+    @Slot()
+    def cancelEdit(self) -> None:
+        review = self._edit_review
+        if review is None:
+            return
+        self._desktop_target_adapter().release_selection(review.snapshot.target)
+        self._record_history("修改 · 已取消", raw=review.instruction)
+        self._finish_edit_review(
+            message="已取消，本次修改没有执行", state="cancelled", hide_ms=2200
+        )
+
+    @Slot()
+    def retryEdit(self) -> None:
+        review = self._edit_review
+        if review is None:
+            return
+        self._retry_snapshot = review.snapshot
+        self._edit_review = None
+        self.inputMode = INPUT_MODE_EDIT
+        self._transcript_text = "请重新说修改要求\n原文本保持不变"
+        self._transcript_final = False
+        self._transcript_visible = True
+        self._hide_overlay_timer.stop()
+        self._set_interaction_state("retry")
+        self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._record_history("修改 · 等待重说", raw=review.instruction)
+        if self._recognition_enabled:
+            self._set_status("请重说修改要求", "下一段语音仍然修改同一个文本框", "manual")
+
+    def dispatchVoiceAction(self, action: str) -> None:
+        """Thread-safe entry used by keyboard hooks and future Ring gestures."""
+        self._voiceActionRequested.emit(str(action))
+
+    @Slot(str)
+    def _apply_voice_action(self, action: str) -> None:
+        action = str(action).strip().lower()
+        if action == ACTION_INPUT and self._edit_review is None:
+            self.inputMode = INPUT_MODE_DICTATION
+        elif action == ACTION_EDIT and self._edit_review is None:
+            self.inputMode = INPUT_MODE_EDIT
+        elif action == ACTION_CONFIRM:
+            self.confirmEdit()
+        elif action == ACTION_CANCEL:
+            self.cancelEdit()
+        elif action == ACTION_RETRY:
+            self.retryEdit()
+
+    def _finish_edit_review(self, *, message: str, state: str, hide_ms: int) -> None:
+        self._edit_review = None
+        self._retry_snapshot = None
+        self._transcript_text = message
+        self._transcript_final = True
+        self._transcript_visible = True
+        self._set_interaction_state(state)
+        self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._hide_overlay_timer.start(hide_ms)
+        self._append_log(message)
+        if self._recognition_enabled:
+            self._set_status("自动监听中", message, "running")
+
+    def _desktop_target_adapter(self):
+        if self._desktop_target is None:
+            from ..desktop_target import WindowsDesktopTextTarget
+            from .clipboard import QtClipboardBridge
+
+            self._desktop_target = WindowsDesktopTextTarget(QtClipboardBridge())
+        return self._desktop_target
+
+    def _capture_desktop_reference(self) -> DesktopTargetRef | None:
+        if not self._desktop_output or not WINDOWS_DESKTOP_INPUT_SUPPORTED:
+            return None
+        try:
+            return self._desktop_target_adapter().capture_reference()
+        except BaseException:
+            return None
+
+    def _set_interaction_state(self, state: str) -> None:
+        state = str(state)
+        if state == self._interaction_state:
+            return
+        self._interaction_state = state
+        self.interactionChanged.emit()
+
+    def _record_history(
+        self,
+        title: str,
+        *,
+        raw: str = "",
+        result: str = "",
+        detail: str = "",
+    ) -> None:
+        lines = [f"[{datetime.now().strftime('%H:%M:%S')}] {title}"]
+        if raw:
+            lines.append(f"识别/指令：{raw}")
+        if result:
+            lines.append(f"LLM：{result}")
+        if detail:
+            lines.append(detail)
+        self._session_history_lines.append("\n".join(lines))
+        if len(self._session_history_lines) > 80:
+            del self._session_history_lines[:-80]
+        self.sessionHistoryChanged.emit()
+
+    def _log_edit_target_snapshot(self, snapshot: DesktopTextSnapshot) -> None:
+        text = snapshot.text
+        title = snapshot.target.window_title or "外部文本框"
+        self._append_log(f"修改目标已读取：{title}（{len(text)} 个字符）")
+
+    def _cancel_pending_text_processing(self) -> None:
+        had_pending = bool(self._pending_text_requests)
+        self._pending_text_requests.clear()
+        self._pending_interactions.clear()
+        self._session_targets.clear()
+        if had_pending:
+            self.textProcessingChanged.emit()
+        if self._edit_review is not None:
+            try:
+                self._desktop_target_adapter().release_selection(
+                    self._edit_review.snapshot.target
+                )
+            except BaseException:
+                pass
+            self._edit_review = None
+            self._retry_snapshot = None
+            self._set_interaction_state("idle")
+            self.interactionChanged.emit()
+
     @Slot(str)
     def _apply_runtime_finished(self, error: str) -> None:
         was_connected = self._connected
         was_recognizing = self._recognition_enabled
+        had_connection = self._runtime_had_connection
+        self._runtime_active = False
         self._connected = False
         self._recognition_enabled = False
         self._busy = False
@@ -939,11 +1878,17 @@ class AppController(QObject):
             self.runningChanged.emit()
         self.busyChanged.emit()
         if error:
-            self._set_status("运行失败", error, "error")
-            self._append_log(f"运行失败：{error}")
+            title = "设备已断开" if had_connection else "连接失败"
+            retry = "请点击“重新连接设备”重试。" if self._selector else "请重新选择设备。"
+            self._set_status(title, f"{error} 设备已自动断开。{retry}", "error")
+            self._append_log(f"{title}：{error}；设备已自动断开，等待用户手动重连")
         elif not self._quitting:
-            self._set_status("设备已断开", "设备和模型资源已经释放", "idle")
-            self._append_log("语音设备已断开")
+            self._set_status(
+                "设备已断开",
+                "设备资源已经释放；语音模型保留在内存中以便快速重连",
+                "idle",
+            )
+            self._append_log("语音设备已断开；已加载模型保留到应用退出或配置切换")
 
     @Slot(bool)
     def _apply_push_to_talk(self, active: bool) -> None:
@@ -952,12 +1897,18 @@ class AppController(QObject):
             return
         self._ptt_active = bool(active)
         if active:
+            if self._edit_review is not None:
+                # Reusing the same hold-to-talk gesture is the simplest retry
+                # interaction and maps directly to a future Ring gesture.
+                self.retryEdit()
             self._set_status("按键监听中", "松开后恢复自动控制", "manual")
         elif self._recognition_enabled:
             self._set_status("自动监听中", "已恢复靠近检测", "running")
 
     def _hide_transcript(self) -> None:
         self._transcript_visible = False
+        if self._edit_review is None and self._interaction_state not in {"retry", "processing"}:
+            self._set_interaction_state("idle")
         self.transcriptChanged.emit()
 
     def _set_status(self, title: str, detail: str, kind: str) -> None:
@@ -998,6 +1949,8 @@ class AppController(QObject):
         return RuntimeSettings(
             ring_name=self._device_name.strip(),
             ring_selector=self._selector.strip() or None,
+            ring_device=self._selected_device,
+            encoding=self._audio_encoding,
             detector_model=model,
             stage1_threshold=self._stage1_threshold,
             asr_backend=self._asr_backend,
@@ -1006,9 +1959,42 @@ class AppController(QObject):
             asr_language=self._asr_language,
             streaming_sensevoice_repo=repo,
             funasr_nano_repo=funasr_repo,
-            desktop_output=self._desktop_output,
+            funasr_nano_hotwords=self._funasr_hotwords,
+            # The UI commits either the LLM result or the raw fallback itself.
+            # Feeding ASR finals into the legacy output here would inject the
+            # unprocessed text once and then inject the processed text again.
+            desktop_output=False,
             push_to_talk=self._push_to_talk,
         )
+
+    def _llm_settings(self) -> LLMSettings:
+        local_selected = self._llm_provider == LLM_PROVIDER_LOCAL
+        return LLMSettings(
+            enabled=self._llm_enabled,
+            base_url=(
+                DEFAULT_LOCAL_BASE_URL
+                if local_selected
+                else self._llm_base_url.strip()
+            ),
+            model=DEFAULT_LOCAL_MODEL if local_selected else self._llm_model.strip(),
+            api_key_env=(
+                ""
+                if local_selected
+                else self._llm_api_key_env.strip()
+            ),
+            timeout_s=self._llm_timeout_s,
+            provider=self._llm_provider,
+            local_server_path=self._llm_local_server_path.strip(),
+            local_model_path=self._llm_local_model_path.strip(),
+            local_auto_start=local_selected,
+            local_context_size=DEFAULT_LOCAL_CONTEXT_SIZE,
+            local_reasoning=DEFAULT_LOCAL_REASONING,
+        )
+
+    def _voice_llm_settings(self) -> LLMSettings:
+        """Use the provider selected by the user for dictation and edits."""
+
+        return replace(self._llm_settings(), enabled=True)
 
     @staticmethod
     def _path_or_none(value: str) -> Path | None:

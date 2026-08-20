@@ -24,8 +24,8 @@ python -m proximic_ring ring `
   --push-to-talk
 ```
 
-自动靠近检测保持不变。启用 `--push-to-talk` 后，在任意应用中按住
-`Ctrl+Alt+Space` 会强制开始或保持当前语音会话；松开按键后，结束权重新交给
+自动靠近检测保持不变。启用 `--push-to-talk` 后，在任意应用中按住右 `Alt`
+会强制开始或保持当前语音会话；松开按键后，结束权重新交给
 ProxiMic 的连续 reject、Stage1 inactivity 和最大时长逻辑。快捷键不会创建第二套
 ASR，也不会关闭自动识别。
 

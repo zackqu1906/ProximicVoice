@@ -16,6 +16,7 @@ class SessionSink(Protocol):
     def start(self, initial_audio_16k: np.ndarray) -> None: ...
     def feed(self, audio_16k: np.ndarray) -> None: ...
     def end(self, final_audio_16k: np.ndarray) -> None: ...
+    def abort(self) -> None: ...
     def close(self) -> None: ...
 
 
@@ -35,6 +36,11 @@ class CompletedUtteranceSessionSink:
         x = np.asarray(final_audio_16k, dtype=np.float32).reshape(-1)
         if x.size:
             self.sink.submit(x)
+
+    def abort(self) -> None:
+        abort = getattr(self.sink, "abort", None)
+        if callable(abort):
+            abort()
 
     def close(self) -> None:
         self.sink.close()
@@ -59,6 +65,12 @@ class SessionFanout:
     def end(self, final_audio_16k: np.ndarray) -> None:
         for sink in self.sinks:
             sink.end(final_audio_16k)
+
+    def abort(self) -> None:
+        for sink in self.sinks:
+            abort = getattr(sink, "abort", None)
+            if callable(abort):
+                abort()
 
     def close(self) -> None:
         for sink in self.sinks:

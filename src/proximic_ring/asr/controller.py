@@ -171,6 +171,21 @@ class ProximitySessionController:
         if self._active:
             self._finish(reason="flush")
 
+    def abort(self) -> None:
+        """Discard the active utterance without submitting a final result."""
+        if self._active:
+            self._log("[ASR] ABORT reason=device-disconnect")
+        self._history.clear()
+        self._history_count = 0
+        self._active = False
+        self._utterance = []
+        self._utterance_samples = 0
+        self._consecutive_rejects = 0
+        self._first_reject_cutoff_sample = None
+        abort_sink = getattr(self.sink, "abort", None)
+        if callable(abort_sink):
+            abort_sink()
+
     def reset(self) -> None:
         """Finish the current utterance and restart the detector-aligned clock.
 
@@ -380,6 +395,17 @@ class DirectASRSessionController:
     def flush(self) -> None:
         if self._active:
             self._finish(reason="direct-flush")
+
+    def abort(self) -> None:
+        """Discard the active direct-ASR session without producing final text."""
+        if self._active:
+            self._log("[ASR] ABORT direct reason=device-disconnect")
+        self._parts = []
+        self._samples = 0
+        self._active = False
+        abort_sink = getattr(self.sink, "abort", None)
+        if callable(abort_sink):
+            abort_sink()
 
     def close(self) -> None:
         self.flush()

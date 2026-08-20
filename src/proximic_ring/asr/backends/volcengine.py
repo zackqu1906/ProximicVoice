@@ -289,6 +289,10 @@ class VolcengineStreamingASR:
         self._receiver_thread.start()
         self._log("connected; sent request config; receiver started")
 
+    def abort(self) -> None:
+        self._pending_pcm.clear()
+        self._close()
+
     def _send_audio(self, pcm: bytes, *, is_last: bool) -> None:
         if self._ws is None:
             raise RuntimeError("Volcengine streaming ASR session was not started")

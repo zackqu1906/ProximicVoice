@@ -176,6 +176,20 @@ def test_flush_submits_active_utterance():
     assert len(worker.items) == 1
 
 
+def test_abort_discards_active_utterance_on_device_disconnect():
+    worker = ImmediateWorker()
+    gate = make_gate(worker, pre_roll_s=0.02, stage1_inactivity_s=1.0)
+    block = np.full(320, 0.2, dtype=np.float32)
+    gate.process(block, [activate_event(320)])
+
+    gate.abort()
+    gate.close()
+
+    assert not gate.active
+    assert worker.items == []
+    assert worker.closed
+
+
 def test_pause_reset_flushes_and_discards_old_pre_roll_and_sample_clock():
     worker = ImmediateWorker()
     gate = make_gate(worker, pre_roll_s=0.02, stage1_inactivity_s=1.0)
@@ -272,4 +286,16 @@ def test_direct_controller_bypasses_detector_and_rolls_fixed_sessions():
     assert len(worker.items) == 1
     assert worker.items[0].size == 640
     controller.close()
+    assert worker.closed
+
+
+def test_direct_abort_discards_partial_session():
+    worker = ImmediateWorker()
+    controller = DirectASRSessionController(worker, session_duration_s=1.0)
+    controller.process(np.full(320, 0.2, dtype=np.float32))
+
+    controller.abort()
+    controller.close()
+
+    assert worker.items == []
     assert worker.closed

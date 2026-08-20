@@ -13,14 +13,33 @@ from ctypes import wintypes
 from dataclasses import dataclass
 import os
 from pathlib import Path
+import re
 import threading
 from typing import Callable
 
+from .asr import ASRBackendCache
 from .audio import RingAudioSource
 from .cli import _build_detector, _build_session_controller
+from .events import Stage2Event
+from .runner import format_event
 
 
 WINDOWS_DESKTOP_INPUT_SUPPORTED = os.name == "nt"
+
+
+def normalize_funasr_nano_hotwords(value: str) -> tuple[str, ...]:
+    """Normalize UI-friendly separators and remove duplicate Nano hotwords."""
+
+    words: list[str] = []
+    seen: set[str] = set()
+    for item in re.split(r"[,，;；\r\n]+", str(value or "")):
+        word = item.strip()
+        identity = word.casefold()
+        if not word or identity in seen:
+            continue
+        seen.add(identity)
+        words.append(word)
+    return tuple(words)
 
 
 class SilentTranscriptOverlay:
@@ -63,7 +82,10 @@ def external_window_has_focus() -> bool:
 class RuntimeSettings:
     ring_name: str = "Ringo"
     ring_selector: str | None = None
+    ring_device: object | None = None
     ring_timeout_s: float = 8.0
+    # Keep the default aligned with the PCM waveform distribution used to
+    # train and calibrate the bundled proximity model.
     encoding: str = "pcm"
     data_dir: Path = Path("data")
 
@@ -78,6 +100,7 @@ class RuntimeSettings:
     asr_language: str = "zh"
     streaming_sensevoice_repo: Path | None = None
     funasr_nano_repo: Path | None = None
+    funasr_nano_hotwords: str = ""
 
     asr_pre_roll_s: float = 1.0
     asr_end_rejects: int = 2
@@ -91,10 +114,17 @@ class RuntimeSettings:
     def to_namespace(self) -> Namespace:
         backend = self.asr_backend.strip().lower().replace("-", "_")
         model_entry = f"{backend}={self.asr_model}" if self.asr_model else None
+        hotwords = normalize_funasr_nano_hotwords(self.funasr_nano_hotwords)
+        asr_options = (
+            [f"funasr_nano.hotwords={','.join(hotwords)}"]
+            if backend == "funasr_nano" and hotwords
+            else None
+        )
         return Namespace(
             command="ring",
             name=self.ring_name,
             selector=self.ring_selector or None,
+            device=self.ring_device,
             timeout=self.ring_timeout_s,
             encoding=self.encoding,
             data_dir=self.data_dir,
@@ -107,7 +137,7 @@ class RuntimeSettings:
             asr_model=[model_entry] if model_entry else None,
             asr_device=self.asr_device,
             asr_language=self.asr_language,
-            asr_option=None,
+            asr_option=asr_options,
             sensevoice_repo=None,
             streaming_sensevoice_repo=(
                 self.streaming_sensevoice_repo
@@ -132,8 +162,14 @@ class RuntimeSettings:
 
 
 class RecognitionRuntime:
-    def __init__(self, settings: RuntimeSettings) -> None:
+    def __init__(
+        self,
+        settings: RuntimeSettings,
+        *,
+        asr_backend_cache: ASRBackendCache | None = None,
+    ) -> None:
         self.settings = settings
+        self.asr_backend_cache = asr_backend_cache
 
     def run(
         self,
@@ -142,65 +178,138 @@ class RecognitionRuntime:
         *,
         on_update: Callable[[object], None],
         on_state: Callable[[str], None],
+        on_connected: Callable[[], None],
+        on_disconnected: Callable[[], None],
         on_started: Callable[[], None],
         on_push_to_talk: Callable[[bool], None] | None = None,
     ) -> None:
         args = self.settings.to_namespace()
-        on_state("正在加载 ProxiMic 检测模型…")
-        detector = _build_detector(args)
-        if disconnect_event.is_set():
-            return
-        on_state(f"正在加载语音模型 {args.asr[0]}…")
-        controller = _build_session_controller(
-            args,
-            detector,
-            streaming_observer=on_update,
-            desktop_overlay=SilentTranscriptOverlay(),
-            on_state=on_state,
-            show_streaming_console=False,
-            push_to_talk_observer=on_push_to_talk,
-            desktop_should_inject=external_window_has_focus,
-        )
         source = RingAudioSource(
             name_keyword=args.name,
             selector=args.selector,
+            device=args.device,
             timeout_s=args.timeout,
             encoding=args.encoding,
             data_root=args.data_dir,
         )
+        detector = None
+        controller = None
+        watcher_done = threading.Event()
+        connection_attempted = threading.Event()
+        source_disconnected = threading.Event()
+        source_close_lock = threading.Lock()
+
+        def close_source_and_report() -> None:
+            """Close the physical device once and publish that independently."""
+            with source_close_lock:
+                source.close()
+                if connection_attempted.is_set() and not source_disconnected.is_set():
+                    source_disconnected.set()
+                    on_disconnected()
+
+        def stop_source_when_requested() -> None:
+            while not watcher_done.wait(0.1):
+                if disconnect_event.is_set():
+                    close_source_and_report()
+                    return
+                if source.error is not None:
+                    on_state(f"设备连接已中断：{source.error}")
+                    disconnect_event.set()
+                    close_source_and_report()
+                    return
+
+        watcher = threading.Thread(
+            target=stop_source_when_requested,
+            name="ProxiMicDisconnectWatcher",
+            daemon=True,
+        )
+        watcher.start()
         try:
             if disconnect_event.is_set():
                 return
-            on_state("正在连接 Ringo…")
+            on_state(f"正在连接设备 {self.settings.ring_name}…")
+            connection_attempted.set()
+            source.connect()
+            if disconnect_event.is_set():
+                return
+            on_state("正在验证 Ring 麦克风音频…")
+            source.start_stream(buffer_audio=False)
+            if disconnect_event.is_set():
+                return
+            on_connected()
+            # Keep the physical MIC stream alive while models load.  Audio is
+            # deliberately not buffered yet, so it cannot reach detection or
+            # ASR.  Some Ring firmware does not reliably resume a second MIC ON
+            # within the same BLE session after MIC OFF.
+            on_state("设备音频验证通过，保持音频流并加载模型…")
+
+            if disconnect_event.is_set():
+                return
+            on_state("正在加载 ProxiMic 检测模型…")
+            detector = _build_detector(args)
+            if source.error is not None:
+                raise RuntimeError(str(source.error)) from source.error
+            if disconnect_event.is_set():
+                return
+
+            on_state(f"正在加载语音模型 {args.asr[0]}…")
+            controller = _build_session_controller(
+                args,
+                detector,
+                streaming_observer=on_update,
+                desktop_overlay=SilentTranscriptOverlay(),
+                on_state=on_state,
+                show_streaming_console=False,
+                push_to_talk_observer=on_push_to_talk,
+                desktop_should_inject=external_window_has_focus,
+                backend_cache=self.asr_backend_cache,
+            )
+            if source.error is not None:
+                raise RuntimeError(str(source.error)) from source.error
+            if disconnect_event.is_set():
+                return
+
+            on_state("模型加载完成，正在确认实时音频…")
+            source.begin_buffering()
             recognition_was_enabled = False
-            with source:
-                on_started()
-                while not disconnect_event.is_set():
-                    block = source.read(320)
-                    if block is None:
-                        break
+            on_started()
+            while not disconnect_event.is_set():
+                block = source.read(320)
+                if block is None:
+                    break
 
-                    recognition_enabled = recognition_event.is_set()
-                    if not recognition_enabled:
-                        if recognition_was_enabled:
-                            # Finish the current utterance once, then discard
-                            # detector/ASR history captured before the pause.
-                            controller.reset()
-                            detector.reset()
-                        recognition_was_enabled = False
-                        continue
-
-                    if not recognition_was_enabled:
-                        # Detector and controller sample clocks must restart
-                        # together because DetectionEvent uses sample indexes.
-                        detector.reset()
+                recognition_enabled = recognition_event.is_set()
+                if not recognition_enabled:
+                    if recognition_was_enabled:
+                        # Finish the current utterance once, then discard
+                        # detector/ASR history captured before the pause.
                         controller.reset()
-                    recognition_was_enabled = True
-                    events = detector.feed(block)
-                    controller.process(block, events)
+                        detector.reset()
+                    recognition_was_enabled = False
+                    continue
 
-                if recognition_was_enabled:
-                    controller.flush()
+                if not recognition_was_enabled:
+                    # Detector and controller sample clocks must restart
+                    # together because DetectionEvent uses sample indexes.
+                    detector.reset()
+                    controller.reset()
+                recognition_was_enabled = True
+                events = detector.feed(block)
+                for event in events:
+                    if isinstance(event, Stage2Event):
+                        on_state(format_event(event))
+                controller.process(block, events)
+
+            if recognition_was_enabled and not disconnect_event.is_set():
+                controller.flush()
         finally:
+            watcher_done.set()
+            close_source_and_report()
+            if watcher is not threading.current_thread():
+                watcher.join(timeout=1.0)
             if controller is not None:
+                if disconnect_event.is_set():
+                    abort = getattr(controller, "abort", None)
+                    if callable(abort):
+                        abort()
                 controller.close()

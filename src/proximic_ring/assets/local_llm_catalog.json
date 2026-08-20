@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "defaultRuntime": "llama-cpp-b10218-win-cpu-x64",
+  "defaultModel": "qwen3-4b-instruct-2507-q4-k-m",
+  "runtimes": {
+    "llama-cpp-b10218-win-cpu-x64": {
+      "displayName": "llama.cpp b10218 · Windows x64 CPU",
+      "platform": "windows-x86_64",
+      "archiveFilename": "llama-b10218-bin-win-cpu-x64.zip",
+      "downloadUrls": [
+        "https://github.com/ggml-org/llama.cpp/releases/download/b10218/llama-b10218-bin-win-cpu-x64.zip"
+      ],
+      "downloadUrl": "https://github.com/ggml-org/llama.cpp/releases/download/b10218/llama-b10218-bin-win-cpu-x64.zip",
+      "sha256": "678d67405b12abd8ea3541ec6f501c10c9c15ba3cd0767bf090f79eb51168a17",
+      "sizeBytes": 18353134,
+      "executable": "llama-server.exe"
+    }
+  },
+  "models": {
+    "qwen3-4b-instruct-2507-q4-k-m": {
+      "displayName": "Qwen3 4B Instruct 2507 · Q4_K_M",
+      "license": "Apache-2.0",
+      "source": "bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF",
+      "apiModel": "qwen3-4b-instruct-2507-local",
+      "filename": "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf",
+      "downloadUrls": [
+        "https://hf-mirror.com/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true",
+        "https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true"
+      ],
+      "downloadUrl": "https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF/resolve/main/Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf?download=true",
+      "sha256": "2fde00ce69dd4899c70d020845e2638353015bba0fdf161b3eb965f2bca4464e",
+      "sizeBytes": 2497280736,
+      "contextSize": 8192,
+      "reasoning": "off"
+    }
+  }
+}

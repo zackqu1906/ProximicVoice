@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -74,6 +75,24 @@ class FunASRNanoStreamingASR:
         except ImportError as exc:
             raise RuntimeError("Fun-ASR-Nano requires PyTorch") from exc
         self._torch = torch
+
+        # Local cumulative decoding is intentionally kept below full CPU
+        # saturation.  BLE notification delivery and the customer UI must keep
+        # receiving scheduling time even when a long partial is being decoded.
+        try:
+            if torch.device(self.device).type == "cpu":
+                cpu_count = os.cpu_count() or 2
+                inference_threads = max(1, min(4, cpu_count // 2))
+                if int(torch.get_num_threads()) > inference_threads:
+                    torch.set_num_threads(inference_threads)
+                print(
+                    "Fun-ASR CPU inference threads: "
+                    f"{int(torch.get_num_threads())} (system CPUs: {cpu_count})"
+                )
+        except (RuntimeError, TypeError, ValueError):
+            # Thread-pool configuration is a responsiveness optimization; it
+            # must not make an otherwise usable backend fail to load.
+            pass
 
         cls = self._load_external_class(model_py)
         # FunASR may inspect configuration.json and try to import the checkpoint's
@@ -151,6 +170,9 @@ class FunASRNanoStreamingASR:
         self._last_text = ""
 
     def start(self) -> None:
+        self._reset()
+
+    def abort(self) -> None:
         self._reset()
 
     @staticmethod

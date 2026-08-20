@@ -1,4 +1,8 @@
-"""Windows global hold-to-talk control for ProxiMic's existing ASR session."""
+"""Global keyboard adapter for voice interaction actions on Windows.
+
+These action names are deliberately device-neutral.  Ring gestures can emit
+the same values later without knowing anything about QML or desktop text APIs.
+"""
 
 from __future__ import annotations
 
@@ -9,30 +13,11 @@ import threading
 from typing import Callable
 
 
-class PushToTalkState:
-    """Small thread-safe state shared by the keyboard hook and audio loop."""
-
-    def __init__(self, *, on_change: Callable[[bool], None] | None = None) -> None:
-        self._active = threading.Event()
-        self._on_change = on_change
-        self._lock = threading.Lock()
-
-    def is_active(self) -> bool:
-        return self._active.is_set()
-
-    def set_active(self, active: bool) -> None:
-        active = bool(active)
-        callback = None
-        with self._lock:
-            if active == self._active.is_set():
-                return
-            if active:
-                self._active.set()
-            else:
-                self._active.clear()
-            callback = self._on_change
-        if callback is not None:
-            callback(active)
+ACTION_INPUT = "input"
+ACTION_EDIT = "edit"
+ACTION_CONFIRM = "confirm"
+ACTION_CANCEL = "cancel"
+ACTION_RETRY = "retry"
 
 
 if os.name == "nt":
@@ -49,19 +34,12 @@ if os.name == "nt":
         )
 
     _HOOKPROC = ctypes.WINFUNCTYPE(
-        _LRESULT,
-        ctypes.c_int,
-        wintypes.WPARAM,
-        wintypes.LPARAM,
+        _LRESULT, ctypes.c_int, wintypes.WPARAM, wintypes.LPARAM
     )
 
 
-class WindowsPushToTalkHotkey:
-    """Hold the right Alt key globally to force the ASR session active.
-
-    Right Alt is consumed while ProxiMic is running, leaving the much more
-    common left Alt shortcuts (Alt+Tab, application menus) untouched.
-    """
+class WindowsVoiceActionHotkeys:
+    """Map global shortcuts to the same actions future Ring gestures use."""
 
     WH_KEYBOARD_LL = 13
     WM_KEYDOWN = 0x0100
@@ -70,71 +48,51 @@ class WindowsPushToTalkHotkey:
     WM_SYSKEYUP = 0x0105
     WM_QUIT = 0x0012
     PM_NOREMOVE = 0x0000
-
-    VK_RMENU = 0xA5
-
-    display_name = "右 Alt"
+    VK_MENU = 0x12
+    _ALT_ACTIONS = {
+        0x31: ACTION_INPUT,      # Alt+1
+        0x32: ACTION_EDIT,       # Alt+2
+        0x52: ACTION_RETRY,      # Alt+R (optional review fallback)
+    }
+    _REVIEW_ACTIONS = {
+        0x0D: ACTION_CONFIRM,    # Enter while a review is visible
+        0x1B: ACTION_CANCEL,     # Escape while a review is visible
+    }
 
     def __init__(
         self,
+        on_action: Callable[[str], None],
         *,
+        is_review_active: Callable[[], bool] | None = None,
         on_error: Callable[[str], None] = print,
-        on_change: Callable[[bool], None] | None = None,
     ) -> None:
         if os.name != "nt":
-            raise RuntimeError("push-to-talk is currently supported only on Windows")
+            raise RuntimeError("全局语音动作快捷键目前仅支持 Windows")
+        self._on_action = on_action
+        self._is_review_active = is_review_active or (lambda: False)
         self._on_error = on_error
-        self._on_change = on_change
-        self.state = PushToTalkState(on_change=self._report_change)
         self._ready = threading.Event()
         self._thread_id = 0
         self._failed: str | None = None
+        self._pressed_actions: set[int] = set()
         self._thread = threading.Thread(
             target=self._run,
-            name="ProxiMicPushToTalk",
+            name="ProxiMicVoiceActions",
             daemon=True,
         )
         self._thread.start()
         if not self._ready.wait(timeout=3.0):
-            raise RuntimeError("timed out while installing the global push-to-talk hotkey")
-        if self._failed is not None:
+            raise RuntimeError("安装全局语音动作快捷键超时")
+        if self._failed:
             raise RuntimeError(self._failed)
 
-    def is_active(self) -> bool:
-        return self.state.is_active()
-
     def close(self) -> None:
-        self.state.set_active(False)
-        thread_id = self._thread_id
-        if thread_id:
-            user32 = ctypes.WinDLL("user32", use_last_error=True)
-            user32.PostThreadMessageW.argtypes = (
-                wintypes.DWORD,
-                wintypes.UINT,
-                wintypes.WPARAM,
-                wintypes.LPARAM,
+        if self._thread_id:
+            ctypes.windll.user32.PostThreadMessageW(
+                self._thread_id, self.WM_QUIT, 0, 0
             )
-            user32.PostThreadMessageW.restype = wintypes.BOOL
-            user32.PostThreadMessageW(thread_id, self.WM_QUIT, 0, 0)
         if threading.current_thread() is not self._thread:
             self._thread.join(timeout=2.0)
-
-    # SessionSink-compatible no-ops let the ASR fanout own this resource and
-    # close the global hook after all queued final results have completed.
-    def start(self, _initial_audio_16k) -> None:
-        return None
-
-    def feed(self, _audio_16k) -> None:
-        return None
-
-    def end(self, _final_audio_16k) -> None:
-        return None
-
-    def _report_change(self, active: bool) -> None:
-        action = "HOLD -> manual listening" if active else "RELEASE -> automatic control"
-        print(f"[PTT] {self.display_name} {action}", flush=True)
-        if self._on_change is not None:
-            self._on_change(active)
 
     def _run(self) -> None:
         hook = None
@@ -145,61 +103,62 @@ class WindowsPushToTalkHotkey:
             self._thread_id = int(kernel32.GetCurrentThreadId())
 
             def callback(n_code, w_param, l_param):
-                try:
-                    if n_code >= 0:
-                        data = ctypes.cast(
-                            l_param, ctypes.POINTER(_KBDLLHOOKSTRUCT)
-                        ).contents
-                        vk = int(data.vkCode)
-                        message = int(w_param)
-                        is_down = message in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN)
-                        is_up = message in (self.WM_KEYUP, self.WM_SYSKEYUP)
-
-                        if vk == self.VK_RMENU:
-                            if is_down:
-                                self.state.set_active(True)
-                                return 1
-                            if is_up:
-                                self.state.set_active(False)
-                                return 1
-                except BaseException as exc:
-                    self._on_error(f"[PTT] keyboard hook event failed: {exc}")
+                if n_code >= 0:
+                    data = ctypes.cast(
+                        l_param, ctypes.POINTER(_KBDLLHOOKSTRUCT)
+                    ).contents
+                    key = int(data.vkCode)
+                    message = int(w_param)
+                    is_down = message in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN)
+                    is_up = message in (self.WM_KEYUP, self.WM_SYSKEYUP)
+                    action = None
+                    if self._alt_down(user32):
+                        action = self._ALT_ACTIONS.get(key)
+                    if action is None and self._is_review_active():
+                        action = self._REVIEW_ACTIONS.get(key)
+                    if is_up:
+                        was_consumed = key in self._pressed_actions
+                        self._pressed_actions.discard(key)
+                        if was_consumed:
+                            return 1
+                    if action and is_down:
+                        if key not in self._pressed_actions:
+                            self._pressed_actions.add(key)
+                            try:
+                                self._on_action(action)
+                            except BaseException as exc:
+                                self._on_error(f"[voice-actions] {exc}")
+                        return 1
                 return user32.CallNextHookEx(None, n_code, w_param, l_param)
 
             hook_proc = _HOOKPROC(callback)
-            ctypes.set_last_error(0)
             module = kernel32.GetModuleHandleW(None)
             hook = user32.SetWindowsHookExW(self.WH_KEYBOARD_LL, hook_proc, module, 0)
             if not hook:
-                error = ctypes.get_last_error()
-                raise OSError(error, "SetWindowsHookExW failed")
-
-            # Ensure this thread owns a message queue before close() may post
-            # WM_QUIT, then publish readiness to the caller.
+                raise OSError(ctypes.get_last_error(), "SetWindowsHookExW failed")
             message = wintypes.MSG()
             user32.PeekMessageW(ctypes.byref(message), None, 0, 0, self.PM_NOREMOVE)
             self._ready.set()
             while True:
                 result = user32.GetMessageW(ctypes.byref(message), None, 0, 0)
-                if result == 0:
+                if result <= 0:
                     break
-                if result == -1:
-                    error = ctypes.get_last_error()
-                    raise OSError(error, "GetMessageW failed")
                 user32.TranslateMessage(ctypes.byref(message))
                 user32.DispatchMessageW(ctypes.byref(message))
         except BaseException as exc:
-            self._failed = f"global push-to-talk unavailable: {exc}"
+            self._failed = f"global voice action hotkeys unavailable: {exc}"
             self._ready.set()
-            self._on_error(f"[PTT] {self._failed}")
+            self._on_error(f"[voice-actions] {self._failed}")
         finally:
-            self.state.set_active(False)
             if hook:
                 try:
                     user32.UnhookWindowsHookEx(hook)
                 except BaseException:
                     pass
             self._thread_id = 0
+
+    def _alt_down(self, user32) -> bool:
+        return bool(user32.GetAsyncKeyState(self.VK_MENU) & 0x8000)
 
     @staticmethod
     def _configure_win32(user32, kernel32) -> None:

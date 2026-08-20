@@ -70,7 +70,9 @@ class RingSession(DemuxMixin, ConnectionMixin, SensorsMixin, StatusMixin):
     _seg: dict[str, int] = field(default_factory=dict)
     saved_paths: list[Path] = field(default_factory=list)
     scanned: list[Any] = field(default_factory=list)
-    auto_reconnect: bool = True
+    # Product default: a dropped link stays disconnected until the user
+    # explicitly reconnects.  Diagnostic callers may still opt in manually.
+    auto_reconnect: bool = False
     reconnecting: bool = False
     _user_closing: bool = False
     _reconnect_task: asyncio.Task | None = field(default=None, repr=False)

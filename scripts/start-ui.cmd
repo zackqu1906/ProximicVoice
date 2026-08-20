@@ -6,6 +6,7 @@ set "PIP_CACHE_DIR=%CD%\.cache\pip"
 set "MODELSCOPE_CACHE=%CD%\.cache\modelscope"
 set "HF_HOME=%CD%\.cache\huggingface"
 set "TORCH_HOME=%CD%\.cache\torch"
+if not defined PROXIMIC_LLM_HOME set "PROXIMIC_LLM_HOME=%CD%\.runtime\local-llm"
 
 if not exist ".runtime\venv\Scripts\python.exe" (
     echo Proximic Voice is not installed yet.

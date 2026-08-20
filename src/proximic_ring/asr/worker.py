@@ -38,17 +38,23 @@ class ASRWorker:
         self.on_text = on_text
         self.on_error = on_error
         self._queue: queue.Queue[np.ndarray | None] = queue.Queue(maxsize=max_pending)
+        self._abort_requested = threading.Event()
         thread_name = f"ASR-{getattr(backend, 'backend_name', type(backend).__name__)}"
         self._thread = threading.Thread(target=self._run, name=thread_name, daemon=True)
         self._thread.start()
 
     def submit(self, audio_16k: np.ndarray) -> None:
+        if self._abort_requested.is_set():
+            return
         x = np.asarray(audio_16k, dtype=np.float32).reshape(-1).copy()
         try:
             self._queue.put_nowait(x)
         except queue.Full:
             name = getattr(self.backend, "backend_name", type(self.backend).__name__)
             self.on_error(f"[ASR:{name}] queue full; dropped one completed utterance")
+
+    def abort(self) -> None:
+        self._abort_requested.set()
 
     def close(self) -> None:
         self._queue.put(None)
@@ -60,6 +66,8 @@ class ASRWorker:
             try:
                 if audio is None:
                     return
+                if self._abort_requested.is_set():
+                    continue
 
                 backend_name = str(getattr(self.backend, "backend_name", type(self.backend).__name__))
                 model_name = str(getattr(self.backend, "model_name", "unknown"))
@@ -76,11 +84,15 @@ class ASRWorker:
                         audio_duration_s=duration_s,
                         sample_rate=self.sample_rate,
                     )
+                    if self._abort_requested.is_set():
+                        continue
                     if self.on_result is not None:
                         self.on_result(result)
                     if text and self.on_text is not None:
                         self.on_text(text)
                 except BaseException as exc:
+                    if self._abort_requested.is_set():
+                        continue
                     latency_s = time.perf_counter() - start
                     result = ASRResult(
                         backend=backend_name,
@@ -113,6 +125,10 @@ class ASRFanout:
     def submit(self, audio_16k: np.ndarray) -> None:
         for worker in self.workers:
             worker.submit(audio_16k)
+
+    def abort(self) -> None:
+        for worker in self.workers:
+            worker.abort()
 
     def close(self) -> None:
         for worker in self.workers:

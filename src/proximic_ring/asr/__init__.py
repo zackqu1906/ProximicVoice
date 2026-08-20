@@ -1,4 +1,5 @@
 from .base import ASRBackend, ASRResult
+from .cache import ASRBackendCache
 from .controller import DirectASRSessionController, ProximityASRController, ProximitySessionController
 from .factory import (
     ASRBackendSettings,
@@ -14,6 +15,7 @@ from .sensevoice import SenseVoiceASR
 
 __all__ = [
     "ASRBackend",
+    "ASRBackendCache",
     "ASRBackendSettings",
     "ASRFanout",
     "ASRResult",

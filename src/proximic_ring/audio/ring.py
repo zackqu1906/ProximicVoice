@@ -17,10 +17,13 @@ _STOP = object()
 # existing CLI does not need to change.
 _WATCHDOG_POLL_S = 0.25
 _WATCHDOG_STALL_S = 2.0
-_WATCHDOG_RECOVERY_WAIT_S = 3.0
-_WATCHDOG_MAX_CONSECUTIVE_FAILURES = 3
-_WATCHDOG_RESTART_PAUSE_S = 0.25
-_WATCHDOG_RECONNECT_PAUSE_S = 0.50
+_WATCHDOG_CONFIRM_S = 0.50
+_INITIAL_PCM_TIMEOUT_S = 3.0
+_FRESH_PCM_TIMEOUT_S = 3.0
+# The Ring MIC control command has no acknowledgement.  A warm model cache can
+# otherwise make MIC OFF and the following MIC ON effectively back-to-back,
+# before the firmware has finished closing the previous capture.
+_MIC_RESTART_PAUSE_S = 0.25
 
 
 class RingAudioSource(AudioSource):
@@ -35,13 +38,11 @@ class RingAudioSource(AudioSource):
     The SDK also writes the same decoded stream to a WAV file under ``data_root``.
     ProxiMic does *not* read that WAV back; inference uses the callback directly.
 
-    A PCM watchdog is included here because the Ring can occasionally remain BLE
-    connected while the microphone stream itself stops producing callbacks.  If
-    no new PCM callback arrives for two seconds, the watchdog first restarts the
-    microphone.  If that does not recover PCM, it forces a BLE reconnect and
-    starts the microphone again.  After three consecutive failed recoveries the
-    source stops with an explicit error instead of silently recording an empty
-    or 0.2-second WAV forever.
+    BLE connection and microphone streaming are separate phases.  The customer
+    UI connects and validates the selected device before loading detector/ASR
+    models, then begins forwarding live audio when those models are ready.  If
+    PCM stops, the watchdog closes the session immediately; reconnecting is
+    always an explicit user action.
     """
 
     sample_rate: int = 16_000
@@ -51,6 +52,7 @@ class RingAudioSource(AudioSource):
         *,
         name_keyword: str = "Ringo",
         selector: str | None = None,
+        device: object | None = None,
         timeout_s: float = 8.0,
         encoding: str = "pcm",
         data_root: str | Path = "data",
@@ -66,6 +68,7 @@ class RingAudioSource(AudioSource):
 
         self.name_keyword = name_keyword
         self.selector = selector
+        self.device = device
         self.timeout_s = float(timeout_s)
         self.encoding = encoding
         self.data_root = Path(data_root)
@@ -73,6 +76,14 @@ class RingAudioSource(AudioSource):
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_blocks)
         self._pending = np.empty(0, dtype=np.float32)
         self._stop = threading.Event()
+        self._connected_ready = threading.Event()
+        self._start_stream = threading.Event()
+        self._buffer_audio = threading.Event()
+        self._buffer_audio.set()
+        self._watchdog_armed = threading.Event()
+        self._fresh_pcm = threading.Event()
+        self._pause_stream_requested = threading.Event()
+        self._stream_paused = threading.Event()
         self._ready = threading.Event()
         self._thread: threading.Thread | None = None
         self._error: BaseException | None = None
@@ -83,6 +94,11 @@ class RingAudioSource(AudioSource):
         self._last_pcm_monotonic: float | None = None
 
     def open(self) -> None:
+        self.connect()
+        self.start_stream(buffer_audio=True)
+
+    def connect(self) -> None:
+        """Connect and validate BLE/NUS without starting microphone audio."""
         if self._thread is not None:
             raise RuntimeError("RingAudioSource is already open")
 
@@ -94,6 +110,13 @@ class RingAudioSource(AudioSource):
         self.samples_received = 0
         self._last_pcm_monotonic = None
         self._stop.clear()
+        self._connected_ready.clear()
+        self._start_stream.clear()
+        self._buffer_audio.clear()
+        self._watchdog_armed.clear()
+        self._fresh_pcm.clear()
+        self._pause_stream_requested.clear()
+        self._stream_paused.clear()
         self._ready.clear()
 
         self._thread = threading.Thread(
@@ -105,18 +128,114 @@ class RingAudioSource(AudioSource):
 
         # Scan + connection may each consume the configured BLE timeout.
         wait_s = max(15.0, self.timeout_s * 2.0 + 5.0)
-        if not self._ready.wait(timeout=wait_s):
+        if not self._connected_ready.wait(timeout=wait_s):
             self.close()
             raise TimeoutError(
-                f"Timed out waiting for Ringo microphone after {wait_s:.1f}s"
+                f"Timed out connecting to the selected Ring after {wait_s:.1f}s"
             )
         if self._error is not None:
             err = self._error
             self.close()
-            raise RuntimeError(f"Failed to start Ringo microphone: {err}") from err
+            raise RuntimeError(f"Failed to connect to the selected Ring: {err}") from err
+
+    def start_stream(self, *, buffer_audio: bool = True) -> None:
+        """Start microphone audio and require the first usable PCM block.
+
+        ``buffer_audio=False`` validates the physical stream without filling the
+        inference queue while models are still loading.
+        """
+        if self._thread is None:
+            self.connect()
+        if buffer_audio:
+            self._buffer_audio.set()
+        else:
+            self._buffer_audio.clear()
+        self._start_stream.set()
+        wait_s = max(6.0, _INITIAL_PCM_TIMEOUT_S + 2.0)
+        if not self._ready.wait(timeout=wait_s):
+            self.close()
+            raise TimeoutError(
+                f"Timed out waiting for Ring microphone audio after {wait_s:.1f}s"
+            )
+        if self._error is not None:
+            err = self._error
+            self.close()
+            raise RuntimeError(f"Failed to start Ring microphone audio: {err}") from err
+        if buffer_audio:
+            self._watchdog_armed.set()
+
+    def begin_buffering(self) -> None:
+        """Resume if paused, require fresh PCM, then arm the watchdog."""
+        if self._error is not None:
+            raise RuntimeError(f"Ring audio stream failed: {self._error}") from self._error
+        self._clear_queue()
+        self._pending = np.empty(0, dtype=np.float32)
+        if self._stream_paused.is_set():
+            self._buffer_audio.set()
+            self._ready.clear()
+            self._pause_stream_requested.clear()
+            wait_s = max(6.0, _INITIAL_PCM_TIMEOUT_S + 2.0)
+            if not self._ready.wait(wait_s):
+                raise RuntimeError(
+                    "Ring microphone did not restart after model loading; "
+                    "the device will be disconnected"
+                )
+            if self._error is not None:
+                raise RuntimeError(
+                    f"Ring audio stream failed: {self._error}"
+                ) from self._error
+            self._watchdog_armed.set()
+            return
+
+        baseline_callbacks = self.pcm_callbacks
+        self._buffer_audio.set()
+        deadline = time.monotonic() + _FRESH_PCM_TIMEOUT_S
+        while self.pcm_callbacks <= baseline_callbacks:
+            self._fresh_pcm.clear()
+            if self.pcm_callbacks > baseline_callbacks:
+                break
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not self._fresh_pcm.wait(remaining):
+                raise RuntimeError(
+                    "Ring microphone audio did not resume after model loading; "
+                    "the device will be disconnected"
+                )
+            if self._error is not None:
+                raise RuntimeError(
+                    f"Ring audio stream failed: {self._error}"
+                ) from self._error
+        self._watchdog_armed.set()
+
+    def pause_stream(self) -> None:
+        """Stop MIC traffic while keeping BLE/NUS connected."""
+        if self._thread is None:
+            return
+        self._watchdog_armed.clear()
+        self._buffer_audio.clear()
+        self._pause_stream_requested.set()
+        wait_s = max(5.0, self.timeout_s + 1.0)
+        if not self._stream_paused.wait(wait_s):
+            if self._error is not None:
+                raise RuntimeError(
+                    f"Failed to pause Ring microphone: {self._error}"
+                ) from self._error
+            raise TimeoutError("Timed out pausing Ring microphone before model loading")
+        if self._stop.is_set():
+            return
+        if self._error is not None:
+            raise RuntimeError(
+                f"Failed to pause Ring microphone: {self._error}"
+            ) from self._error
+
+    @property
+    def error(self) -> BaseException | None:
+        return self._error
 
     def close(self) -> None:
         self._stop.set()
+        self._start_stream.set()
+        self._pause_stream_requested.clear()
+        self._stream_paused.set()
         thread = self._thread
         if thread is not None and thread is not threading.current_thread():
             thread.join(timeout=max(5.0, self.timeout_s + 2.0))
@@ -187,24 +306,29 @@ class RingAudioSource(AudioSource):
         self.pcm_callbacks += 1
         self.samples_received += int(block.size)
         self._last_pcm_monotonic = time.monotonic()
-        try:
-            self._queue.put_nowait(block)
-        except queue.Full:
-            self._signal_error(
-                RuntimeError(
-                    "Ringo PCM queue overflow: inference is not consuming audio fast enough"
+        self._fresh_pcm.set()
+        if self._buffer_audio.is_set():
+            try:
+                self._queue.put_nowait(block)
+            except queue.Full:
+                self._signal_error(
+                    RuntimeError(
+                        "Ringo PCM queue overflow: inference is not consuming audio fast enough"
+                    )
                 )
-            )
-            return
+                return
 
-        # RingAudioSource.open() and therefore the UI's "connected" state are
-        # released only after the first usable audio frame reaches the pipeline.
+        # The streaming phase is ready only after a usable audio frame reaches
+        # the pipeline.  BLE connection readiness is tracked separately.
         self._ready.set()
 
     def _signal_error(self, exc: BaseException) -> None:
         if self._error is None:
             self._error = exc
         self._stop.set()
+        self._connected_ready.set()
+        self._fresh_pcm.set()
+        self._stream_paused.set()
         try:
             self._queue.put_nowait(exc)
         except queue.Full:
@@ -231,6 +355,7 @@ class RingAudioSource(AudioSource):
         except BaseException as exc:
             self._signal_error(exc)
         finally:
+            self._connected_ready.set()
             self._ready.set()
             try:
                 self._queue.put_nowait(_STOP)
@@ -255,108 +380,6 @@ class RingAudioSource(AudioSource):
 
         self.capture_path = Path(session.mic.output_path)
         return await self._wait_for_new_pcm(baseline_callbacks, timeout_s)
-
-    async def _restart_mic(self, session) -> bool:
-        """Restart MIC on the current BLE link and require fresh PCM."""
-        try:
-            if session.mic_active:
-                await session.mic_off()
-        except Exception as exc:
-            print(f"[WATCHDOG] mic_off during recovery failed: {exc}")
-
-        if self._stop.is_set():
-            return False
-
-        await asyncio.sleep(_WATCHDOG_RESTART_PAUSE_S)
-
-        # If BLE itself dropped, let the SDK reconnect before restarting MIC.
-        try:
-            connected = await session.ensure_connected()
-        except Exception as exc:
-            print(f"[WATCHDOG] ensure_connected failed: {exc}")
-            connected = False
-
-        if not connected:
-            return False
-
-        try:
-            return await self._start_mic_and_wait(
-                session,
-                timeout_s=_WATCHDOG_RECOVERY_WAIT_S,
-            )
-        except Exception as exc:
-            print(f"[WATCHDOG] mic restart failed: {exc}")
-            return False
-
-    async def _force_reconnect_and_restart_mic(self, session) -> bool:
-        """Force a fresh BLE connection, then start MIC and require fresh PCM."""
-        print("[WATCHDOG] Forcing a fresh BLE reconnect ...")
-        try:
-            await session.disconnect_link()
-        except Exception as exc:
-            print(f"[WATCHDOG] disconnect_link failed: {exc}")
-
-        if self._stop.is_set():
-            return False
-
-        await asyncio.sleep(_WATCHDOG_RECONNECT_PAUSE_S)
-
-        try:
-            if self.selector:
-                # Force connect_target() to perform a fresh scan rather than reusing
-                # a stale BLEDevice object from the previous connection.
-                try:
-                    session.scanned = []
-                except Exception:
-                    pass
-                connected = await session.connect_target(self.selector)
-            else:
-                connected = await session.connect()
-        except Exception as exc:
-            print(f"[WATCHDOG] BLE reconnect failed: {exc}")
-            return False
-
-        if not connected:
-            print("[WATCHDOG] BLE reconnect did not connect to a Ring.")
-            return False
-
-        await self._print_battery_status(session)
-
-        try:
-            return await self._start_mic_and_wait(
-                session,
-                timeout_s=_WATCHDOG_RECOVERY_WAIT_S,
-            )
-        except Exception as exc:
-            print(f"[WATCHDOG] MIC start after BLE reconnect failed: {exc}")
-            return False
-
-    async def _recover_stalled_stream(self, session) -> bool:
-        """Try MIC restart first; if that fails, rebuild the BLE link."""
-        print(
-            "[WATCHDOG] Restarting Ring microphone on the current BLE connection ..."
-        )
-        if await self._restart_mic(session):
-            print(
-                "[WATCHDOG] PCM stream recovered after MIC restart "
-                f"(callbacks={self.pcm_callbacks}, samples={self.samples_received})."
-            )
-            return True
-
-        if self._stop.is_set():
-            return False
-
-        print(
-            f"[WATCHDOG] No PCM within {_WATCHDOG_RECOVERY_WAIT_S:.1f}s after MIC restart."
-        )
-        if await self._force_reconnect_and_restart_mic(session):
-            print(
-                "[WATCHDOG] PCM stream recovered after BLE reconnect "
-                f"(callbacks={self.pcm_callbacks}, samples={self.samples_received})."
-            )
-            return True
-
-        return False
 
     async def _print_battery_status(self, session, *, timeout_s: float = 1.5) -> None:
         """Query and print Ring battery after a BLE connection is established."""
@@ -411,12 +434,12 @@ class RingAudioSource(AudioSource):
         assembler = getattr(mic, "_assembler", None)
         incomplete = getattr(assembler, "incomplete_notify_packets", -1)
         inflight = getattr(assembler, "inflight_frame_count", -1)
-        completed_waiting = getattr(assembler, "completed_frame_count", -1)
+        assembled_frames = getattr(assembler, "completed_frames", -1)
 
         return (
             f"sdk_packets={packet_count}, decoded_blocks={frame_count}, "
             f"incomplete_notifies={incomplete}, inflight_frames={inflight}, "
-            f"completed_waiting={completed_waiting}, "
+            f"assembled_frames={assembled_frames}, "
             f"dropped_packets={dropped_packets}, dropped_frames={dropped_frames}"
         )
 
@@ -451,10 +474,13 @@ class RingAudioSource(AudioSource):
             name_keyword=self.name_keyword,
             timeout_s=self.timeout_s,
             data_root=self.data_root,
+            auto_reconnect=False,
         )
 
         try:
-            if self.selector:
+            if self.device is not None:
+                connected = await session.connect_device(self.device)
+            elif self.selector:
                 connected = await session.connect_target(self.selector)
             else:
                 connected = await session.connect()
@@ -462,41 +488,110 @@ class RingAudioSource(AudioSource):
                 target = self.selector or self.name_keyword
                 raise RuntimeError(f"Ringo device {target!r} not found or connection failed")
 
+            # BLE and the required NUS service are now validated.  Release the
+            # connection phase before doing battery queries or starting audio.
+            self._connected_ready.set()
             await self._print_battery_status(session)
 
-            await session.mic_on(self.encoding, on_pcm=self._on_pcm)
-            if not session.mic_active or session.mic is None:
+            while not self._stop.is_set() and not self._start_stream.is_set():
+                client = getattr(session, "client", None)
+                if client is not None and not bool(getattr(client, "is_connected", False)):
+                    raise RuntimeError("Ring BLE connection was lost before audio started")
+                await asyncio.sleep(0.05)
+
+            if self._stop.is_set():
+                return
+
+            started = await self._start_mic_and_wait(
+                session,
+                timeout_s=_INITIAL_PCM_TIMEOUT_S,
+            )
+            if not started:
                 hint = ""
                 if self.encoding == "opus":
                     hint = (
                         " Opus mode additionally needs opuslib and a native libopus runtime; "
                         "try --encoding pcm to avoid Opus during initial testing."
                     )
-                raise RuntimeError(f"Ringo microphone did not start.{hint}")
-
-            self.capture_path = Path(session.mic.output_path)
+                raise RuntimeError(
+                    "Ring connected, but no microphone audio was received. "
+                    f"The device was disconnected; reconnect manually.{hint}"
+                )
 
             # Start the stall timer from MIC ON.  If the Ring never sends the
             # first callback, that is treated exactly like a stream stall.
             last_seen_callbacks = self.pcm_callbacks
             last_progress_at = time.monotonic()
-            consecutive_failures = 0
-
             while not self._stop.is_set():
                 await asyncio.sleep(_WATCHDOG_POLL_S)
+
+                if self._pause_stream_requested.is_set():
+                    self._watchdog_armed.clear()
+                    if session.mic_active:
+                        await session.mic_off()
+                    mic_stopped_at = time.monotonic()
+                    self._stream_paused.set()
+                    while (
+                        not self._stop.is_set()
+                        and self._pause_stream_requested.is_set()
+                    ):
+                        await asyncio.sleep(0.05)
+                    if self._stop.is_set():
+                        return
+
+                    remaining_pause = _MIC_RESTART_PAUSE_S - (
+                        time.monotonic() - mic_stopped_at
+                    )
+                    if remaining_pause > 0:
+                        await asyncio.sleep(remaining_pause)
+                    self._stream_paused.clear()
+                    started = await self._start_mic_and_wait(
+                        session,
+                        timeout_s=_INITIAL_PCM_TIMEOUT_S,
+                    )
+                    if not started:
+                        raise RuntimeError(
+                            "Ring microphone did not restart after model loading"
+                        )
+                    last_seen_callbacks = self.pcm_callbacks
+                    last_progress_at = time.monotonic()
+                    continue
 
                 callbacks_now = self.pcm_callbacks
                 now = time.monotonic()
 
+                # Model construction/import can temporarily monopolize Python
+                # execution even though BLE runs on its own thread.  The UI
+                # deliberately leaves the watchdog disarmed until models are
+                # ready and a fresh post-load PCM callback has been observed.
+                if not self._watchdog_armed.is_set():
+                    last_seen_callbacks = callbacks_now
+                    last_progress_at = now
+                    continue
+
                 if callbacks_now > last_seen_callbacks:
                     last_seen_callbacks = callbacks_now
                     last_progress_at = now
-                    consecutive_failures = 0
                     continue
 
                 stalled_for = now - last_progress_at
                 if stalled_for < _WATCHDOG_STALL_S:
                     continue
+
+                # Heavy local inference can briefly delay both this coroutine
+                # and Bleak's notification callbacks.  Yield once so queued or
+                # newly-arriving notifications are handled before declaring a
+                # physical stream failure.  This is confirmation only: no MIC
+                # restart and no BLE reconnect is attempted.
+                await asyncio.sleep(_WATCHDOG_CONFIRM_S)
+                callbacks_confirmed = self.pcm_callbacks
+                if callbacks_confirmed > last_seen_callbacks:
+                    last_seen_callbacks = callbacks_confirmed
+                    last_progress_at = time.monotonic()
+                    continue
+
+                now = time.monotonic()
+                stalled_for = now - last_progress_at
 
                 print(
                     "[WATCHDOG] PCM STREAM STALLED: "
@@ -509,29 +604,10 @@ class RingAudioSource(AudioSource):
                     + self._sdk_mic_diagnostics(session)
                 )
 
-                recovered = await self._recover_stalled_stream(session)
-                if self._stop.is_set():
-                    break
-
-                if recovered:
-                    last_seen_callbacks = self.pcm_callbacks
-                    last_progress_at = time.monotonic()
-                    consecutive_failures = 0
-                    continue
-
-                consecutive_failures += 1
-                last_seen_callbacks = self.pcm_callbacks
-                last_progress_at = time.monotonic()
-                print(
-                    "[WATCHDOG] Recovery failed "
-                    f"({consecutive_failures}/{_WATCHDOG_MAX_CONSECUTIVE_FAILURES})."
+                raise RuntimeError(
+                    "Ring microphone audio stopped. The device was disconnected; "
+                    "reconnect manually from the UI"
                 )
-
-                if consecutive_failures >= _WATCHDOG_MAX_CONSECUTIVE_FAILURES:
-                    raise RuntimeError(
-                        "Ringo PCM stream repeatedly stalled and could not be recovered "
-                        "after MIC restarts and BLE reconnects"
-                    )
         finally:
             try:
                 if session.mic_active:

@@ -35,14 +35,35 @@ Ringo microphone
 The WAV written by the SDK is a useful experiment/debug recording, but it is
 **not** read back into the real-time inference path.
 
+The desktop runtime uses a two-phase startup. It first connects BLE, validates
+the NUS service, starts the microphone, and requires a real PCM callback. Only
+then does it load the ProxiMic and ASR models. PCM received while models load is
+discarded instead of building an unbounded inference backlog; buffering starts
+when recognition is ready.
+
+The device picker retains Bleak's selected `BLEDevice` and passes it directly
+to `BleakClient`. It does not discard the selection and run another fixed scan;
+this is important for macOS identifiers and devices using rotating addresses.
+
+The stream watchdog is fail-closed. If PCM stops, it closes and disconnects the
+session immediately. It never restarts MIC or reconnects BLE in the background;
+the user must explicitly choose **Reconnect device** in the UI.
+
+After the initial real-PCM validation, the runtime keeps MIC active during
+detector/ASR initialization but discards those callbacks instead of sending them
+to inference. Once initialization finishes, it requires a fresh PCM callback
+before buffering and arming the watchdog. This avoids an unreliable second MIC
+ON command on firmware that cannot resume within the same BLE session.
+
 ## Codec choice
 
-`proximic-ring ring` defaults to `--encoding pcm` for the first hardware
-integration because it avoids a native Opus runtime and gives the detector the
-simplest possible signal path.
+The customer desktop UI and the live proximity diagnostic default to `pcm` so
+the detector receives the waveform distribution used for model training and
+threshold calibration.
 
-- `pcm`: no audio codec dependency beyond the SDK/BLE path;
-- `adpcm`: compressed on-air, decoded by the SDK;
+- `pcm`: recommended for proximity-model consistency, but creates more BLE traffic;
+- `adpcm`: lower on-air bandwidth, but lossy compression can shift Stage2 scores;
 - `opus`: efficient on-air, but requires `opuslib` and a native libopus runtime.
 
-The detector sees the same decoded PCM16 stream in all three cases.
+The detector receives PCM16 in all three cases, but lossy codecs need not preserve
+the same waveform or score distribution as raw PCM.

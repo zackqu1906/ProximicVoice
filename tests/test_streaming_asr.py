@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import threading
 import time
 import tomllib
 import types
@@ -97,6 +98,31 @@ def test_streaming_worker_emits_partial_then_final_without_blocking_caller():
     assert all(u.latency_s >= 0 for u in updates)
 
 
+def test_streaming_worker_coalesces_stale_feed_backlog():
+    entered = threading.Event()
+    release = threading.Event()
+
+    class SlowBackend(FakeStreamingBackend):
+        def feed(self, audio):
+            self.parts.append(np.asarray(audio).copy())
+            if len(self.parts) == 1:
+                entered.set()
+                assert release.wait(2.0)
+            return None
+
+    backend = SlowBackend()
+    worker = StreamingASRWorker(backend)
+    worker.start(np.ones(160, dtype=np.float32))
+    assert entered.wait(1.0)
+    for _ in range(12):
+        worker.feed(np.ones(320, dtype=np.float32))
+    release.set()
+    worker.end(np.ones(200, dtype=np.float32))
+    worker.close()
+
+    assert [part.size for part in backend.parts] == [160, 12 * 320]
+
+
 def test_streaming_worker_reports_connect_error_once_then_drops_failed_session():
     updates = []
     backend = FailingStreamingBackend()
@@ -172,7 +198,17 @@ def test_funasr_nano_buffers_chunks_and_redecodes_trimmed_final(monkeypatch, tmp
 
         def inference(self, audio, **kwargs):
             samples = int(audio[0].numel())
-            calls.append(("infer", (samples, kwargs.get("prev_text"), kwargs.get("language"))))
+            calls.append(
+                (
+                    "infer",
+                    (
+                        samples,
+                        kwargs.get("prev_text"),
+                        kwargs.get("language"),
+                        kwargs.get("hotwords"),
+                    ),
+                )
+            )
             prefix = str(kwargs.get("prev_text") or "")
             return [[{"text": f"{prefix}n={samples}"}]]
 
@@ -194,6 +230,7 @@ def test_funasr_nano_buffers_chunks_and_redecodes_trimmed_final(monkeypatch, tmp
         repo_path=tmp_path,
         chunk_ms=10,
         rollback_tokens=0,
+        hotwords=["ProxiMic", "豆包"],
         final_redecode=True,
     )
 
@@ -205,9 +242,9 @@ def test_funasr_nano_buffers_chunks_and_redecodes_trimmed_final(monkeypatch, tmp
 
     infer_calls = [payload for name, payload in calls if name == "infer"]
     assert infer_calls == [
-        (160, "", "中文"),
-        (320, "n=160", "中文"),
-        (240, "", "中文"),
+        (160, "", "中文", ["ProxiMic", "豆包"]),
+        (320, "n=160", "中文", ["ProxiMic", "豆包"]),
+        (240, "", "中文", ["ProxiMic", "豆包"]),
     ]
     assert (
         FunASRNanoStreamingASR._merge_context_boundary(

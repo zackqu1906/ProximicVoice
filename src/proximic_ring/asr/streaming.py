@@ -9,6 +9,9 @@ from typing import Callable, Protocol
 import numpy as np
 
 
+_NO_ITEM = object()
+
+
 class StreamingASRBackend(Protocol):
     """Backend contract for partial/final ASR without coupling session logic to a model.
 
@@ -71,6 +74,7 @@ class StreamingASRWorker:
         self._session_samples = 0
         self._session_id = 0
         self._session_failed = False
+        self._abort_requested = threading.Event()
         name = getattr(backend, "backend_name", type(backend).__name__)
         set_partial_callback = getattr(backend, "set_partial_callback", None)
         if callable(set_partial_callback):
@@ -95,6 +99,9 @@ class StreamingASRWorker:
         x = np.asarray(final_audio_16k, dtype=np.float32).reshape(-1).copy()
         self._queue.put(("end", x, time.perf_counter()))
 
+    def abort(self) -> None:
+        self._abort_requested.set()
+
     def close(self) -> None:
         self._queue.put(None)
         self._thread.join()
@@ -109,7 +116,7 @@ class StreamingASRWorker:
         duration_s: float,
         chunk_ready_time_s: float,
     ) -> None:
-        if self.on_update is None:
+        if self._abort_requested.is_set() or self.on_update is None:
             return
         self.on_update(
             StreamingASRUpdate(
@@ -175,11 +182,45 @@ class StreamingASRWorker:
             marker(chunk_ready_time_s)
 
     def _run(self) -> None:
+        deferred_item: tuple[str, np.ndarray, float] | None | object = _NO_ITEM
         while True:
-            item = self._queue.get()
+            if deferred_item is _NO_ITEM:
+                item = self._queue.get()
+            else:
+                item = deferred_item
+                deferred_item = _NO_ITEM
             if item is None:
+                if self._abort_requested.is_set():
+                    abort_backend = getattr(self.backend, "abort", None)
+                    if callable(abort_backend):
+                        abort_backend()
                 return
+            if self._abort_requested.is_set():
+                continue
             kind, audio, chunk_ready_time_s = item
+
+            # A cumulative local model can take longer than real time once an
+            # utterance grows.  In that case many tiny 20 ms feed messages may
+            # queue up while one partial is being decoded.  Collapse the
+            # already-pending consecutive feeds so the next inference jumps to
+            # the newest audio instead of re-decoding every stale 720 ms
+            # checkpoint.  START / END boundaries remain strictly ordered.
+            if kind == "feed":
+                pending_audio = [audio]
+                while True:
+                    try:
+                        next_item = self._queue.get_nowait()
+                    except queue.Empty:
+                        break
+                    if next_item is None or next_item[0] != "feed":
+                        deferred_item = next_item
+                        break
+                    pending_audio.append(next_item[1])
+                    chunk_ready_time_s = next_item[2]
+                if len(pending_audio) > 1:
+                    audio = np.concatenate(pending_audio).astype(
+                        np.float32, copy=False
+                    )
             try:
                 if kind == "start":
                     self._session_id += 1

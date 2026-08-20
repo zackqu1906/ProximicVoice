@@ -278,7 +278,7 @@ ApplicationWindow {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 282
+                Layout.preferredHeight: appController.reviewPending ? 400 : 350
                 radius: 22
                 color: root.panel
                 border.color: root.border
@@ -290,9 +290,76 @@ ApplicationWindow {
 
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: "语音输入"; color: root.textMain; font.pixelSize: 17; font.bold: true }
+                        Label { text: "全局语音输入"; color: root.textMain; font.pixelSize: 17; font.bold: true }
                         Item { Layout.fillWidth: true }
-                        Label { text: "Ctrl + Alt + Space"; color: root.textMuted; font.pixelSize: 12 }
+                        Label { text: "Alt+1 输入 / Alt+2 修改 / 右 Alt 说话"; color: root.textMuted; font.pixelSize: 12 }
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignHCenter
+                        spacing: 10
+
+                        Button {
+                            id: dictationModeButton
+                            objectName: "dictationModeButton"
+                            Layout.preferredWidth: 150
+                            Layout.preferredHeight: 42
+                            text: "输入到光标"
+                            checkable: true
+                            autoExclusive: true
+                            checked: appController.inputMode === "dictation"
+                            onClicked: appController.inputMode = "dictation"
+                            ToolTip.visible: hovered
+                            ToolTip.text: "本地 LLM 整理后输入到说话开始时的外部文本框"
+                        }
+                        Button {
+                            id: editModeButton
+                            objectName: "editModeButton"
+                            Layout.preferredWidth: 150
+                            Layout.preferredHeight: 42
+                            text: "修改当前文本"
+                            checkable: true
+                            autoExclusive: true
+                            enabled: !appController.reviewPending
+                            checked: appController.inputMode === "edit"
+                            onClicked: appController.inputMode = "edit"
+                            ToolTip.visible: hovered
+                            ToolTip.text: "读取当前外部文本框，下一段语音作为增删改指令"
+                        }
+                    }
+
+                    Label {
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.maximumWidth: 430
+                        text: appController.inputMode === "edit"
+                              ? "把光标留在目标文本框，下一段语音是修改要求；生成预览后再确认"
+                              : "下一段语音经本地 LLM 整理后，输入到当前外部文本框"
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                        horizontalAlignment: Text.AlignHCenter
+                    }
+
+                    RowLayout {
+                        Layout.alignment: Qt.AlignHCenter
+                        visible: appController.reviewPending
+                        spacing: 8
+
+                        Button {
+                            objectName: "confirmEditButton"
+                            text: "确认应用"
+                            onClicked: appController.confirmEdit()
+                        }
+                        Button {
+                            objectName: "cancelEditButton"
+                            text: "取消"
+                            onClicked: appController.cancelEdit()
+                        }
+                        Button {
+                            objectName: "retryEditButton"
+                            text: "重说指令"
+                            onClicked: appController.retryEdit()
+                        }
                     }
 
                     Item { Layout.fillHeight: true }
@@ -331,6 +398,7 @@ ApplicationWindow {
                         Layout.alignment: Qt.AlignHCenter
                         Layout.maximumWidth: 430
                         text: appController.statusDetail
+                              + (appController.textProcessing ? " · 大模型处理中" : "")
                         color: root.textMuted
                         font.pixelSize: 13
                         horizontalAlignment: Text.AlignHCenter
@@ -342,17 +410,27 @@ ApplicationWindow {
                         spacing: 10
 
                         Button {
-                            Layout.preferredWidth: appController.connected ? 170 : 220
+                            objectName: "primaryConnectionButton"
+                            Layout.preferredWidth: appController.connected
+                                                   ? 170
+                                                   : (appController.canReconnect ? 190 : 220)
                             Layout.preferredHeight: 44
                             enabled: !appController.busy && !appController.scanBusy
                             text: appController.connected
                                   ? (appController.recognitionEnabled ? "暂停语音识别" : "开启语音识别")
-                                  : (appController.scanBusy ? "正在扫描设备…" : "选择并连接设备")
+                                  : (appController.scanBusy
+                                     ? "正在扫描设备…"
+                                     : (appController.canReconnect ? "重新连接设备" : "选择并连接设备"))
                             font.pixelSize: 14
                             font.bold: true
-                            onClicked: appController.connected
-                                       ? appController.toggleRecognition()
-                                       : appController.requestDevicePicker()
+                            onClicked: {
+                                if (appController.connected)
+                                    appController.toggleRecognition()
+                                else if (appController.canReconnect)
+                                    appController.reconnectDevice()
+                                else
+                                    appController.requestDevicePicker()
+                            }
                             contentItem: Label {
                                 text: parent.text
                                 color: "white"
@@ -367,14 +445,19 @@ ApplicationWindow {
                         }
 
                         Button {
-                            visible: appController.connected
+                            objectName: "secondaryConnectionButton"
+                            visible: appController.connected || appController.canReconnect
                             Layout.preferredWidth: 142
                             Layout.minimumWidth: 142
                             Layout.preferredHeight: 44
-                            enabled: !appController.busy
-                            text: "断开设备"
+                            enabled: appController.connected
+                                     ? appController.statusKind !== "stopping"
+                                     : (!appController.busy && !appController.scanBusy)
+                            text: appController.connected ? "断开设备" : "选择其他设备"
                             font.pixelSize: 14
-                            onClicked: appController.disconnectDevice()
+                            onClicked: appController.connected
+                                       ? appController.disconnectDevice()
+                                       : appController.requestDevicePicker()
                             contentItem: Label {
                                 text: parent.text
                                 color: parent.enabled ? root.textMain : root.textMuted
@@ -391,7 +474,7 @@ ApplicationWindow {
 
             Rectangle {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 208
+                Layout.preferredHeight: 250
                 radius: 18
                 color: root.panel
                 border.color: root.border
@@ -401,58 +484,35 @@ ApplicationWindow {
                     spacing: 10
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: "识别文本"; color: root.textMain; font.pixelSize: 15; font.bold: true }
+                        Label { text: "语音会话记录"; color: root.textMain; font.pixelSize: 15; font.bold: true }
                         Item { Layout.fillWidth: true }
-                        Label {
-                            text: !appController.transcriptFinal && appController.transcriptText.length > 0
-                                  ? "实时：" + appController.transcriptText : ""
-                            color: root.primary
-                            visible: text.length > 0
-                            font.pixelSize: 12
-                            elide: Text.ElideRight
-                            Layout.maximumWidth: 300
-                        }
-                        ToolButton { text: "清空"; onClicked: appController.clearEditor() }
+                        ToolButton { text: "清空"; onClicked: appController.clearSessionHistory() }
                     }
+
                     ScrollView {
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
                         TextArea {
-                            id: editorArea
-                            text: appController.editorText
+                            id: sessionHistoryArea
+                            objectName: "sessionHistoryArea"
+                            text: appController.sessionHistoryText
+                            readOnly: true
                             selectByMouse: true
                             color: root.textMain
-                            font.pixelSize: 15
+                            font.pixelSize: 13
                             wrapMode: TextEdit.Wrap
-                            leftPadding: 16
-                            rightPadding: 16
-                            topPadding: 14
-                            bottomPadding: 14
+                            leftPadding: 14
+                            rightPadding: 14
+                            topPadding: 12
+                            bottomPadding: 12
+                            placeholderText: "这里仅记录 ASR、LLM 结果以及是否应用；真正的文本始终留在外部应用。"
                             background: Rectangle {
                                 color: root.panelAlt
                                 radius: 10
                                 border.color: root.border
-
-                                Label {
-                                    anchors.left: parent.left
-                                    anchors.right: parent.right
-                                    anchors.top: parent.top
-                                    anchors.leftMargin: editorArea.leftPadding
-                                    anchors.rightMargin: editorArea.rightPadding
-                                    anchors.topMargin: editorArea.topPadding
-                                    text: "最终识别结果会累积在这里，可选择、复制和直接编辑。"
-                                    color: root.textMuted
-                                    opacity: 0.65
-                                    font: editorArea.font
-                                    wrapMode: Text.Wrap
-                                    visible: editorArea.text.length === 0
-                                }
                             }
-                            onTextChanged: {
-                                if (activeFocus && text !== appController.editorText)
-                                    appController.editorText = text
-                            }
+                            onTextChanged: cursorPosition = length
                         }
                     }
                 }
@@ -474,16 +534,29 @@ ApplicationWindow {
                         ToolButton { text: "清空"; onClicked: appController.clearLog() }
                     }
                     ScrollView {
+                        id: logScroll
+                        objectName: "logScroll"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
+                        clip: true
                         TextArea {
+                            id: logArea
+                            objectName: "logArea"
                             readOnly: true
                             text: appController.logText.length > 0 ? appController.logText : "尚未启动"
                             color: root.textMuted
                             font.family: "Cascadia Mono"
-                            font.pixelSize: 11
+                            font.pixelSize: 14
                             wrapMode: TextEdit.Wrap
                             background: Rectangle { color: "transparent" }
+                            onTextChanged: {
+                                cursorPosition = length
+                                Qt.callLater(function() {
+                                    var flickable = logScroll.contentItem
+                                    if (flickable)
+                                        flickable.contentY = Math.max(0, flickable.contentHeight - flickable.height)
+                                })
+                            }
                         }
                     }
                 }
@@ -517,6 +590,26 @@ ApplicationWindow {
                         text: "通过主界面的“选择并连接设备”扫描附近设备，再点击对应设备连接。"
                         color: root.textMain
                         font.pixelSize: 12
+                        wrapMode: Text.Wrap
+                    }
+                    Label { text: "Ring 音频编码"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    ComboBox {
+                        id: audioEncodingCombo
+                        objectName: "audioEncodingCombo"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        model: ["PCM（推荐，匹配近点模型）", "ADPCM（低带宽）", "Opus（需额外运行库）"]
+                        currentIndex: Math.max(0, ["pcm", "adpcm", "opus"].indexOf(appController.audioEncoding))
+                        onActivated: appController.audioEncoding = ["pcm", "adpcm", "opus"][currentIndex]
+                    }
+                    Label {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.audioEncoding === "pcm"
+                              ? "默认使用原始 PCM，保持与近点模型训练和阈值校准时的波形一致。"
+                              : appController.audioEncoding === "adpcm"
+                                ? "BLE 带宽较低，但有损压缩可能改变近点模型的 Stage2 分数分布。"
+                                : "带宽最低，但需要系统提供可用的 libopus 运行库。"
+                        color: root.textMuted
+                        font.pixelSize: 11
                         wrapMode: Text.Wrap
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
@@ -636,6 +729,209 @@ ApplicationWindow {
                         Component.onCompleted: cursorPosition = 0
                         visible: appController.asrBackend === "funasr_nano"
                     }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        visible: appController.asrBackend === "funasr_nano"
+                        spacing: 8
+
+                        Label {
+                            text: "识别热词"
+                            color: root.textMain
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                        Label {
+                            text: "每行一个"
+                            color: root.textMuted
+                            font.pixelSize: 11
+                        }
+                        Item { Layout.fillWidth: true }
+                    }
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        Layout.preferredHeight: 116
+                        visible: appController.asrBackend === "funasr_nano"
+                        color: root.panelAlt
+                        radius: 9
+                        border.width: 1
+                        border.color: asrHotwordsField.activeFocus
+                                      ? root.primary : root.border
+                        clip: true
+
+                        ScrollView {
+                            id: asrHotwordsScroll
+                            anchors.fill: parent
+                            anchors.margins: 1
+                            clip: true
+                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                            TextArea {
+                                id: asrHotwordsField
+                                objectName: "asrHotwordsField"
+                                width: asrHotwordsScroll.availableWidth
+                                text: appController.asrHotwords
+                                color: root.textMain
+                                font.pixelSize: 14
+                                wrapMode: TextEdit.Wrap
+                                selectByMouse: true
+                                leftPadding: 12
+                                rightPadding: 12
+                                topPadding: 10
+                                bottomPadding: 10
+                                background: Rectangle { color: "transparent" }
+                                onActiveFocusChanged: {
+                                    if (!activeFocus)
+                                        appController.asrHotwords = text
+                                }
+                            }
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "也支持逗号或分号分隔；自动去空和去重，重新连接后生效。"
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                        visible: appController.asrBackend === "funasr_nano"
+                    }
+
+                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
+
+                    Label { text: "文本大模型"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    ComboBox {
+                        id: llmProviderCombo
+                        objectName: "llmProviderCombo"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        model: ["本地 GGUF", "火山方舟（在线）"]
+                        currentIndex: appController.llmProvider === "local" ? 0 : 1
+                        onActivated: appController.llmProvider = currentIndex === 0 ? "local" : "volcengine"
+                    }
+                    Label {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.llmProvider === "local"
+                            ? "输入润色和增删改指令使用本地 GGUF 模型。首次处理时自动启动，全程离线。"
+                            : "输入润色和增删改指令通过火山方舟调用所选在线模型。Key 只从环境变量读取，不会保存到应用设置。"
+                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                    }
+                    Label {
+                        text: "本地 llama-server.exe"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.leftMargin: 20
+                        visible: appController.llmProvider === "local"
+                    }
+                    TextField {
+                        id: llmLocalServerField
+                        objectName: "llmLocalServerField"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.llmLocalServerPath
+                        placeholderText: "llama-server.exe 的完整路径"
+                        onEditingFinished: appController.llmLocalServerPath = text
+                        onActiveFocusChanged: if (!activeFocus) cursorPosition = 0
+                        Component.onCompleted: cursorPosition = 0
+                        visible: appController.llmProvider === "local"
+                    }
+                    Label {
+                        text: "本地 GGUF 模型"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.leftMargin: 20
+                        visible: appController.llmProvider === "local"
+                    }
+                    TextField {
+                        id: llmLocalModelField
+                        objectName: "llmLocalModelField"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.llmLocalModelPath
+                        placeholderText: "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf 的完整路径"
+                        onEditingFinished: appController.llmLocalModelPath = text
+                        onActiveFocusChanged: if (!activeFocus) cursorPosition = 0
+                        Component.onCompleted: cursorPosition = 0
+                        visible: appController.llmProvider === "local"
+                    }
+                    Label {
+                        text: "方舟 API Base URL"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.leftMargin: 20
+                        visible: appController.llmProvider !== "local"
+                    }
+                    TextField {
+                        id: llmBaseUrlField
+                        objectName: "llmBaseUrlField"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.llmBaseUrl
+                        onEditingFinished: appController.llmBaseUrl = text
+                        visible: appController.llmProvider !== "local"
+                    }
+                    Label {
+                        text: "方舟模型"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.leftMargin: 20
+                        visible: appController.llmProvider !== "local"
+                    }
+                    ComboBox {
+                        id: llmModelCombo
+                        objectName: "llmModelCombo"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        model: ["豆包 Seed 2.0 Lite", "DeepSeek V4 Flash"]
+                        currentIndex: appController.llmModel === "deepseek-v4-flash-260425" ? 1 : 0
+                        onActivated: appController.llmModel = currentIndex === 0
+                            ? "doubao-seed-2-0-lite-260215"
+                            : "deepseek-v4-flash-260425"
+                        visible: appController.llmProvider !== "local"
+                    }
+                    Label {
+                        text: "模型 ID（高级配置）"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.leftMargin: 20
+                        visible: appController.llmProvider !== "local"
+                    }
+                    TextField {
+                        id: llmModelField
+                        objectName: "llmModelField"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.llmModel
+                        placeholderText: "方舟 Model ID"
+                        onEditingFinished: appController.llmModel = text
+                        visible: appController.llmProvider !== "local"
+                    }
+                    Label {
+                        text: "API Key 环境变量名"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.leftMargin: 20
+                        visible: appController.llmProvider !== "local"
+                    }
+                    TextField {
+                        id: llmApiKeyEnvField
+                        objectName: "llmApiKeyEnvField"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.llmApiKeyEnv
+                        placeholderText: "ARK_API_KEY"
+                        onEditingFinished: appController.llmApiKeyEnv = text
+                        visible: appController.llmProvider !== "local"
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        Label { text: "请求超时（秒）"; color: root.textMuted; font.pixelSize: 12 }
+                        Item { Layout.fillWidth: true }
+                        SpinBox {
+                            from: 1
+                            to: 300
+                            value: Math.round(appController.llmTimeoutSeconds)
+                            onValueModified: appController.llmTimeoutSeconds = value
+                        }
+                    }
 
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
@@ -648,7 +944,7 @@ ApplicationWindow {
                     }
                     Switch {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "启用 Ctrl+Alt+Space 按住说话"
+                        text: "启用右 Alt 按住说话"
                         checked: appController.pushToTalkEnabled
                         onToggled: appController.pushToTalkEnabled = checked
                         visible: Qt.platform.os === "windows"
@@ -674,8 +970,9 @@ ApplicationWindow {
 
     Window {
         id: transcriptOverlay
+        objectName: "transcriptOverlay"
         width: Math.min(820, Math.max(360, overlayText.implicitWidth + 58))
-        height: Math.max(74, overlayText.implicitHeight + 30)
+        height: Math.min(320, Math.max(74, overlayText.implicitHeight + 30))
         x: Math.round((Screen.width - width) / 2)
         y: Screen.height - height - 96
         visible: appController.transcriptVisible
@@ -686,14 +983,18 @@ ApplicationWindow {
             anchors.fill: parent
             radius: 18
             color: "#E9111620"
-            border.color: appController.transcriptFinal ? "#594DD4AC" : "#477892FF"
+            border.color: appController.reviewPending
+                          ? "#8AC084FC"
+                          : (appController.transcriptFinal ? "#594DD4AC" : "#477892FF")
             border.width: 1
             Label {
                 id: overlayText
                 anchors.fill: parent
                 anchors.margins: 18
                 text: appController.transcriptText
-                color: appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB"
+                color: appController.reviewPending
+                       ? "#E4D0FF"
+                       : (appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB")
                 font.family: "Microsoft YaHei UI"
                 font.pixelSize: 17
                 wrapMode: Text.Wrap

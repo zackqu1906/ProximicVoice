@@ -46,8 +46,15 @@ def test_qml_customer_window_loads(tmp_path):
     from proximic_ring.ui.controller import AppController
 
     app = QApplication.instance() or QApplication(["ui-test", "-platform", "offscreen"])
-    QSettings.setPath(QSettings.NativeFormat, QSettings.UserScope, str(tmp_path))
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     controller = AppController()
+    # Simulate a selector persisted by an earlier application run.  It must not
+    # make the freshly opened UI claim that this is a reconnect operation.
+    controller._selector = "SAVED-RING-ID"
+    controller._device_name = "Previously used Ring"
+    assert controller.hasSelectedDevice is True
+    assert controller.canReconnect is False
     assert controller.computeDevices[0] == {
         "label": "CPU（兼容性最佳）",
         "value": "cpu",
@@ -55,9 +62,15 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.asrDevice in {
         item["value"] for item in controller.computeDevices
     }
+    selected_handle = object()
     controller._apply_scan_finished(
         [
-            {"name": "Ringo Test", "identifier": "RING-ID", "rssi": -40},
+            {
+                "name": "Ringo Test",
+                "identifier": "RING-ID",
+                "rssi": -40,
+                "_device": selected_handle,
+            },
             {"name": "Keyboard", "identifier": "KEYBOARD-ID", "rssi": -55},
         ],
         "",
@@ -111,30 +124,155 @@ def test_qml_customer_window_loads(tmp_path):
     picker = window.findChild(QObject, "devicePicker")
     device_list = window.findChild(QObject, "deviceList")
     search_field = window.findChild(QObject, "deviceSearchField")
+    audio_encoding_combo = window.findChild(QObject, "audioEncodingCombo")
     device_combo = window.findChild(QObject, "asrDeviceCombo")
+    asr_hotwords_field = window.findChild(QObject, "asrHotwordsField")
     gpu_install_button = window.findChild(QObject, "gpuInstallButton")
+    dictation_mode_button = window.findChild(QObject, "dictationModeButton")
+    edit_mode_button = window.findChild(QObject, "editModeButton")
+    llm_local_server_field = window.findChild(QObject, "llmLocalServerField")
+    llm_local_model_field = window.findChild(QObject, "llmLocalModelField")
+    llm_provider_combo = window.findChild(QObject, "llmProviderCombo")
+    llm_base_url_field = window.findChild(QObject, "llmBaseUrlField")
+    llm_model_combo = window.findChild(QObject, "llmModelCombo")
+    llm_model_field = window.findChild(QObject, "llmModelField")
+    llm_api_key_env_field = window.findChild(QObject, "llmApiKeyEnvField")
+    session_history_area = window.findChild(QObject, "sessionHistoryArea")
+    confirm_edit_button = window.findChild(QObject, "confirmEditButton")
+    cancel_edit_button = window.findChild(QObject, "cancelEditButton")
+    retry_edit_button = window.findChild(QObject, "retryEditButton")
+    log_area = window.findChild(QObject, "logArea")
+    primary_connection_button = window.findChild(QObject, "primaryConnectionButton")
+    secondary_connection_button = window.findChild(QObject, "secondaryConnectionButton")
     assert picker is not None and picker.property("visible") is True
     assert device_list is not None and device_list.property("count") == 1
     assert search_field is not None and search_field.property("text") == "Ringo"
+    assert audio_encoding_combo is not None
+    assert controller.audioEncoding == "pcm"
+    controller.audioEncoding = "pcm"
+    assert controller.audioEncoding == "pcm"
+    controller.audioEncoding = "adpcm"
+    assert controller.audioEncoding == "adpcm"
     assert device_combo is not None
     assert device_combo.property("count") == len(controller.computeDevices)
+    assert asr_hotwords_field is not None
     assert gpu_install_button is not None
     assert gpu_install_button.property("visible") is controller.gpuInstallerAvailable
+    assert dictation_mode_button is not None
+    assert edit_mode_button is not None
+    assert llm_local_server_field is not None
+    assert llm_provider_combo is not None
+    assert llm_base_url_field is not None
+    assert llm_model_combo is not None
+    assert llm_model_field is not None
+    assert llm_api_key_env_field is not None
+    assert session_history_area is not None
+    assert session_history_area.property("readOnly") is True
+    assert confirm_edit_button is not None
+    assert cancel_edit_button is not None
+    assert retry_edit_button is not None
+    assert log_area is not None
+    assert log_area.property("font").pixelSize() == 14
+    controller._apply_runtime_status("最新日志")
+    app.processEvents()
+    assert log_area.property("cursorPosition") == len(log_area.property("text"))
+    assert llm_local_model_field is not None
+    assert controller.inputMode == "dictation"
+    # Persisted callers using the former name migrate to the edit lane.
+    controller.inputMode = "instruction"
+    app.processEvents()
+    assert controller.inputMode == "edit"
+    assert edit_mode_button.property("checked") is True
+    controller.llmProvider = "volcengine"
+    voice_settings = controller._voice_llm_settings()
+    assert voice_settings.provider == "volcengine"
+    assert voice_settings.enabled is True
+    assert voice_settings.base_url == "https://ark.cn-beijing.volces.com/api/v3"
+    assert voice_settings.model == "doubao-seed-2-0-lite-260215"
+    assert voice_settings.api_key_env == "ARK_API_KEY"
+    assert voice_settings.local_auto_start is False
+    controller.llmModel = "deepseek-v4-flash-260425"
+    assert controller._voice_llm_settings().model == "deepseek-v4-flash-260425"
+    controller.llmProvider = "local"
+    local_settings = controller._voice_llm_settings()
+    assert local_settings.provider == "local"
+    assert local_settings.api_key_env == ""
+    assert local_settings.local_auto_start is True
+    controller.llmProvider = "volcengine"
+    assert controller._voice_llm_settings().model == "deepseek-v4-flash-260425"
+    controller.llmProvider = "local"
+    assert primary_connection_button.property("text") == "选择并连接设备"
+    assert secondary_connection_button.property("visible") is False
 
     started = []
     controller._scan_busy = True
     controller._start_selected_device = lambda: started.append(controller.selector)
     controller.connectToDevice("RING-ID", "Ringo Test")
+    assert controller._selected_device is selected_handle
+    assert controller._runtime_settings().encoding == "adpcm"
+    assert controller._runtime_settings().desktop_output is False
+    assert controller.canReconnect is True
     assert started == []
     controller._apply_scan_finished([], "")
     assert started == ["RING-ID"]
+    app.processEvents()
+    assert primary_connection_button.property("text") == "重新连接设备"
+    assert secondary_connection_button.property("visible") is True
 
     controller.asrModel = "iic/SenseVoiceSmall"
     controller.asrBackend = "funasr_nano"
     assert controller.asrModel == ""
 
+    class SettingsRecorder:
+        def __init__(self):
+            self.values = {}
+
+        def setValue(self, key, value):
+            self.values[key] = value
+
+    settings_recorder = SettingsRecorder()
+    controller._settings = settings_recorder
+    controller.asrHotwords = " ProxiMic，豆包\n瑞幸,豆包；张三 "
+    app.processEvents()
+    assert controller.asrHotwords == "ProxiMic\n豆包\n瑞幸\n张三"
+    assert asr_hotwords_field.property("text") == controller.asrHotwords
+    assert asr_hotwords_field.property("visible") is True
+    runtime_settings = controller._runtime_settings()
+    assert runtime_settings.funasr_nano_hotwords == controller.asrHotwords
+    assert runtime_settings.to_namespace().asr_option == [
+        "funasr_nano.hotwords=ProxiMic,豆包,瑞幸,张三"
+    ]
+    assert settings_recorder.values["asr/funasrNanoHotwords"] == (
+        controller.asrHotwords
+    )
+
+    controller._runtime_active = True
+    controller._busy = True
+    controller._apply_runtime_status("正在连接设备 Ringo Test…")
+    assert controller.statusTitle == "正在连接设备"
+    controller._apply_runtime_status("正在验证 Ring 麦克风音频…")
+    assert controller.statusTitle == "正在验证设备音频"
+    controller._apply_runtime_connected()
+    assert controller.connected is True
+    assert controller.busy is True
+    controller._apply_runtime_status("正在加载 ProxiMic 检测模型…")
+    assert controller.statusTitle == "正在加载检测模型"
+    controller._apply_runtime_status("正在加载语音模型 funasr_nano…")
+    assert controller.statusTitle == "正在加载语音模型"
+    controller._apply_runtime_disconnected()
+    assert controller.connected is False
+    assert controller.busy is True
+    assert controller.statusTitle == "设备已断开"
+    assert "后台" in controller.statusDetail
+    controller._apply_runtime_connected()
+    controller._apply_runtime_status("模型加载完成，正在确认实时音频…")
+    assert controller.statusTitle == "正在确认实时音频"
+    controller._apply_runtime_status("STAGE2 sample=100 score=+0.900 ACTIVATE")
+    assert controller.statusTitle == "正在确认实时音频"
+    assert "STAGE2 sample=100 score=+0.900 ACTIVATE" in controller.logText
     controller._apply_runtime_started()
     assert controller.connected is True
+    assert controller.statusTitle == "准备就绪"
     assert controller.recognitionEnabled is False
     controller.startRecognition()
     assert controller.recognitionEnabled is True
@@ -142,7 +280,226 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.connected is True
     assert controller.recognitionEnabled is False
 
-    controller._apply_runtime_update("第一段", True, "")
-    controller._apply_runtime_update("第二段", True, "")
-    assert controller.editorText == "第一段\n第二段"
+    from proximic_ring.text_processing import MAX_EDIT_TARGET_CHARS, TextProcessingResult
+    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+
+    submitted = []
+    target_ref = DesktopTargetRef(100, 101, "测试编辑器")
+
+    class FakeDesktopTarget:
+        def __init__(self):
+            self.current_text = "原始外部文本。"
+            self.injected = []
+            self.replaced = []
+            self.released = []
+
+        def capture_reference(self):
+            return target_ref
+
+        def capture_text(self, target):
+            assert target == target_ref
+            return DesktopTextSnapshot(target, self.current_text)
+
+        def inject(self, target, text):
+            assert target == target_ref
+            self.injected.append(text)
+
+        def replace(self, snapshot, text):
+            assert snapshot.text == self.current_text
+            self.current_text = text
+            self.replaced.append(text)
+
+        def release_selection(self, target):
+            self.released.append(target)
+
+    desktop_target = FakeDesktopTarget()
+
+    class FakeTextWorker:
+        def submit(self, request):
+            submitted.append(request)
+
+        def close(self, *, wait=False):
+            return None
+
+    controller._text_processing_worker.close(wait=True)
+    controller._text_processing_worker = FakeTextWorker()
+    controller._desktop_target = desktop_target
+    controller._desktop_output = True
+    controller.inputMode = "dictation"
+    controller._apply_runtime_update("实时片段", False, "", 42)
+    controller.inputMode = "edit"
+    controller._apply_runtime_update("原始文本", True, "", 42)
+    assert len(submitted) == 1
+    assert submitted[0].mode == "dictation"
+    assert submitted[0].settings.provider == "local"
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=submitted[0].request_id,
+            session_id=42,
+            mode=submitted[0].mode,
+            raw_text="原始文本",
+            final_text="整理后的文本。",
+            latency_s=0.1,
+            used_llm=True,
+        )
+    )
+    assert desktop_target.injected == ["整理后的文本。"]
+    assert "输入 · 已注入" in controller.sessionHistoryText
+    assert controller.transcriptFinal is True
+
+    controller.inputMode = "edit"
+    controller._apply_runtime_update("改得更正式一点", True, "", 43)
+    assert len(submitted) == 2
+    edit_request = submitted[1]
+    assert edit_request.mode == "edit"
+    assert edit_request.target_text == "原始外部文本。"
+    assert "修改目标已读取：测试编辑器（7 个字符）" in controller.logText
+    assert "目标文本开始" not in controller.logText
+    assert "隐藏字符检查" not in controller.logText
+    assert controller.inputMode == "edit"
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=edit_request.request_id,
+            session_id=43,
+            mode=edit_request.mode,
+            raw_text=edit_request.raw_text,
+            final_text="第一次修改预览。",
+            latency_s=0.2,
+            used_llm=True,
+            target_text=edit_request.target_text,
+            model_output=(
+                '{"kind":"operations","operations":['
+                '{"op":"replace","target":"原始外部文本。",'
+                '"value":"第一次修改预览。","occurrence":"unique"}]}'
+            ),
+        )
+    )
+    assert "大模型修改原始返回" in controller.logText
+    assert '"target": "原始外部文本。"' in controller.logText
+    assert controller.reviewPending is True
+    assert desktop_target.replaced == []
+    app.processEvents()
+    assert confirm_edit_button.property("visible") is True
+    controller._recognition_enabled = True
+    controller._apply_push_to_talk(True)
+    controller._apply_push_to_talk(False)
+    assert controller.reviewPending is False
+    assert controller.interactionState == "retry"
+    app.processEvents()
+    assert confirm_edit_button.property("visible") is False
+
+    controller._apply_runtime_update("改得简洁正式", True, "", 44)
+    retry_request = submitted[2]
+    assert retry_request.target_text == "原始外部文本。"
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=retry_request.request_id,
+            session_id=44,
+            mode=retry_request.mode,
+            raw_text=retry_request.raw_text,
+            final_text="正式的新文本。",
+            latency_s=0.2,
+            used_llm=True,
+            target_text=retry_request.target_text,
+        )
+    )
+    assert controller.reviewPending is True
+    controller.confirmEdit()
+    assert desktop_target.replaced == ["正式的新文本。"]
+    assert controller.reviewPending is False
+    assert controller.inputMode == "edit"
+    assert "修改 · 已应用" in controller.sessionHistoryText
+
+    controller.inputMode = "edit"
+    controller._apply_runtime_update("删除最后一句", True, "", 45)
+    cancel_request = submitted[3]
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=cancel_request.request_id,
+            session_id=45,
+            mode=cancel_request.mode,
+            raw_text=cancel_request.raw_text,
+            final_text="不应应用的预览。",
+            latency_s=0.2,
+            used_llm=True,
+            target_text=cancel_request.target_text,
+        )
+    )
+    controller.cancelEdit()
+    assert desktop_target.current_text == "正式的新文本。"
+    assert desktop_target.released[-1] == target_ref
+    assert "修改 · 已取消" in controller.sessionHistoryText
+
+    controller._apply_runtime_update("把这段话删除", True, "", 46)
+    clear_request = submitted[4]
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=clear_request.request_id,
+            session_id=46,
+            mode=clear_request.mode,
+            raw_text=clear_request.raw_text,
+            final_text="",
+            latency_s=0.2,
+            used_llm=True,
+            target_text=clear_request.target_text,
+            model_output=(
+                '{"kind":"operations","operations":['
+                '{"op":"delete","target":"正式的新文本。",'
+                '"occurrence":"unique"}]}'
+            ),
+        )
+    )
+    assert controller.reviewPending is True
+    assert "确认后将清空目标文本框" in controller.transcriptText
+    assert desktop_target.current_text == "正式的新文本。"
+    controller.confirmEdit()
+    assert desktop_target.current_text == ""
+    assert desktop_target.replaced[-1] == ""
+    assert controller.reviewPending is False
+
+    # An unexplained empty response is still rejected instead of becoming a
+    # destructive clear operation.
+    desktop_target.current_text = "不得意外清空。"
+    controller._apply_runtime_update("润色一下", True, "", 47)
+    unexplained_empty_request = submitted[5]
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=unexplained_empty_request.request_id,
+            session_id=47,
+            mode=unexplained_empty_request.mode,
+            raw_text=unexplained_empty_request.raw_text,
+            final_text="",
+            latency_s=0.2,
+            used_llm=True,
+            target_text=unexplained_empty_request.target_text,
+            model_output='{"kind":"rewrite","text":""}',
+        )
+    )
+    assert controller.reviewPending is False
+    assert desktop_target.current_text == "不得意外清空。"
+    assert "大模型返回了空修改结果" in controller.logText
+
+    submitted_before_oversized_capture = len(submitted)
+    desktop_target.current_text = "页面内容" * (MAX_EDIT_TARGET_CHARS // 4 + 1)
+    controller._apply_runtime_update("润色一下", True, "", 48)
+    assert len(submitted) == submitted_before_oversized_capture
+    assert desktop_target.released[-1] == target_ref
+    assert "超过单次修改上限" in controller.logText
+
+    # A stale snapshot left by a failed/noop edit must not pin an unrelated
+    # future edit to the old text.  Only the explicit retry state may reuse it.
+    desktop_target.current_text = "新的目标文本。"
+    controller._retry_snapshot = DesktopTextSnapshot(target_ref, "旧的 curl 文本。")
+    controller._set_interaction_state("error")
+    controller._apply_runtime_update("把新的改成更新的", True, "", 49)
+    assert submitted[-1].target_text == "新的目标文本。"
+
+    controller._apply_runtime_finished("Ring 麦克风音频已中断")
+    assert controller.connected is False
+    assert controller.statusTitle == "设备已断开"
+    assert "自动断开" in controller.statusDetail
+    assert controller.hasSelectedDevice is True
+    assert controller.canReconnect is True
+    controller.reconnectDevice()
+    assert started == ["RING-ID", "RING-ID"]
     window.close()

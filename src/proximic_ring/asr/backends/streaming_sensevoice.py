@@ -107,6 +107,10 @@ class StreamingSenseVoiceASR:
         self._model.reset()
         self._last_text = ""
 
+    def abort(self) -> None:
+        self._model.reset()
+        self._last_text = ""
+
     def _run(self, audio_16k: np.ndarray, *, is_last: bool) -> str | None:
         audio = self._to_external_audio(audio_16k)
         latest: str | None = None

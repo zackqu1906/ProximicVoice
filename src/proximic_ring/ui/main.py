@@ -37,12 +37,27 @@ def main(argv: list[str] | None = None) -> int:
     app.setWindowIcon(icon)
 
     controller = AppController()
+    voice_action_hotkeys = None
+    if sys.platform == "win32":
+        try:
+            from ..voice_actions import WindowsVoiceActionHotkeys
+
+            voice_action_hotkeys = WindowsVoiceActionHotkeys(
+                controller.dispatchVoiceAction,
+                is_review_active=lambda: controller.reviewPending,
+            )
+            app.aboutToQuit.connect(voice_action_hotkeys.close)
+        except BaseException as exc:
+            print(f"[voice-actions] 全局交互快捷键不可用：{exc}", file=sys.stderr)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("appController", controller)
     engine.load(QUrl.fromLocalFile(str(base / "qml" / "Main.qml")))
     if not engine.rootObjects():
         return 1
     window = engine.rootObjects()[0]
+    # Load model weights and seed both stable prompt prefixes after the first
+    # frame instead of making the user's first utterance pay this cost.
+    QTimer.singleShot(600, controller.warmLocalModel)
 
     tray_available = QSystemTrayIcon.isSystemTrayAvailable()
     controller.setTrayAvailable(tray_available)
@@ -75,11 +90,22 @@ def main(argv: list[str] | None = None) -> int:
                 controller.disconnectDevice()
             else:
                 show_window()
-                controller.requestDevicePicker()
+                if controller.canReconnect:
+                    controller.reconnectDevice()
+                else:
+                    controller.requestDevicePicker()
 
         def refresh_tray() -> None:
-            connection_action.setText("断开设备" if controller.connected else "连接设备")
-            connection_action.setEnabled(not controller.busy and not controller.scanBusy)
+            connection_action.setText(
+                "断开设备"
+                if controller.connected
+                else ("重新连接设备" if controller.canReconnect else "选择并连接设备")
+            )
+            connection_action.setEnabled(
+                controller.statusKind != "stopping"
+                if controller.connected
+                else not controller.busy and not controller.scanBusy
+            )
             recognition_action.setText(
                 "暂停语音识别" if controller.recognitionEnabled else "开启语音识别"
             )
@@ -94,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
         controller.recognitionEnabledChanged.connect(refresh_tray)
         controller.busyChanged.connect(refresh_tray)
         controller.scanBusyChanged.connect(refresh_tray)
+        controller.settingsChanged.connect(refresh_tray)
+        controller.reconnectAvailabilityChanged.connect(refresh_tray)
         controller.statusChanged.connect(refresh_tray)
         tray.activated.connect(
             lambda reason: show_window()

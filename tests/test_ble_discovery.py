@@ -2,6 +2,7 @@ import asyncio
 from types import SimpleNamespace
 
 from ring_python_sdk.ble import control
+from ring_python_sdk import RingSession
 from ring_python_sdk.session import connection
 
 
@@ -76,3 +77,31 @@ def test_connect_target_rescans_without_name_filter(monkeypatch):
     assert connected is True
     assert session.connected_target is selected
     assert session.new_session is True
+
+
+def test_connect_device_uses_selected_scan_result_without_rescanning(monkeypatch):
+    selected = _device("New Ringo", "ROTATING-IDENTIFIER")
+
+    async def unexpected_scan(*_args, **_kwargs):
+        raise AssertionError("selected BLEDevice must connect without a second scan")
+
+    monkeypatch.setattr(connection, "scan_all_devices", unexpected_scan)
+
+    class FakeConnection(connection.ConnectionMixin):
+        async def _connect_device(self, target, *, new_session):
+            self.connected_target = target
+            self.new_session = new_session
+            return True
+
+    session = FakeConnection()
+    connected = asyncio.run(session.connect_device(selected))
+
+    assert connected is True
+    assert session.connected_target is selected
+    assert session.new_session is True
+
+
+def test_ring_session_does_not_auto_reconnect_by_default():
+    session = RingSession(name_keyword="Ringo", timeout_s=1.0)
+
+    assert session.auto_reconnect is False

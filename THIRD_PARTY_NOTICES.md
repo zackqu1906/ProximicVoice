@@ -2,6 +2,22 @@
 
 Proximic Voice connects to third-party projects without committing their downloaded model weights.
 
+## llama.cpp
+
+- Source: https://github.com/ggml-org/llama.cpp
+- Installed location: `.runtime/local-llm/runtimes/` (downloaded during Windows setup)
+- License: MIT
+- The pinned release URL and SHA-256 are recorded in `local_llm_catalog.json`.
+
+## Qwen3-4B-Instruct-2507-GGUF
+
+- Base model: https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507
+- GGUF quantization: https://huggingface.co/bartowski/Qwen_Qwen3-4B-Instruct-2507-GGUF
+- Installed location: `.runtime/local-llm/models/` (downloaded during Windows setup)
+- Model license: Apache License 2.0
+- Model weights are not committed to Git; the pinned download URL and SHA-256 are recorded in
+  `local_llm_catalog.json`.
+
 ## streaming-sensevoice
 
 - Source: https://github.com/pengzhendong/streaming-sensevoice
