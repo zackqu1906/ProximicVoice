@@ -277,8 +277,10 @@ ApplicationWindow {
             spacing: 18
 
             Rectangle {
+                id: voiceInputCard
+                objectName: "voiceInputCard"
                 Layout.fillWidth: true
-                Layout.preferredHeight: appController.reviewPending ? 400 : 350
+                Layout.preferredHeight: appController.reviewPending ? 420 : 380
                 radius: 22
                 color: root.panel
                 border.color: root.border
@@ -310,7 +312,9 @@ ApplicationWindow {
                             checked: appController.inputMode === "dictation"
                             onClicked: appController.inputMode = "dictation"
                             ToolTip.visible: hovered
-                            ToolTip.text: "本地 LLM 整理后输入到说话开始时的外部文本框"
+                            ToolTip.text: appController.llmEnabled
+                                ? "文本 LLM 整理后输入到说话开始时的外部文本框"
+                                : "直接把 ASR 最终结果输入到说话开始时的外部文本框"
                         }
                         Button {
                             id: editModeButton
@@ -326,6 +330,32 @@ ApplicationWindow {
                             ToolTip.visible: hovered
                             ToolTip.text: "读取当前外部文本框，下一段语音作为增删改指令"
                         }
+                        Button {
+                            id: dictationLlmButton
+                            objectName: "dictationLlmButton"
+                            Layout.preferredWidth: 130
+                            Layout.preferredHeight: 42
+                            text: appController.llmEnabled ? "LLM 整理：开" : "LLM 整理：关"
+                            onClicked: appController.toggleDictationLlm()
+                            ToolTip.visible: hovered
+                            ToolTip.text: "仅影响“输入到光标”；修改模式始终使用文本 LLM"
+                            contentItem: Label {
+                                text: parent.text
+                                color: appController.llmEnabled ? "#DCE4FF" : root.textMain
+                                font.pixelSize: 13
+                                font.bold: true
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            background: Rectangle {
+                                radius: 10
+                                color: parent.down
+                                       ? "#34415A"
+                                       : (appController.llmEnabled ? "#314472" : root.panelAlt)
+                                border.width: 1
+                                border.color: appController.llmEnabled ? root.primary : root.border
+                            }
+                        }
                     }
 
                     Label {
@@ -333,7 +363,9 @@ ApplicationWindow {
                         Layout.maximumWidth: 430
                         text: appController.inputMode === "edit"
                               ? "把光标留在目标文本框，下一段语音是修改要求；生成预览后再确认"
-                              : "下一段语音经本地 LLM 整理后，输入到当前外部文本框"
+                              : (appController.llmEnabled
+                                 ? "下一段语音经文本 LLM 整理后，输入到当前外部文本框"
+                                 : "下一段语音直接采用 ASR 最终结果，不再经过文本 LLM")
                         color: root.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
@@ -396,17 +428,23 @@ ApplicationWindow {
                     }
                     Label {
                         Layout.alignment: Qt.AlignHCenter
+                        Layout.fillWidth: true
                         Layout.maximumWidth: 430
+                        Layout.maximumHeight: 38
                         text: appController.statusDetail
                               + (appController.textProcessing ? " · 大模型处理中" : "")
                         color: root.textMuted
                         font.pixelSize: 13
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
                     }
 
                     RowLayout {
                         Layout.alignment: Qt.AlignHCenter
+                        Layout.minimumHeight: 44
+                        Layout.bottomMargin: 2
                         spacing: 10
 
                         Button {
@@ -816,8 +854,8 @@ ApplicationWindow {
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         text: appController.llmProvider === "local"
-                            ? "输入润色和增删改指令使用本地 GGUF 模型。首次处理时自动启动，全程离线。"
-                            : "输入润色和增删改指令通过火山方舟调用所选在线模型。Key 只从环境变量读取，不会保存到应用设置。"
+                            ? "修改模式始终使用本地 GGUF；输入模式是否二次整理由上方开关决定。首次处理时自动启动，全程离线。"
+                            : "修改模式始终使用所选在线模型；输入模式是否二次整理由上方开关决定。Key 只从环境变量读取，不会保存到应用设置。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
                     Label {
@@ -971,8 +1009,9 @@ ApplicationWindow {
     Window {
         id: transcriptOverlay
         objectName: "transcriptOverlay"
-        width: Math.min(820, Math.max(360, overlayText.implicitWidth + 58))
-        height: Math.min(320, Math.max(74, overlayText.implicitHeight + 30))
+        width: Math.min(820, Math.max(360,
+            Math.max(overlayText.implicitWidth, editPreviewText.implicitWidth) + 58))
+        height: Math.min(420, Math.max(74, overlayContent.implicitHeight + 36))
         x: Math.round((Screen.width - width) / 2)
         y: Screen.height - height - 96
         visible: appController.transcriptVisible
@@ -987,18 +1026,45 @@ ApplicationWindow {
                           ? "#8AC084FC"
                           : (appController.transcriptFinal ? "#594DD4AC" : "#477892FF")
             border.width: 1
-            Label {
-                id: overlayText
-                anchors.fill: parent
-                anchors.margins: 18
-                text: appController.transcriptText
-                color: appController.reviewPending
-                       ? "#E4D0FF"
-                       : (appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB")
-                font.family: "Microsoft YaHei UI"
-                font.pixelSize: 17
-                wrapMode: Text.Wrap
-                verticalAlignment: Text.AlignVCenter
+            Column {
+                id: overlayContent
+                anchors.centerIn: parent
+                width: parent.width - 36
+                spacing: appController.reviewPending ? 10 : 0
+
+                Label {
+                    id: overlayText
+                    width: parent.width
+                    text: appController.transcriptText
+                    color: appController.reviewPending
+                           ? "#E4D0FF"
+                           : (appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB")
+                    font.family: "Microsoft YaHei UI"
+                    font.pixelSize: 17
+                    wrapMode: Text.Wrap
+                }
+
+                Label {
+                    width: parent.width
+                    visible: appController.reviewPending
+                    text: "修改后："
+                    color: "#AEB8C8"
+                    font.family: "Microsoft YaHei UI"
+                    font.pixelSize: 13
+                }
+
+                Label {
+                    id: editPreviewText
+                    objectName: "editPreviewText"
+                    width: parent.width
+                    visible: appController.reviewPending
+                    text: appController.editPreviewHtml
+                    textFormat: Text.RichText
+                    color: "#F5F7FB"
+                    font.family: "Microsoft YaHei UI"
+                    font.pixelSize: 17
+                    wrapMode: Text.Wrap
+                }
             }
         }
     }

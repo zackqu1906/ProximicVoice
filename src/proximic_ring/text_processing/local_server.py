@@ -137,6 +137,8 @@ class LocalModelServer:
             "--jinja",
             "--cache-prompt",
             "--cache-idle-slots",
+            "--parallel",
+            "2",
         ]
         if self.reasoning:
             command.extend(["--reasoning", self.reasoning])

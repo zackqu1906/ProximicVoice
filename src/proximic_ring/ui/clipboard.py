@@ -43,6 +43,10 @@ class QtClipboardBridge:
         self._clipboard().setMimeData(mime)
         QCoreApplication.processEvents()
 
+    def set_text(self, text: str) -> None:
+        self._clipboard().setText(str(text))
+        QCoreApplication.processEvents()
+
     def text(self) -> str:
         QCoreApplication.processEvents()
         return str(self._clipboard().text() or "")

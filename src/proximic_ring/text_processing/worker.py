@@ -6,8 +6,15 @@ import time
 from dataclasses import dataclass
 from typing import Callable
 
+from .edit_tool import EDIT_MODE_RACE
 from .llm import OpenAICompatibleTextProcessor
-from .model import LLMSettings, TextProcessingRequest, TextProcessingResult, normalize_input_mode
+from .model import (
+    INPUT_MODE_EDIT,
+    LLMSettings,
+    TextProcessingRequest,
+    TextProcessingResult,
+    normalize_input_mode,
+)
 
 
 @dataclass(frozen=True)
@@ -97,6 +104,12 @@ class TextProcessingWorker:
                         request.mode,
                         request.settings,
                         request.target_text,
+                        (
+                            EDIT_MODE_RACE
+                            if normalize_input_mode(request.mode)
+                            == INPUT_MODE_EDIT
+                            else ""
+                        ),
                     )
                 else:
                     final_text = self._processor.process(
@@ -104,6 +117,12 @@ class TextProcessingWorker:
                         request.mode,
                         request.settings,
                         request.target_text,
+                        (
+                            EDIT_MODE_RACE
+                            if normalize_input_mode(request.mode)
+                            == INPUT_MODE_EDIT
+                            else ""
+                        ),
                     )
             except BaseException as exc:
                 # The input method must remain usable when a cloud/local LLM is

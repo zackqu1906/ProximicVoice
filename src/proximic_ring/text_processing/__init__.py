@@ -1,5 +1,12 @@
 """LLM-backed post-processing for final ASR transcripts."""
 
+from .edit_tool import (
+    DEFAULT_EDIT_MODE,
+    EDIT_MODE_FRAGMENT,
+    EDIT_MODE_FULL,
+    EDIT_MODE_RACE,
+    normalize_edit_mode,
+)
 from .llm import OpenAICompatibleTextProcessor
 from .local_server import (
     DEFAULT_LOCAL_BASE_URL,
@@ -40,6 +47,10 @@ __all__ = [
     "INPUT_MODE_DICTATION",
     "INPUT_MODE_EDIT",
     "INPUT_MODE_INSTRUCTION",
+    "DEFAULT_EDIT_MODE",
+    "EDIT_MODE_FRAGMENT",
+    "EDIT_MODE_FULL",
+    "EDIT_MODE_RACE",
     "LLM_PROVIDER_LOCAL",
     "LLM_PROVIDER_OPENAI",
     "LLM_PROVIDER_VOLCENGINE",
@@ -66,6 +77,7 @@ __all__ = [
     "TextProcessingResult",
     "TextProcessingWorker",
     "normalize_input_mode",
+    "normalize_edit_mode",
     "normalize_llm_provider",
     "validate_edit_target_text",
 ]

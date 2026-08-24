@@ -7,6 +7,8 @@ import pytest
 from proximic_ring.text_processing import (
     INPUT_MODE_DICTATION,
     INPUT_MODE_EDIT,
+    EDIT_MODE_FULL,
+    EDIT_MODE_RACE,
     LLM_PROVIDER_LOCAL,
     LLM_PROVIDER_VOLCENGINE,
     LLMSettings,
@@ -33,13 +35,25 @@ def test_openai_compatible_processor_uses_mode_specific_prompt(monkeypatch):
     def urlopen(http_request, *, timeout):
         requests.append((http_request, timeout))
         request_body = json.loads(http_request.data.decode("utf-8"))
-        is_edit = "submit_text_edit_plan" in request_body["messages"][0]["content"]
-        content = (
-            '{"kind":"rewrite","text":"这是正式的原草稿。"}'
-            if is_edit
-            else "整理后的文本。"
-        )
-        payload = {"choices": [{"message": {"content": content}}]}
+        is_edit = "submit_text_edit" in request_body["messages"][0]["content"]
+        if is_edit:
+            message = {
+                "tool_calls": [
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "submit_text_edit",
+                            "arguments": {
+                                "original_text": "这是原来的草稿",
+                                "modified_text": "这是正式的原草稿。",
+                            },
+                        },
+                    }
+                ]
+            }
+        else:
+            message = {"content": "整理后的文本。"}
+        payload = {"choices": [{"message": message}]}
         return _Response(json.dumps(payload).encode("utf-8"))
 
     processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
@@ -68,11 +82,21 @@ def test_openai_compatible_processor_uses_mode_specific_prompt(monkeypatch):
     )
     assert edit_result == "这是正式的原草稿。"
     edit_body = json.loads(requests[1][0].data.decode("utf-8"))
-    assert '"text":"完整文本"' in edit_body["messages"][0]["content"]
+    assert "modified_text：用于替换 original_text 的新片段" in (
+        edit_body["messages"][0]["content"]
+    )
     assert "<待修改文本>\n这是原来的草稿" in edit_body["messages"][1]["content"]
     assert "<修改要求>\n改得正式一点" in edit_body["messages"][1]["content"]
-    assert edit_body["tools"][0]["function"]["name"] == "submit_text_edit_plan"
-    assert "必须调用 submit_text_edit_plan 工具" in edit_body["messages"][0]["content"]
+    function = edit_body["tools"][0]["function"]
+    assert function["name"] == "submit_text_edit"
+    assert set(function["parameters"]["properties"]) == {
+        "original_text",
+        "modified_text",
+    }
+    assert edit_body["tool_choice"] == "required"
+    assert "必须真正调用 submit_text_edit 工具" in (
+        edit_body["messages"][0]["content"]
+    )
     assert "不要主动翻译" in body["messages"][0]["content"]
 
 
@@ -101,6 +125,200 @@ def test_processor_can_use_local_endpoint_without_api_key():
 
     assert result == "本地结果"
     assert "Authorization" not in captured[0].headers
+
+
+def test_full_text_edit_mode_uses_single_field_schema_for_comparison():
+    captured = []
+
+    def urlopen(http_request, *, timeout):
+        captured.append(json.loads(http_request.data.decode("utf-8")))
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_text_edit",
+                                    "arguments": {
+                                        "modified_text": "会议安排在周五。",
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        return _Response(json.dumps(payload).encode("utf-8"))
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    result = processor.process(
+        "把周四改成周五",
+        INPUT_MODE_EDIT,
+        LLMSettings(enabled=True, model="test", api_key_env=""),
+        "会议安排在周四。",
+        EDIT_MODE_FULL,
+    )
+
+    assert result == "会议安排在周五。"
+    body = captured[0]
+    parameters = body["tools"][0]["function"]["parameters"]
+    assert set(parameters["properties"]) == {"modified_text"}
+    assert parameters["required"] == ["modified_text"]
+    assert "modified_text 必须是修改后的完整文本" in (
+        body["messages"][0]["content"]
+    )
+
+
+def test_race_mode_returns_the_first_valid_edit_protocol(monkeypatch):
+    barrier = threading.Barrier(2)
+    fragment_finished = threading.Event()
+    captured = []
+
+    def urlopen(http_request, *, timeout):
+        body = json.loads(http_request.data.decode("utf-8"))
+        captured.append(body)
+        properties = body["tools"][0]["function"]["parameters"]["properties"]
+        is_fragment = "original_text" in properties
+        barrier.wait(timeout=1.0)
+        if is_fragment:
+            threading.Event().wait(0.3)
+            arguments = {
+                "original_text": "周四",
+                "modified_text": "周五",
+            }
+            fragment_finished.set()
+        else:
+            arguments = {"modified_text": "完整文本先返回。"}
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_text_edit",
+                                    "arguments": arguments,
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        return _Response(json.dumps(payload).encode("utf-8"))
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    final_text, model_output = processor.process_with_trace(
+        "把周四改成周五",
+        INPUT_MODE_EDIT,
+        LLMSettings(enabled=True, model="test", api_key_env=""),
+        "会议安排在周四。",
+        EDIT_MODE_RACE,
+    )
+
+    assert final_text == "完整文本先返回。"
+    assert json.loads(model_output) == {"modified_text": "完整文本先返回。"}
+    assert fragment_finished.is_set() is False
+    assert len(captured) == 2
+
+
+def test_race_rejects_prompt_echo_and_uses_other_protocol_without_retry():
+    barrier = threading.Barrier(2)
+    calls = []
+
+    def urlopen(http_request, *, timeout):
+        body = json.loads(http_request.data.decode("utf-8"))
+        properties = body["tools"][0]["function"]["parameters"]["properties"]
+        is_fragment = "original_text" in properties
+        calls.append("fragment" if is_fragment else "full")
+        barrier.wait(timeout=1.0)
+        if is_fragment:
+            threading.Event().wait(0.05)
+            arguments = {
+                "original_text": "辅助",
+                "modified_text": "输出",
+            }
+        else:
+            arguments = {
+                "modified_text": (
+                    "你是文本编辑规划器，不是聊天助手。根据待修改文本和"
+                    "用户要求，返回 original_text 和 modified_text。"
+                )
+            }
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_text_edit",
+                                    "arguments": arguments,
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        return _Response(json.dumps(payload).encode("utf-8"))
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    final_text = processor.process(
+        "把辅助改成输出",
+        INPUT_MODE_EDIT,
+        LLMSettings(enabled=True, model="test", api_key_env=""),
+        "保留现有的辅助模式。",
+        EDIT_MODE_RACE,
+    )
+
+    assert final_text == "保留现有的输出模式。"
+    assert sorted(calls) == ["fragment", "full"]
+
+
+def test_edit_output_budget_scales_for_complete_modified_text():
+    captured = []
+    target = "原" * 2000
+
+    def urlopen(http_request, *, timeout):
+        captured.append(json.loads(http_request.data.decode("utf-8")))
+        payload = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "type": "function",
+                                "function": {
+                                    "name": "submit_text_edit",
+                                    "arguments": {
+                                        "original_text": target,
+                                        "modified_text": target,
+                                    },
+                                },
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        return _Response(json.dumps(payload).encode("utf-8"))
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    result = processor.process(
+        "保持不变",
+        INPUT_MODE_EDIT,
+        LLMSettings(enabled=True, model="test", api_key_env=""),
+        target,
+    )
+
+    assert result == target
+    assert captured[0]["max_tokens"] == 4512
 
 
 def test_volcengine_request_disables_thinking(monkeypatch):
@@ -162,12 +380,10 @@ def test_volcengine_edit_uses_function_call_json(monkeypatch):
             "output": [
                 {
                     "type": "function_call",
-                    "name": "submit_text_edit_plan",
+                    "name": "submit_text_edit",
                     "arguments": (
-                        '{"kind":"operations","operations":['
-                        '{"op":"insert","position":"after",'
-                        '"target":"喝","value":"一杯咖啡",'
-                        '"occurrence":"unique"}]}'
+                        '{"original_text":"我想喝。",'
+                        '"modified_text":"我想喝一杯咖啡。"}'
                     ),
                 }
             ],
@@ -189,24 +405,18 @@ def test_volcengine_edit_uses_function_call_json(monkeypatch):
     )
 
     assert final_text == "我想喝一杯咖啡。"
-    assert json.loads(model_output)["kind"] == "operations"
+    assert json.loads(model_output)["original_text"] == "我想喝。"
     body = json.loads(captured[0].data.decode("utf-8"))
     assert captured[0].full_url == "https://ark.cn-beijing.volces.com/api/v3/responses"
-    assert body["tools"][0]["name"] == "submit_text_edit_plan"
+    assert body["tools"][0]["name"] == "submit_text_edit"
     assert "tool_choice" not in body
     system_prompt = body["input"][0]["content"][0]["text"]
-    assert "必须调用 submit_text_edit_plan 工具" in system_prompt
-    assert "一次连续新增内容必须放在一个 value 中" in system_prompt
-    assert "在 X 后面加 Y" in system_prompt
-    operation_schema = body["tools"][0]["parameters"]["properties"][
-        "operations"
-    ]["items"]
-    assert "不得拆成多个 insert" in body["tools"][0]["parameters"][
-        "properties"
-    ]["operations"]["description"]
-    assert "整篇文本开头/末尾" in operation_schema["properties"]["position"][
-        "description"
-    ]
+    assert "必须真正调用 submit_text_edit 工具" in system_prompt
+    assert "modified_text：用于替换 original_text 的新片段" in system_prompt
+    parameters = body["tools"][0]["parameters"]
+    assert set(parameters["properties"]) == {"original_text", "modified_text"}
+    assert parameters["required"] == ["original_text", "modified_text"]
+    assert parameters["additionalProperties"] is False
 
 
 def test_edit_retries_malformed_ark_arguments_once(monkeypatch):
@@ -219,11 +429,10 @@ def test_edit_retries_malformed_ark_arguments_once(monkeypatch):
             "output": [
                 {
                     "type": "function_call",
-                    "name": "submit_text_edit_plan",
+                    "name": "submit_text_edit",
                     "arguments": (
-                        '{"kind":"operations","operations":['
-                        '{"op":"replace","target":一天",'
-                        '"value":"两天","occurrence":"unique"}]}'
+                        '{"original_text":一天",'
+                        '"modified_text":"两天"}'
                     ),
                 }
             ],
@@ -234,11 +443,10 @@ def test_edit_retries_malformed_ark_arguments_once(monkeypatch):
             "output": [
                 {
                     "type": "function_call",
-                    "name": "submit_text_edit_plan",
+                    "name": "submit_text_edit",
                     "arguments": (
-                        '{"kind":"operations","operations":['
-                        '{"op":"replace","target":"一天",'
-                        '"value":"两天","occurrence":"unique"}]}'
+                        '{"original_text":"一天",'
+                        '"modified_text":"两天"}'
                     ),
                 }
             ],
@@ -264,13 +472,13 @@ def test_edit_retries_malformed_ark_arguments_once(monkeypatch):
     )
 
     assert final_text == "我想申请两天调休。"
-    assert json.loads(model_output)["operations"][0]["target"] == "一天"
+    assert json.loads(model_output)["original_text"] == "一天"
     assert len(captured) == 2
     first_prompt = captured[0]["input"][0]["content"][0]["text"]
     retry_prompt = captured[1]["input"][0]["content"][0]["text"]
     assert "上一次编辑尝试失败" not in first_prompt
     assert "上一次编辑尝试失败" in retry_prompt
-    assert '"target":一天"' in retry_prompt
+    assert '"original_text":一天"' in retry_prompt
     assert "第 1 行第" in retry_prompt
     assert "strict" not in captured[0]["tools"][0]
     assert "strict" not in captured[1]["tools"][0]
@@ -279,8 +487,8 @@ def test_edit_retries_malformed_ark_arguments_once(monkeypatch):
 def test_process_with_attempts_preserves_every_retry_output(monkeypatch):
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     outputs = [
-        '{"kind":"rewrite","text":两天"}',
-        '{"kind":"rewrite","text":"两天"}',
+        '{"original_text":"一天","modified_text":两天}',
+        '{"original_text":"一天","modified_text":"两天"}',
     ]
 
     def urlopen(_http_request, *, timeout):
@@ -291,7 +499,7 @@ def test_process_with_attempts_preserves_every_retry_output(monkeypatch):
             "output": [
                 {
                     "type": "function_call",
-                    "name": "submit_text_edit_plan",
+                    "name": "submit_text_edit",
                     "arguments": arguments,
                 }
             ],
@@ -314,15 +522,15 @@ def test_process_with_attempts_preserves_every_retry_output(monkeypatch):
 
     assert final_text == "两天"
     assert model_outputs == (
-        '{"kind":"rewrite","text":两天"}',
-        '{"kind":"rewrite","text":"两天"}',
+        '{"original_text":"一天","modified_text":两天}',
+        '{"original_text":"一天","modified_text":"两天"}',
     )
 
 
 def test_edit_stops_after_one_failed_format_retry(monkeypatch):
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     call_count = 0
-    invalid_arguments = '{"kind":"rewrite","text":两天"}'
+    invalid_arguments = '{"original_text":"一天","modified_text":两天}'
 
     def urlopen(_http_request, *, timeout):
         nonlocal call_count
@@ -333,7 +541,7 @@ def test_edit_stops_after_one_failed_format_retry(monkeypatch):
             "output": [
                 {
                     "type": "function_call",
-                    "name": "submit_text_edit_plan",
+                    "name": "submit_text_edit",
                     "arguments": invalid_arguments,
                 }
             ],
@@ -363,27 +571,23 @@ def test_edit_stops_after_one_failed_format_retry(monkeypatch):
     )
 
 
-def test_edit_execution_ambiguity_is_retried_once(monkeypatch):
+def test_repeated_fragment_is_applied_to_all_matches_without_retry(monkeypatch):
     monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
     call_count = 0
-    captured = []
 
-    def urlopen(http_request, *, timeout):
+    def urlopen(_http_request, *, timeout):
         nonlocal call_count
         call_count += 1
-        captured.append(json.loads(http_request.data.decode("utf-8")))
-        occurrence = "unique" if call_count == 1 else "last"
         payload = {
             "object": "response",
             "status": "completed",
             "output": [
                 {
                     "type": "function_call",
-                    "name": "submit_text_edit_plan",
+                    "name": "submit_text_edit",
                     "arguments": (
-                        '{"kind":"operations","operations":['
-                        '{"op":"replace","target":"咖啡",'
-                        f'"value":"牛奶","occurrence":"{occurrence}"}}]}}'
+                        '{"original_text":"项目",'
+                        '"modified_text":"任务"}'
                     ),
                 }
             ],
@@ -392,7 +596,7 @@ def test_edit_execution_ambiguity_is_retried_once(monkeypatch):
 
     processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
     final_text, model_outputs = processor.process_with_attempts(
-        "把咖啡改成牛奶",
+        "把项目改成任务",
         INPUT_MODE_EDIT,
         LLMSettings(
             enabled=True,
@@ -401,15 +605,14 @@ def test_edit_execution_ambiguity_is_retried_once(monkeypatch):
             api_key_env="ARK_API_KEY",
             provider=LLM_PROVIDER_VOLCENGINE,
         ),
-        "我要去咖啡厅喝咖啡。",
+        "项目一和项目二",
     )
 
-    assert call_count == 2
-    assert final_text == "我要去咖啡厅喝牛奶。"
-    assert len(model_outputs) == 2
-    retry_prompt = captured[1]["input"][0]["content"][0]["text"]
-    assert "目标出现 2 次" in retry_prompt
-    assert '"occurrence":"unique"' in retry_prompt
+    assert call_count == 1
+    assert final_text == "任务一和任务二"
+    assert model_outputs == (
+        '{"original_text":"项目","modified_text":"任务"}',
+    )
 
 
 def test_edit_request_error_is_retried_and_recorded(monkeypatch):
@@ -427,8 +630,11 @@ def test_edit_request_error_is_retried_and_recorded(monkeypatch):
             "output": [
                 {
                     "type": "function_call",
-                    "name": "submit_text_edit_plan",
-                    "arguments": '{"kind":"noop"}',
+                    "name": "submit_text_edit",
+                    "arguments": (
+                        '{"original_text":"原文。",'
+                        '"modified_text":"原文。"}'
+                    ),
                 }
             ],
         }
@@ -452,7 +658,9 @@ def test_edit_request_error_is_retried_and_recorded(monkeypatch):
     assert final_text == "原文。"
     assert "未返回 function/tool arguments" in model_outputs[0]
     assert "大模型请求超时" in model_outputs[0]
-    assert model_outputs[1] == '{"kind":"noop"}'
+    assert model_outputs[1] == (
+        '{"original_text":"原文。","modified_text":"原文。"}'
+    )
 
 
 def test_deepseek_v4_flash_reuses_ark_edit_pipeline(monkeypatch):
@@ -467,8 +675,11 @@ def test_deepseek_v4_flash_reuses_ark_edit_pipeline(monkeypatch):
             "output": [
                 {
                     "type": "function_call",
-                    "name": "submit_text_edit_plan",
-                    "arguments": '{"kind":"noop"}',
+                    "name": "submit_text_edit",
+                    "arguments": (
+                        '{"original_text":"原文。",'
+                        '"modified_text":"原文。"}'
+                    ),
                 }
             ],
         }
@@ -492,9 +703,11 @@ def test_deepseek_v4_flash_reuses_ark_edit_pipeline(monkeypatch):
     body = json.loads(captured[0].data.decode("utf-8"))
     assert captured[0].full_url.endswith("/api/v3/responses")
     assert body["model"] == "deepseek-v4-flash-260425"
-    assert body["tools"][0]["name"] == "submit_text_edit_plan"
+    assert body["tools"][0]["name"] == "submit_text_edit"
     assert "thinking" not in body
-    assert "只能返回以下三种之一" in body["input"][0]["content"][0]["text"]
+    assert "original_text：从待修改文本逐字复制" in (
+        body["input"][0]["content"][0]["text"]
+    )
 
 
 def test_processor_accepts_ark_responses_function_call_shape():
@@ -503,19 +716,24 @@ def test_processor_accepts_ark_responses_function_call_shape():
         "output": [
             {
                 "type": "function_call",
-                "name": "submit_text_edit_plan",
-                "arguments": '{"kind":"noop"}',
+                "name": "submit_text_edit",
+                "arguments": (
+                    '{"original_text":"原文。",'
+                    '"modified_text":"原文。"}'
+                ),
             }
         ],
     }
 
-    assert OpenAICompatibleTextProcessor._extract_content(payload) == (
-        '{"kind":"noop"}'
+    assert OpenAICompatibleTextProcessor._extract_required_edit_tool_arguments(
+        payload
+    ) == (
+        '{"original_text":"原文。","modified_text":"原文。"}'
     )
 
 
 def test_processor_keeps_function_arguments_dict_for_executor():
-    arguments = {"kind": "noop"}
+    arguments = {"original_text": "原文。", "modified_text": "原文。"}
     payload = {
         "choices": [
             {
@@ -524,7 +742,7 @@ def test_processor_keeps_function_arguments_dict_for_executor():
                         {
                             "type": "function",
                             "function": {
-                                "name": "submit_text_edit_plan",
+                                "name": "submit_text_edit",
                                 "arguments": arguments,
                             },
                         }
@@ -534,7 +752,12 @@ def test_processor_keeps_function_arguments_dict_for_executor():
         ]
     }
 
-    assert OpenAICompatibleTextProcessor._extract_content(payload) is arguments
+    assert (
+        OpenAICompatibleTextProcessor._extract_required_edit_tool_arguments(
+            payload
+        )
+        is arguments
+    )
 
 
 def test_local_edit_requires_a_real_tool_call():
@@ -542,7 +765,10 @@ def test_local_edit_requires_a_real_tool_call():
         "choices": [
             {
                 "message": {
-                    "content": '{"kind":"noop"}',
+                    "content": (
+                        '{"original_text":"原文。",'
+                        '"modified_text":"原文。"}'
+                    ),
                 },
                 "finish_reason": "stop",
             }
@@ -563,11 +789,11 @@ def test_local_edit_requires_a_real_tool_call():
 
     with pytest.raises(
         RuntimeError,
-        match="没有调用 submit_text_edit_plan 工具",
+        match="没有调用 submit_text_edit 工具",
     ) as exc_info:
         processor.process("保持不变", INPUT_MODE_EDIT, settings, "原文。")
 
-    assert '"content": "{\\"kind\\":\\"noop\\"}"' in (
+    assert '\\"original_text\\":\\"原文。\\"' in (
         exc_info.value.model_output
     )
 
@@ -581,7 +807,7 @@ def test_empty_ark_edit_response_preserves_debug_payload(monkeypatch):
 
     processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
     with pytest.raises(
-        RuntimeError, match="没有有效工具参数.*finish_reason=completed"
+        RuntimeError, match="没有调用 submit_text_edit 工具"
     ) as exc:
         processor.process(
             "删除上一句话",
@@ -630,11 +856,19 @@ def test_edit_prompt_grounds_asr_misrecognition_to_exact_original_target():
                     "choices": [
                         {
                             "message": {
-                                "content": (
-                                    '{"kind":"operations","operations":['
-                                    '{"op":"replace","target":"周四",'
-                                    '"value":"周五","occurrence":"unique"}]}'
-                                )
+                                "tool_calls": [
+                                    {
+                                        "type": "function",
+                                        "function": {
+                                            "name": "submit_text_edit",
+                                            "arguments": (
+                                                '{"original_text":"周四",'
+                                                '"modified_text":'
+                                                '"周五"}'
+                                            ),
+                                        },
+                                    }
+                                ]
                             }
                         }
                     ]
@@ -660,26 +894,38 @@ def test_edit_prompt_grounds_asr_misrecognition_to_exact_original_target():
 
     assert result == "会议安排在周五。"
     system_prompt = captured[0]["messages"][0]["content"]
-    assert "ASR错误纠正" in system_prompt
-    assert "target 必须来自<待修改文本>，必须逐字复制" in system_prompt
-    assert "X 是目标内容" in system_prompt
-    assert "唯一、明显的近音/错字对应词" in system_prompt
+    assert "明显 ASR 错词" in system_prompt
+    assert "original_text：从待修改文本逐字复制" in system_prompt
     assert "星巴克" not in system_prompt
-    assert 'target="周四"' in system_prompt
     assert "把周丝替换成周五" in captured[0]["messages"][1]["content"]
 
 
-def test_invalid_edit_plan_keeps_raw_model_output_on_the_error():
+def test_invalid_edit_response_keeps_raw_model_output_on_the_error():
     raw_output = (
-        '{"kind":"operations","operations":['
-        '{"op":"replace","target":"新巴克","value":"瑞幸",'
-        '"occurrence":"unique"}]}'
+        '{"original_text":"新巴克",'
+        '"modified_text":"我准备去瑞幸开会。"}'
     )
 
     def urlopen(_http_request, *, timeout):
         return _Response(
             json.dumps(
-                {"choices": [{"message": {"content": raw_output}}]},
+                {
+                    "choices": [
+                        {
+                            "message": {
+                                "tool_calls": [
+                                    {
+                                        "type": "function",
+                                        "function": {
+                                            "name": "submit_text_edit",
+                                            "arguments": raw_output,
+                                        },
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                },
                 ensure_ascii=False,
             ).encode("utf-8")
         )
@@ -692,7 +938,7 @@ def test_invalid_edit_plan_keeps_raw_model_output_on_the_error():
         api_key_env="",
     )
 
-    with pytest.raises(RuntimeError, match="原文中找不到目标") as exc_info:
+    with pytest.raises(RuntimeError, match="不在待修改文本中") as exc_info:
         processor.process(
             "把新巴克替换成瑞幸",
             INPUT_MODE_EDIT,
@@ -732,10 +978,10 @@ def test_processor_auto_starts_configured_local_server():
                                     {
                                         "type": "function",
                                         "function": {
-                                            "name": "submit_text_edit_plan",
+                                            "name": "submit_text_edit",
                                             "arguments": {
-                                                "kind": "rewrite",
-                                                "text": "本地结果",
+                                                "original_text": "原始草稿",
+                                                "modified_text": "本地结果",
                                             },
                                         },
                                     }
@@ -769,9 +1015,7 @@ def test_processor_auto_starts_configured_local_server():
     assert created[0][0]["model_alias"] == "qwen3-4b-instruct-2507-local"
     assert created[0][0]["reasoning"] == "off"
     assert created[0][1].ensure_count == 1
-    assert captured[0]["tools"][0]["function"]["name"] == (
-        "submit_text_edit_plan"
-    )
+    assert captured[0]["tools"][0]["function"]["name"] == "submit_text_edit"
     assert captured[0]["tool_choice"] == "required"
 
 
@@ -869,13 +1113,15 @@ def test_worker_falls_back_to_raw_text_when_llm_fails():
 
 
 def test_worker_preserves_raw_model_output_for_debugging():
+    calls = []
+
     class TracedProcessor:
-        def process_with_trace(self, *_args):
+        def process_with_trace(self, *args):
+            calls.append(args)
             return (
                 "我准备去瑞幸开会。",
-                '{"kind":"operations","operations":['
-                '{"op":"replace","target":"星巴克","value":"瑞幸",'
-                '"occurrence":"unique"}]}',
+                '{"original_text":"星巴克",'
+                '"modified_text":"我准备去瑞幸开会。"}',
             )
 
     completed = threading.Event()
@@ -898,4 +1144,5 @@ def test_worker_preserves_raw_model_output_for_debugging():
     assert completed.wait(1.0)
     worker.close(wait=True)
     assert results[0].final_text == "我准备去瑞幸开会。"
-    assert '"target":"星巴克"' in results[0].model_output
+    assert '"original_text":"星巴克"' in results[0].model_output
+    assert calls[0][-1] == EDIT_MODE_RACE

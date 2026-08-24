@@ -8,7 +8,8 @@ observed here is representative of the text stage used by the application.
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass, replace
 import importlib.machinery
 import json
 import os
@@ -66,6 +67,8 @@ from proximic_ring.text_processing import (  # noqa: E402
     DEFAULT_LOCAL_MODEL_PATH,
     DEFAULT_LOCAL_REASONING,
     DEFAULT_LOCAL_SERVER_PATH,
+    EDIT_MODE_FRAGMENT,
+    EDIT_MODE_FULL,
     INPUT_MODE_DICTATION,
     INPUT_MODE_EDIT,
     LLM_PROVIDER_LOCAL,
@@ -76,7 +79,8 @@ from proximic_ring.text_processing import (  # noqa: E402
 )
 from proximic_ring.text_processing.llm import (  # noqa: E402
     DICTATION_PROMPT,
-    EDIT_PROMPT,
+    EDIT_FRAGMENT_PROMPT,
+    EDIT_FULL_TEXT_PROMPT,
 )
 
 
@@ -117,6 +121,7 @@ PROVIDER_ALIASES = {
 }
 
 COMPARE_PROVIDERS = (PROVIDER_LOCAL, PROVIDER_DOUBAO, PROVIDER_DEEPSEEK)
+EDIT_TEST_MODES = (EDIT_MODE_FRAGMENT, EDIT_MODE_FULL)
 
 
 @dataclass(frozen=True)
@@ -130,6 +135,7 @@ class ModelRunResult:
     model_output: str = ""
     model_outputs: tuple[str, ...] = ()
     error: str = ""
+    edit_mode: str = ""
 
 def _parse_mode(value: str) -> str:
     mode = MODE_ALIASES.get(str(value).strip().lower())
@@ -164,8 +170,21 @@ def _provider_label(provider: str) -> str:
     }[provider]
 
 
-def _prompt_for(mode: str) -> str:
-    return EDIT_PROMPT if mode == INPUT_MODE_EDIT else DICTATION_PROMPT
+def _edit_mode_label(edit_mode: str) -> str:
+    return {
+        EDIT_MODE_FRAGMENT: "片段替换",
+        EDIT_MODE_FULL: "完整文本",
+    }[edit_mode]
+
+
+def _prompt_for(mode: str, edit_mode: str = EDIT_MODE_FRAGMENT) -> str:
+    if mode != INPUT_MODE_EDIT:
+        return DICTATION_PROMPT
+    return (
+        EDIT_FRAGMENT_PROMPT
+        if edit_mode == EDIT_MODE_FRAGMENT
+        else EDIT_FULL_TEXT_PROMPT
+    )
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -314,6 +333,7 @@ def _request_once(
     mode: str,
     text: str,
     target_text: str = "",
+    edit_mode: str = "",
 ) -> ModelRunResult:
     started = time.perf_counter()
     try:
@@ -324,6 +344,7 @@ def _request_once(
                 mode,
                 settings,
                 target_text,
+                edit_mode or EDIT_MODE_FRAGMENT,
             )
             model_outputs = tuple(model_outputs)
             model_output = model_outputs[-1] if model_outputs else ""
@@ -333,6 +354,7 @@ def _request_once(
                 mode,
                 settings,
                 target_text,
+                edit_mode or EDIT_MODE_FRAGMENT,
             )
             model_outputs = (model_output,) if model_output else ()
     except (RuntimeError, ValueError) as exc:
@@ -350,6 +372,7 @@ def _request_once(
             model_output=model_output,
             model_outputs=model_outputs,
             error=str(exc),
+            edit_mode=edit_mode,
         )
 
     elapsed = time.perf_counter() - started
@@ -362,12 +385,15 @@ def _request_once(
         final_text=result,
         model_output=model_output,
         model_outputs=model_outputs,
+        edit_mode=edit_mode,
     )
 
 
 def _display_run(run: ModelRunResult, *, mode: str) -> None:
     print(f"\n=== {run.label} ===")
     print(f"模型：{run.model}")
+    if mode == INPUT_MODE_EDIT:
+        print(f"编辑协议：{_edit_mode_label(run.edit_mode)}")
     model_outputs = run.model_outputs or (
         (run.model_output,) if run.model_output else ()
     )
@@ -387,14 +413,14 @@ def _display_run(run: ModelRunResult, *, mode: str) -> None:
                 "成功" if run.success else "失败"
             )
             if mode == INPUT_MODE_EDIT and run.provider == PROVIDER_LOCAL:
-                label = "真正 tool_call arguments"
+                label = "真正的 tool_call arguments"
             elif mode == INPUT_MODE_EDIT:
                 label = "function/tool arguments"
             else:
                 label = "模型原始返回"
             print(f"[第 {attempt} 次 {label}：{status}]")
         elif mode == INPUT_MODE_EDIT and run.provider == PROVIDER_LOCAL:
-            print("[真正 tool_call arguments]")
+            print("[真正的 tool_call arguments]")
         elif mode == INPUT_MODE_EDIT:
             print("[function/tool arguments]")
         else:
@@ -403,17 +429,26 @@ def _display_run(run: ModelRunResult, *, mode: str) -> None:
     if not run.success:
         print(f"[失败，{run.elapsed_s:.2f}s] {run.error}", file=sys.stderr)
         return
-    output_label = "执行后的完整文本" if mode == INPUT_MODE_EDIT else "整理后的听写文本"
+    output_label = (
+        (
+            "Python 片段替换后的完整文本"
+            if run.edit_mode == EDIT_MODE_FRAGMENT
+            else "模型返回的完整文本"
+        )
+        if mode == INPUT_MODE_EDIT
+        else "整理后的听写文本"
+    )
     print(f"[{output_label}，{run.elapsed_s:.2f}s]")
     print(run.final_text)
 
 
 def _display_comparison(runs: list[ModelRunResult]) -> None:
-    print(f"\n=== 最终结果集中比较（{len(runs)} 个模型） ===")
+    print(f"\n=== 最终结果集中比较（{len(runs)} 次运行） ===")
     for index, run in enumerate(runs, start=1):
         status = "成功" if run.success else "失败"
         print(
-            f"\n[{index}] {run.label} / {run.model} | "
+            f"\n[{index}] {run.label} / {run.model}"
+            f"{f' / {_edit_mode_label(run.edit_mode)}' if run.edit_mode else ''} | "
             f"{status} | {run.elapsed_s:.2f}s"
         )
         if run.success:
@@ -425,7 +460,7 @@ def _display_comparison(runs: list[ModelRunResult]) -> None:
     if len(successful) >= 2 and len(
         {run.final_text for run in successful}
     ) == 1:
-        print("\n所有成功模型的最终文本完全一致。")
+        print("\n所有成功运行的最终文本完全一致。")
 
 
 def _run_models(
@@ -438,23 +473,88 @@ def _run_models(
     show_prompt: bool,
 ) -> bool:
     if show_prompt:
-        print(f"\n--- {_mode_label(mode)}提示词（所有模型共用）---")
-        print(_prompt_for(mode))
+        prompt_modes = EDIT_TEST_MODES if mode == INPUT_MODE_EDIT else ("",)
+        for edit_mode in prompt_modes:
+            suffix = (
+                f" · {_edit_mode_label(edit_mode)}"
+                if edit_mode
+                else ""
+            )
+            print(f"\n--- {_mode_label(mode)}提示词{suffix}（所有模型共用）---")
+            print(_prompt_for(mode, edit_mode or EDIT_MODE_FRAGMENT))
 
-    print(f"\n[{_mode_label(mode)}] 将同一输入发送给 {len(targets)} 个模型。")
+    run_count = len(targets) * (2 if mode == INPUT_MODE_EDIT else 1)
+    print(
+        f"\n[{_mode_label(mode)}] 将同一输入执行 {run_count} 次；"
+        + ("每个模型分别测试片段替换与完整文本协议。" if mode == INPUT_MODE_EDIT else "")
+    )
     runs = []
     for provider, settings in targets:
-        print(f"正在请求 {_provider_label(provider)} / {settings.model} ...")
-        run = _request_once(
-            processor,
-            settings,
-            provider=provider,
-            mode=mode,
-            text=text,
-            target_text=target_text,
+        edit_modes = EDIT_TEST_MODES if mode == INPUT_MODE_EDIT else ("",)
+        request_settings = settings
+        if (
+            mode == INPUT_MODE_EDIT
+            and provider == PROVIDER_LOCAL
+            and settings.local_auto_start
+        ):
+            ensure_local_server = getattr(
+                processor,
+                "_ensure_local_server",
+                None,
+            )
+            if callable(ensure_local_server):
+                ensure_local_server(settings)
+                request_settings = replace(settings, local_auto_start=False)
+
+        if mode != INPUT_MODE_EDIT:
+            print(f"正在请求 {_provider_label(provider)} / {settings.model} ...")
+            run = _request_once(
+                processor,
+                request_settings,
+                provider=provider,
+                mode=mode,
+                text=text,
+                target_text=target_text,
+            )
+            runs.append(run)
+            _display_run(run, mode=mode)
+            continue
+
+        executor = ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="ProxiMicLLMComparison",
         )
-        runs.append(run)
-        _display_run(run, mode=mode)
+        futures = {}
+        for edit_mode in edit_modes:
+            suffix = f" / {_edit_mode_label(edit_mode)}" if edit_mode else ""
+            print(
+                f"正在请求 {_provider_label(provider)} / {settings.model}"
+                f"{suffix} ..."
+            )
+            future = executor.submit(
+                _request_once,
+                processor,
+                request_settings,
+                provider=provider,
+                mode=mode,
+                text=text,
+                target_text=target_text,
+                edit_mode=edit_mode,
+            )
+            futures[future] = edit_mode
+
+        first_success = ""
+        for future in as_completed(futures):
+            run = future.result()
+            runs.append(run)
+            _display_run(run, mode=mode)
+            if run.success and not first_success:
+                first_success = run.edit_mode
+                print(
+                    f"[竞速胜出] {_provider_label(provider)}："
+                    f"{_edit_mode_label(run.edit_mode)}"
+                )
+        executor.shutdown(wait=True)
     if len(runs) > 1:
         _display_comparison(runs)
     return all(run.success for run in runs)

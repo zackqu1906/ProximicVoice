@@ -1,87 +1,92 @@
-"""Function schema shared by all LLM providers for deterministic edits."""
+"""Function schemas for the fragment and full-text edit strategies."""
 
 from __future__ import annotations
 
 
-EDIT_PLAN_TOOL = {
+EDIT_MODE_FRAGMENT = "fragment"
+EDIT_MODE_FULL = "full"
+EDIT_MODE_RACE = "race"
+DEFAULT_EDIT_MODE = EDIT_MODE_FRAGMENT
+
+
+FRAGMENT_EDIT_TOOL = {
     "type": "function",
     "function": {
-        "name": "submit_text_edit_plan",
+        "name": "submit_text_edit",
         "description": (
-            "提交对待修改文本执行的确定性编辑计划。位置必须完全服从用户指令；"
-            "一次连续插入必须合并为一个 operation。"
+            "提交需要替换的原文片段和修改后的对应片段；完整文本由程序替换生成。"
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "kind": {
+                "original_text": {
                     "type": "string",
-                    "enum": ["operations", "rewrite", "noop"],
                     "description": (
-                        "局部编辑用 operations；全文生成式改写用 rewrite；"
-                        "无法可靠定位时用 noop。"
+                        "从待修改文本逐字复制并完整覆盖修改位置。"
+                        "需要替换全部重复项时可以是重复片段；只修改一处时"
+                        "加入上下文，使该片段唯一。"
                     ),
                 },
-                "operations": {
-                    "type": "array",
-                    "description": (
-                        "局部操作列表。一段连续新增内容只能生成一个 insert，"
-                        "不得拆成多个 insert。"
-                    ),
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "op": {
-                                "type": "string",
-                                "enum": ["delete", "replace", "insert"],
-                                "description": (
-                                    "编辑动作：delete 删除 target；replace 用 value"
-                                    "替换 target；insert 不删除原文，只在 position 指定"
-                                    "的位置加入 value。"
-                                ),
-                            },
-                            "target": {
-                                "type": "string",
-                                "description": (
-                                    "从待修改文本逐字复制的最短唯一定位片段。"
-                                    "before/after 的句内锚点不要包含句末标点。"
-                                ),
-                            },
-                            "value": {
-                                "type": "string",
-                                "description": (
-                                    "replace 的完整新内容，或一次 insert 要连续加入的"
-                                    "完整内容；例如“一杯咖啡”不能拆开。"
-                                ),
-                            },
-                            "occurrence": {
-                                "type": "string",
-                                "description": (
-                                    "target 的匹配位置：unique、first、last、all 或"
-                                    "从 1 开始的序号字符串。"
-                                ),
-                            },
-                            "position": {
-                                "type": "string",
-                                "enum": ["start", "end", "before", "after"],
-                                "description": (
-                                    "insert 位置。start/end 是整篇文本开头/末尾，只有"
-                                    "用户明确这样说时使用；before/after 是紧邻 target"
-                                    "之前/之后，必须与用户说的前面/后面一致。"
-                                ),
-                            },
-                        },
-                        "required": ["op"],
-                        "additionalProperties": False,
-                    },
-                },
-                "text": {
+                "modified_text": {
                     "type": "string",
-                    "description": "kind=rewrite 时的完整修改后文本。",
+                    "description": (
+                        "用于替换 original_text 的完整新片段，不是整篇文本；"
+                        "删除该片段时返回空字符串。"
+                    ),
                 },
             },
-            "required": ["kind"],
+            "required": ["original_text", "modified_text"],
             "additionalProperties": False,
         },
     },
 }
+
+
+FULL_TEXT_EDIT_TOOL = {
+    "type": "function",
+    "function": {
+        "name": "submit_text_edit",
+        "description": "提交执行修改要求后得到的完整文本。",
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "modified_text": {
+                    "type": "string",
+                    "description": (
+                        "执行修改要求后的完整文本，可直接覆盖原文本框；"
+                        "清空全文时返回空字符串。"
+                    ),
+                },
+            },
+            "required": ["modified_text"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+
+def normalize_edit_mode(value: str) -> str:
+    mode = str(value or DEFAULT_EDIT_MODE).strip().lower()
+    aliases = {
+        EDIT_MODE_FRAGMENT: EDIT_MODE_FRAGMENT,
+        "patch": EDIT_MODE_FRAGMENT,
+        "片段": EDIT_MODE_FRAGMENT,
+        EDIT_MODE_FULL: EDIT_MODE_FULL,
+        "full_text": EDIT_MODE_FULL,
+        "全文": EDIT_MODE_FULL,
+        EDIT_MODE_RACE: EDIT_MODE_RACE,
+        "parallel": EDIT_MODE_RACE,
+        "竞速": EDIT_MODE_RACE,
+    }
+    normalized = aliases.get(mode)
+    if normalized is None:
+        raise ValueError(f"不支持的编辑输出模式：{value}")
+    return normalized
+
+
+def edit_tool_for_mode(mode: str) -> dict:
+    return (
+        FULL_TEXT_EDIT_TOOL
+        if normalize_edit_mode(mode) == EDIT_MODE_FULL
+        else FRAGMENT_EDIT_TOOL
+    )

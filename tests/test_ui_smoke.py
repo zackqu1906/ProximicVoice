@@ -5,6 +5,27 @@ import sys
 import pytest
 
 
+def test_edit_preview_html_highlights_changes_and_escapes_user_text():
+    pytest.importorskip("PySide6")
+
+    from proximic_ring.ui.controller import _edit_preview_html
+
+    replaced = _edit_preview_html("今天下雨。", "今天下大雨。")
+    assert 'style="color:#FF646F;">大</span>' in replaced
+
+    deleted = _edit_preview_html("请删除这个词。", "请删除词。")
+    assert "已删除：这个" in deleted
+    assert "#FF646F" in deleted
+
+    escaped = _edit_preview_html("", "<b>不是标签</b> & 安全")
+    assert "&lt;b&gt;不是标签&lt;/b&gt; &amp; 安全" in escaped
+    assert "<b>不是标签</b>" not in escaped
+
+    cleared = _edit_preview_html("原文", "")
+    assert "修改后为空" in cleared
+    assert "#FF646F" in cleared
+
+
 def test_compute_device_discovery_lists_cuda(monkeypatch):
     pytest.importorskip("PySide6")
     import torch
@@ -39,8 +60,18 @@ def test_compute_device_discovery_lists_cuda(monkeypatch):
 
 def test_qml_customer_window_loads(tmp_path):
     pytest.importorskip("PySide6")
-    from PySide6.QtCore import QObject, QSettings, QUrl
+    from PySide6.QtCore import (
+        QObject,
+        QMetaObject,
+        QPoint,
+        QPointF,
+        QSettings,
+        Qt,
+        QUrl,
+    )
     from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQuick import QQuickItem
+    from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 
     from proximic_ring.ui.controller import AppController
@@ -130,6 +161,8 @@ def test_qml_customer_window_loads(tmp_path):
     gpu_install_button = window.findChild(QObject, "gpuInstallButton")
     dictation_mode_button = window.findChild(QObject, "dictationModeButton")
     edit_mode_button = window.findChild(QObject, "editModeButton")
+    dictation_llm_button = window.findChild(QQuickItem, "dictationLlmButton")
+    voice_input_card = window.findChild(QQuickItem, "voiceInputCard")
     llm_local_server_field = window.findChild(QObject, "llmLocalServerField")
     llm_local_model_field = window.findChild(QObject, "llmLocalModelField")
     llm_provider_combo = window.findChild(QObject, "llmProviderCombo")
@@ -141,6 +174,7 @@ def test_qml_customer_window_loads(tmp_path):
     confirm_edit_button = window.findChild(QObject, "confirmEditButton")
     cancel_edit_button = window.findChild(QObject, "cancelEditButton")
     retry_edit_button = window.findChild(QObject, "retryEditButton")
+    edit_preview_text = window.findChild(QObject, "editPreviewText")
     log_area = window.findChild(QObject, "logArea")
     primary_connection_button = window.findChild(QObject, "primaryConnectionButton")
     secondary_connection_button = window.findChild(QObject, "secondaryConnectionButton")
@@ -160,6 +194,48 @@ def test_qml_customer_window_loads(tmp_path):
     assert gpu_install_button.property("visible") is controller.gpuInstallerAvailable
     assert dictation_mode_button is not None
     assert edit_mode_button is not None
+    assert dictation_llm_button is not None
+    assert voice_input_card is not None
+    assert controller.llmEnabled is True
+    QMetaObject.invokeMethod(picker, "close")
+    QTest.qWait(300)
+    llm_button_center = dictation_llm_button.mapToScene(
+        QPointF(
+            dictation_llm_button.property("width") / 2,
+            dictation_llm_button.property("height") / 2,
+        )
+    )
+    QTest.mouseClick(
+        window,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        QPoint(round(llm_button_center.x()), round(llm_button_center.y())),
+    )
+    app.processEvents()
+    assert controller.llmEnabled is False
+    QTest.mouseClick(
+        window,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+        QPoint(round(llm_button_center.x()), round(llm_button_center.y())),
+    )
+    app.processEvents()
+    assert controller.llmEnabled is True
+    controller._set_status(
+        "设备已断开",
+        "Ringo audio stream failed: [WinError -2147023673] 操作已被用户取消。"
+        "设备已自动断开。请点击“重新连接设备”重试。" * 3,
+        "error",
+    )
+    app.processEvents()
+    primary_connection_item = window.findChild(
+        QQuickItem, "primaryConnectionButton"
+    )
+    card_top = voice_input_card.mapToScene(QPointF(0, 0)).y()
+    button_top = primary_connection_item.mapToScene(QPointF(0, 0)).y()
+    assert button_top + primary_connection_item.property("height") <= (
+        card_top + voice_input_card.property("height")
+    )
     assert llm_local_server_field is not None
     assert llm_provider_combo is not None
     assert llm_base_url_field is not None
@@ -171,6 +247,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert confirm_edit_button is not None
     assert cancel_edit_button is not None
     assert retry_edit_button is not None
+    assert edit_preview_text is not None
     assert log_area is not None
     assert log_area.property("font").pixelSize() == 14
     controller._apply_runtime_status("最新日志")
@@ -183,6 +260,7 @@ def test_qml_customer_window_loads(tmp_path):
     app.processEvents()
     assert controller.inputMode == "edit"
     assert edit_mode_button.property("checked") is True
+    assert dictation_llm_button.property("visible") is True
     controller.llmProvider = "volcengine"
     voice_settings = controller._voice_llm_settings()
     assert voice_settings.provider == "volcengine"
@@ -347,11 +425,22 @@ def test_qml_customer_window_loads(tmp_path):
     assert "输入 · 已注入" in controller.sessionHistoryText
     assert controller.transcriptFinal is True
 
+    controller.inputMode = "dictation"
+    controller.llmEnabled = False
+    app.processEvents()
+    assert "关" in dictation_llm_button.property("text")
+    submitted_before_direct_input = len(submitted)
+    controller._apply_runtime_update("Nano 已整理的文本。", True, "", 100)
+    assert len(submitted) == submitted_before_direct_input
+    assert desktop_target.injected[-1] == "Nano 已整理的文本。"
+    assert "直接采用 ASR 最终结果" in controller.logText
+
     controller.inputMode = "edit"
     controller._apply_runtime_update("改得更正式一点", True, "", 43)
     assert len(submitted) == 2
     edit_request = submitted[1]
     assert edit_request.mode == "edit"
+    assert edit_request.settings.enabled is True
     assert edit_request.target_text == "原始外部文本。"
     assert "修改目标已读取：测试编辑器（7 个字符）" in controller.logText
     assert "目标文本开始" not in controller.logText
@@ -368,22 +457,26 @@ def test_qml_customer_window_loads(tmp_path):
             used_llm=True,
             target_text=edit_request.target_text,
             model_output=(
-                '{"kind":"operations","operations":['
-                '{"op":"replace","target":"原始外部文本。",'
-                '"value":"第一次修改预览。","occurrence":"unique"}]}'
+                '{"original_text":"原始外部文本。",'
+                '"modified_text":"第一次修改预览。"}'
             ),
         )
     )
     assert "大模型修改原始返回" in controller.logText
-    assert '"target": "原始外部文本。"' in controller.logText
+    assert '"original_text": "原始外部文本。"' in controller.logText
     assert controller.reviewPending is True
+    assert "第一次修改预览" in controller.editPreviewHtml
+    assert "#FF646F" in controller.editPreviewHtml
     assert desktop_target.replaced == []
     app.processEvents()
     assert confirm_edit_button.property("visible") is True
+    assert edit_preview_text.property("visible") is True
+    assert edit_preview_text.property("text") == controller.editPreviewHtml
     controller._recognition_enabled = True
     controller._apply_push_to_talk(True)
     controller._apply_push_to_talk(False)
     assert controller.reviewPending is False
+    assert controller.editPreviewHtml == ""
     assert controller.interactionState == "retry"
     app.processEvents()
     assert confirm_edit_button.property("visible") is False
@@ -443,9 +536,8 @@ def test_qml_customer_window_loads(tmp_path):
             used_llm=True,
             target_text=clear_request.target_text,
             model_output=(
-                '{"kind":"operations","operations":['
-                '{"op":"delete","target":"正式的新文本。",'
-                '"occurrence":"unique"}]}'
+                '{"original_text":"正式的新文本。",'
+                '"modified_text":""}'
             ),
         )
     )
@@ -457,8 +549,8 @@ def test_qml_customer_window_loads(tmp_path):
     assert desktop_target.replaced[-1] == ""
     assert controller.reviewPending is False
 
-    # An unexplained empty response is still rejected instead of becoming a
-    # destructive clear operation.
+    # A validated full-text response can explicitly request a clear without
+    # carrying original_text, but it still requires confirmation.
     desktop_target.current_text = "不得意外清空。"
     controller._apply_runtime_update("润色一下", True, "", 47)
     unexplained_empty_request = submitted[5]
@@ -472,12 +564,14 @@ def test_qml_customer_window_loads(tmp_path):
             latency_s=0.2,
             used_llm=True,
             target_text=unexplained_empty_request.target_text,
-            model_output='{"kind":"rewrite","text":""}',
+            model_output='{"modified_text":""}',
         )
     )
+    assert controller.reviewPending is True
+    assert desktop_target.current_text == "不得意外清空。"
+    controller.cancelEdit()
     assert controller.reviewPending is False
     assert desktop_target.current_text == "不得意外清空。"
-    assert "大模型返回了空修改结果" in controller.logText
 
     submitted_before_oversized_capture = len(submitted)
     desktop_target.current_text = "页面内容" * (MAX_EDIT_TARGET_CHARS // 4 + 1)

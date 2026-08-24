@@ -14,6 +14,7 @@ from dataclasses import dataclass
 import os
 import time
 from typing import Protocol
+import uuid
 
 from .desktop_output import WindowsUnicodeTextInjector
 
@@ -23,6 +24,7 @@ class ClipboardBridge(Protocol):
 
     def snapshot(self) -> object: ...
     def restore(self, snapshot: object) -> None: ...
+    def set_text(self, text: str) -> None: ...
     def text(self) -> str: ...
 
 
@@ -85,6 +87,9 @@ class WindowsDesktopTextTarget:
         injector: WindowsUnicodeTextInjector | None = None,
         own_process_id: int | None = None,
         copy_timeout_s: float = 0.6,
+        copy_attempts: int = 3,
+        focus_settle_s: float = 0.08,
+        shortcut_settle_s: float = 0.03,
     ) -> None:
         if os.name != "nt":
             raise RuntimeError("跨应用文本目标目前仅支持 Windows")
@@ -92,6 +97,9 @@ class WindowsDesktopTextTarget:
         self._injector = injector or WindowsUnicodeTextInjector()
         self._own_process_id = int(own_process_id or os.getpid())
         self._copy_timeout_s = max(0.1, float(copy_timeout_s))
+        self._copy_attempts = max(1, int(copy_attempts))
+        self._focus_settle_s = max(0.02, float(focus_settle_s))
+        self._shortcut_settle_s = max(0.01, float(shortcut_settle_s))
         self._user32 = ctypes.WinDLL("user32", use_last_error=True)
         self._kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         self._configure_win32()
@@ -122,22 +130,49 @@ class WindowsDesktopTextTarget:
         return DesktopTargetRef(window, focus, title_buffer.value.strip())
 
     def capture_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
-        self._activate(target)
         clipboard_snapshot = self._clipboard.snapshot()
-        sequence_before = int(self._user32.GetClipboardSequenceNumber())
+        text = ""
         try:
-            self._hotkey(self.VK_CONTROL, self.VK_A)
-            self._hotkey(self.VK_CONTROL, self.VK_C)
-            deadline = time.monotonic() + self._copy_timeout_s
-            while time.monotonic() < deadline:
-                if int(self._user32.GetClipboardSequenceNumber()) != sequence_before:
+            for attempt in range(self._copy_attempts):
+                self._activate(target)
+                sentinel = f"__PROXIMIC_COPY_{uuid.uuid4().hex}__"
+                set_text = getattr(self._clipboard, "set_text", None)
+                if callable(set_text):
+                    set_text(sentinel)
+                    sequence_before = None
+                else:
+                    sequence_before = int(
+                        self._user32.GetClipboardSequenceNumber()
+                    )
+                self._hotkey(self.VK_CONTROL, self.VK_A)
+                time.sleep(self._shortcut_settle_s)
+                self._hotkey(self.VK_CONTROL, self.VK_C)
+                deadline = time.monotonic() + self._copy_timeout_s
+                while time.monotonic() < deadline:
+                    candidate = str(self._clipboard.text() or "")
+                    sequence_changed = (
+                        sequence_before is None
+                        or int(self._user32.GetClipboardSequenceNumber())
+                        != sequence_before
+                    )
+                    # Some controls clear the clipboard first and publish the
+                    # copied text asynchronously. Do not treat that transient
+                    # empty state as the final copy result.
+                    if candidate and candidate != sentinel and sequence_changed:
+                        text = candidate
+                        break
+                    time.sleep(0.01)
+                if text:
                     break
-                time.sleep(0.01)
-            text = str(self._clipboard.text() or "")
+                if attempt + 1 < self._copy_attempts:
+                    time.sleep(0.04)
         finally:
             self._clipboard.restore(clipboard_snapshot)
         if not text:
-            raise RuntimeError("当前文本框为空，或该控件不支持读取文本")
+            raise RuntimeError(
+                "多次复制后仍未读取到文本；当前文本框可能为空、尚未获得焦点，"
+                "或该控件不支持读取文本"
+            )
         return DesktopTextSnapshot(target=target, text=text)
 
     def inject(self, target: DesktopTargetRef, text: str) -> None:
@@ -156,6 +191,7 @@ class WindowsDesktopTextTarget:
         # controls often expose different clipboard representations after a
         # focus round trip even though their visible text did not change.
         self._hotkey(self.VK_CONTROL, self.VK_A)
+        time.sleep(getattr(self, "_shortcut_settle_s", 0.03))
         if replacement:
             self._injector.inject(replacement)
         else:
@@ -191,7 +227,10 @@ class WindowsDesktopTextTarget:
         finally:
             if attached:
                 self._user32.AttachThreadInput(current_thread, target_thread, False)
-        time.sleep(0.035)
+        # SetFocus and foreground activation are processed asynchronously by
+        # the target GUI thread. Sending the first Unicode event immediately
+        # can make some browsers/editors consume it during activation.
+        time.sleep(getattr(self, "_focus_settle_s", 0.08))
 
     def _hotkey(self, *virtual_keys: int) -> None:
         for key in virtual_keys:

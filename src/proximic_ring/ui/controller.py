@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, replace
 from datetime import datetime
+from difflib import SequenceMatcher
+from html import escape
 import json
 import os
 from pathlib import Path
@@ -67,22 +69,71 @@ class _EditReview:
     snapshot: DesktopTextSnapshot
 
 
-def _is_explicit_emptying_edit_plan(plan: object) -> bool:
-    """Return whether a validated operation plan explicitly removes text."""
+_EDIT_DIFF_COLOR = "#FF646F"
 
-    if not isinstance(plan, dict) or plan.get("kind") != "operations":
+
+def _edit_preview_html(original_text: str, modified_text: str) -> str:
+    """Render the proposed text, highlighting its changed parts for QML."""
+
+    def render_text(value: str) -> str:
+        return escape(value).replace("\n", "<br/>")
+
+    original = str(original_text or "")
+    modified = str(modified_text or "")
+    if not modified:
+        return (
+            f'<span style="color:{_EDIT_DIFF_COLOR};">'
+            "（修改后为空，将清空原文）</span>"
+        )
+
+    chunks: list[str] = []
+    deleted_parts: list[str] = []
+    matcher = SequenceMatcher(None, original, modified)
+    for (
+        tag,
+        original_start,
+        original_end,
+        modified_start,
+        modified_end,
+    ) in matcher.get_opcodes():
+        new_part = modified[modified_start:modified_end]
+        if tag == "equal":
+            chunks.append(render_text(new_part))
+        elif new_part:
+            chunks.append(
+                f'<span style="color:{_EDIT_DIFF_COLOR};">'
+                f"{render_text(new_part)}</span>"
+            )
+        if tag == "delete":
+            deleted_parts.append(original[original_start:original_end])
+
+    if deleted_parts:
+        deleted = "…".join(deleted_parts)
+        if len(deleted) > 120:
+            deleted = f"{deleted[:120]}…"
+        chunks.append(
+            f'<br/><span style="color:{_EDIT_DIFF_COLOR};">'
+            f"已删除：{render_text(deleted)}</span>"
+        )
+    return "".join(chunks)
+
+
+def _is_explicit_emptying_edit_response(
+    response: object,
+    expected_original: str,
+) -> bool:
+    """Return whether either validated edit contract clears all text."""
+
+    if not isinstance(response, dict) or response.get("modified_text") != "":
         return False
-    operations = plan.get("operations")
-    if not isinstance(operations, list):
-        return False
-    for operation in operations:
-        if not isinstance(operation, dict):
-            continue
-        if operation.get("op") == "delete":
-            return True
-        if operation.get("op") == "replace" and operation.get("value") == "":
-            return True
-    return False
+    # The full-text race contract intentionally has no original_text field.
+    if set(response) == {"modified_text"}:
+        return True
+    return (
+        isinstance(response.get("original_text"), str)
+        and response["original_text"] == str(expected_original or "")
+        and bool(response["original_text"])
+    )
 
 
 class AppController(QObject):
@@ -131,6 +182,7 @@ class AppController(QObject):
         self._status_detail = "配置设备后即可开始自动语音输入"
         self._status_kind = "idle"
         self._transcript_text = ""
+        self._edit_preview_html = ""
         self._transcript_final = False
         self._transcript_visible = False
         self._session_history_lines: list[str] = []
@@ -142,7 +194,9 @@ class AppController(QObject):
         self._input_mode = normalize_input_mode(
             str(self._settings.value("input/mode", INPUT_MODE_DICTATION))
         )
-        self._llm_enabled = self._bool_setting("llm/enabled", False)
+        # This switch controls only optional post-processing for dictation.
+        # Edit mode always needs the selected text model.
+        self._llm_enabled = self._bool_setting("llm/enabled", True)
         saved_llm_provider = str(self._settings.value("llm/provider", "")).strip()
         saved_llm_base_url = str(self._settings.value("llm/baseUrl", "")).strip()
         if saved_llm_provider:
@@ -495,6 +549,10 @@ class AppController(QObject):
     def transcriptText(self) -> str:
         return self._transcript_text
 
+    @Property(str, notify=transcriptChanged)
+    def editPreviewHtml(self) -> str:
+        return self._edit_preview_html
+
     @Property(bool, notify=transcriptChanged)
     def transcriptFinal(self) -> bool:
         return self._transcript_final
@@ -725,6 +783,14 @@ class AppController(QObject):
     @llmEnabled.setter
     def llmEnabled(self, value: bool) -> None:
         self._set_setting("_llm_enabled", bool(value), "llm/enabled")
+
+    @Slot()
+    def toggleDictationLlm(self) -> None:
+        """Toggle optional LLM post-processing for input mode only."""
+
+        self.llmEnabled = not self._llm_enabled
+        state = "开启" if self._llm_enabled else "关闭"
+        self._append_log(f"输入模式文本 LLM 整理已{state}")
 
     @Property(str, notify=settingsChanged)
     def llmProvider(self) -> str:
@@ -1500,14 +1566,30 @@ class AppController(QObject):
         target: DesktopTargetRef | None = None,
         snapshot: DesktopTextSnapshot | None = None,
     ) -> None:
+        normalized_mode = normalize_input_mode(mode)
+        if normalized_mode != INPUT_MODE_EDIT and not self._llm_enabled:
+            self._append_log("输入模式已跳过文本大模型，直接采用 ASR 最终结果")
+            self._commit_input_text(
+                TextProcessingResult(
+                    request_id=0,
+                    session_id=int(session_id),
+                    mode=normalized_mode,
+                    raw_text=text,
+                    final_text=text,
+                    latency_s=0.0,
+                    used_llm=False,
+                ),
+                target,
+            )
+            return
         self._text_request_id += 1
         request_id = self._text_request_id
         request = TextProcessingRequest(
             request_id=request_id,
             session_id=int(session_id),
-            mode=mode,
+            mode=normalized_mode,
             raw_text=text,
-            settings=self._voice_llm_settings(),
+            settings=self._voice_llm_settings(normalized_mode),
             target_text=target_text,
         )
         was_processing = bool(self._pending_text_requests)
@@ -1518,7 +1600,7 @@ class AppController(QObject):
         )
         if not was_processing:
             self.textProcessingChanged.emit()
-        label = "修改" if mode == INPUT_MODE_EDIT else "输入"
+        label = "修改" if normalized_mode == INPUT_MODE_EDIT else "输入"
         self._transcript_text = f"{label}处理中…\n{text}"
         self._transcript_final = False
         self._transcript_visible = True
@@ -1545,16 +1627,14 @@ class AppController(QObject):
         if self._quitting or self._status_kind == "stopping":
             return
         label = "修改" if result.mode == INPUT_MODE_EDIT else "输入"
-        edit_plan_kind = ""
-        parsed_edit_plan: object = None
+        parsed_edit_response: object = None
         if result.model_output:
             model_output = result.model_output.strip()
             if result.mode == INPUT_MODE_EDIT:
                 try:
                     parsed_output = json.loads(model_output)
                     if isinstance(parsed_output, dict):
-                        parsed_edit_plan = parsed_output
-                        edit_plan_kind = str(parsed_output.get("kind") or "").lower()
+                        parsed_edit_response = parsed_output
                     model_output = json.dumps(
                         parsed_output,
                         ensure_ascii=False,
@@ -1576,9 +1656,10 @@ class AppController(QObject):
                 return
         else:
             if result.mode == INPUT_MODE_EDIT:
+                unchanged = result.final_text == result.target_text
                 outcome = (
-                    "noop，目标保持不变"
-                    if edit_plan_kind == "noop"
+                    "目标保持不变"
+                    if unchanged
                     else f"已生成候选（{len(result.final_text)} 个字符）"
                 )
                 self._append_log(
@@ -1593,7 +1674,7 @@ class AppController(QObject):
             if context.snapshot is None:
                 self._reject_edit_request("修改目标快照已经失效")
                 return
-            if edit_plan_kind == "noop":
+            if result.final_text == result.target_text:
                 self._retry_snapshot = context.snapshot
                 self._reject_edit_request(
                     "大模型未找到可可靠执行的修改。请确认说话前光标位于"
@@ -1603,7 +1684,10 @@ class AppController(QObject):
             self._begin_edit_review(
                 result,
                 context.snapshot,
-                allow_empty=_is_explicit_emptying_edit_plan(parsed_edit_plan),
+                allow_empty=_is_explicit_emptying_edit_response(
+                    parsed_edit_response,
+                    result.target_text,
+                ),
             )
             return
         self._commit_input_text(result, context.target)
@@ -1644,7 +1728,7 @@ class AppController(QObject):
         self._record_history(
             f"输入 · {status}",
             raw=result.raw_text,
-            result=final_text,
+            result=final_text if result.used_llm else "",
             detail=detail,
         )
         if self._recognition_enabled:
@@ -1673,12 +1757,15 @@ class AppController(QObject):
             proposed_text=proposed,
             snapshot=snapshot,
         )
-        empty_warning = "\n⚠ 确认后将清空目标文本框\n" if not proposed else "\n"
-        self._transcript_text = (
-            f"修改指令：{result.raw_text}\n"
-            f"{empty_warning}\n"
-            "Enter 确认  ·  Esc 取消  ·  按住右 Alt 重说"
+        self._edit_preview_html = _edit_preview_html(
+            snapshot.text.strip(),
+            proposed,
         )
+        review_lines = [f"修改指令：{result.raw_text}"]
+        if not proposed:
+            review_lines.append("⚠ 确认后将清空目标文本框")
+        review_lines.append("Enter 确认  ·  Esc 取消  ·  按住右 Alt 重说")
+        self._transcript_text = "\n".join(review_lines)
         self._transcript_final = True
         self._transcript_visible = True
         self._hide_overlay_timer.stop()
@@ -1749,6 +1836,7 @@ class AppController(QObject):
             return
         self._retry_snapshot = review.snapshot
         self._edit_review = None
+        self._edit_preview_html = ""
         self.inputMode = INPUT_MODE_EDIT
         self._transcript_text = "请重新说修改要求\n原文本保持不变"
         self._transcript_final = False
@@ -1781,6 +1869,7 @@ class AppController(QObject):
 
     def _finish_edit_review(self, *, message: str, state: str, hide_ms: int) -> None:
         self._edit_review = None
+        self._edit_preview_html = ""
         self._retry_snapshot = None
         self._transcript_text = message
         self._transcript_final = True
@@ -1856,6 +1945,7 @@ class AppController(QObject):
             except BaseException:
                 pass
             self._edit_review = None
+            self._edit_preview_html = ""
             self._retry_snapshot = None
             self._set_interaction_state("idle")
             self.interactionChanged.emit()
@@ -1991,10 +2081,17 @@ class AppController(QObject):
             local_reasoning=DEFAULT_LOCAL_REASONING,
         )
 
-    def _voice_llm_settings(self) -> LLMSettings:
-        """Use the provider selected by the user for dictation and edits."""
+    def _voice_llm_settings(
+        self,
+        mode: str = INPUT_MODE_EDIT,
+    ) -> LLMSettings:
+        """Use optional post-processing for input and mandatory LLM for edits."""
 
-        return replace(self._llm_settings(), enabled=True)
+        enabled = (
+            normalize_input_mode(mode) == INPUT_MODE_EDIT
+            or self._llm_enabled
+        )
+        return replace(self._llm_settings(), enabled=enabled)
 
     @staticmethod
     def _path_or_none(value: str) -> Path | None:

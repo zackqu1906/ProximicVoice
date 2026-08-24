@@ -18,8 +18,8 @@ ProxiMic Voice 是面向 Ringo 可穿戴设备的近场语音输入与语音编�
 - 实时显示 ASR partial，结束后使用 final 结果进入文本处理。
 - 提供“输入到光标”和“修改当前文本”两种工作模式。
 - 使用本地 Qwen3-4B-Instruct-2507 或火山方舟上的豆包/DeepSeek 处理文本。
-- 本地与在线大模型复用同一套编辑 prompt、tool schema 和确定性编辑执行器。
-- 支持删除、替换、插入、整段改写和 `noop`；模型异常不会直接覆盖原文。
+- 修改时向所选模型并行发送片段替换和完整文本两套 prompt，采用最先通过校验的结果。
+- 片段协议由 Python 完成单处或全量匹配替换；完整文本协议直接生成完整候选。
 - 修改结果先等待确认，`Enter` 应用、`Esc` 取消、右 `Alt` 重新说。
 - 明确的“删除全文”会提示即将清空文本框，确认后才执行。
 - Windows 使用 Unicode 键盘注入，不用剪贴板写入最终文本。
@@ -43,20 +43,21 @@ ProxiMic Stage1 + Stage2
 ASR partial / final
         │
         ├── 输入到光标
-        │      ASR final → 听写 prompt → LLM → Unicode 注入
+        │      ASR final →（可选：听写 prompt → LLM）→ Unicode 注入
         │
         └── 修改当前文本
                锁定外部文本框并读取全文
                → ASR 修改指令
-               → edit prompt + tool schema
-               → function arguments
-               → 确定性编辑执行器
+               → 并行竞速两套 edit prompt + tool schema
+               ├── 片段：original_text + modified_text → Python 替换
+               └── 全文：modified_text → 完整候选
+               → 采用最先返回且通过校验的结果
                → Enter / Esc 确认
                → 写回原文本框
 ```
 
 Ring、ProxiMic、ASR、LLM 和桌面写入彼此解耦。更换 ASR 或 LLM 不需要修改检测模型；
-模型生成的是编辑计划，真正的删除、替换和插入由 Python 执行器完成。
+修改链路会让同一个已选模型并行尝试片段和全文协议，谁先返回有效结果就使用谁的候选。
 
 ## 当前边界
 
@@ -123,7 +124,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 4. 点击“开启语音识别”。这会启动自动近场监听，不会断开或重连 Ring。
 5. 把光标放进其他应用的文本框。
 6. 使用 `Alt+1` 选择“输入到光标”，或使用 `Alt+2` 选择“修改当前文本”。
-7. 按住右 `Alt` 说话，松开后等待 ASR 和文本处理完成。
+7. 输入模式可通过按钮选择是否再由文本 LLM 整理；按住右 `Alt` 说话，松开后等待处理完成。
 8. 修改模式出现确认状态后，按 `Enter` 应用或按 `Esc` 取消。
 
 “暂停语音识别”只暂停 ProxiMic 和 ASR，Ring 仍保持连接；“断开设备”才会释放麦克风和 BLE。
@@ -132,35 +133,49 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 ### 输入到光标
 
-ASR final 会交给所选文本大模型进行听写整理，再注入说话开始时锁定的外部输入框。
-这条链路适合去掉口语填充、整理标点和输出较干净的文本。
+输入模式默认会把 ASR final 交给所选文本大模型进行听写整理，再注入说话开始时锁定的外部输入框。
+点击“输入模式 LLM 整理”按钮将其关闭后，ASR final 会直接注入，不再进入文本模型队列；这尤其适合
+本身已经具备文本生成与整理能力的 Fun-ASR-Nano。
 
 如果大模型不可用，输入链路会保留 ASR 原文作为回退，不让语音输入完全失效。
-需要做纯 ASR 准确率评测时，应使用 CLI 或独立评测工具，避免把 LLM 输出当成 ASR 原始结果。
+需要观察纯 ASR 输出时也可以直接关闭该按钮。修改模式不受此按钮影响，始终使用文本 LLM。
 
 ### 修改当前文本
 
 程序会读取当前外部文本框的完整内容，最多接受 5000 个字符，再把下一段语音作为修改要求。
 
-结构化编辑计划支持：
+桌面应用会并行竞速以下两套协议。片段替换协议为：
 
-| 类型 | 用途 |
-| --- | --- |
-| `delete` | 删除指定文本，可删除全文 |
-| `replace` | 替换指定位置或指定出现次数 |
-| `insert` | 在开头、结尾或目标前后插入 |
-| `rewrite` | 润色、翻译、扩写、重排等全文生成任务 |
-| `noop` | 无法可靠执行时保持原文 |
+```json
+{
+  "original_text": "需要修改的位置附近文本",
+  "modified_text": "修改后的对应片段"
+}
+```
+
+`original_text` 必须逐字来自待修改文本。模型希望修改全部重复项时返回重复的短片段，Python
+会替换所有匹配；只修改其中一处时，模型加入足够上下文使片段唯一。整体改写或相距很远的
+多处修改可以使用全文片段。
+
+完整文本协议为：
+
+```json
+{
+  "modified_text": "修改后的完整文本"
+}
+```
+
+完整文本协议不需要 `original_text`，因为其结果直接作为完整候选，不执行片段定位。
 
 安全策略：
 
-- 本地 Qwen 编辑请求必须真正调用 `submit_text_edit_plan`，普通 content JSON 不算成功。
-- function arguments 以 `dict` 直接交给编辑执行器；字符串参数仍兼容旧的 JSON 解析流程。
-- 删除、替换和插入不会由模型直接拼接全文。
-- 目标缺失或出现多次但没有指定位置时，执行器拒绝猜测。
+- 所有编辑请求必须真正调用 `submit_text_edit`，普通 content JSON 不算成功。
+- 默认 function arguments 可以是 `dict` 或 JSON 字符串，但只能包含片段协议的两个字段。
+- `original_text` 不存在时校验器拒绝结果并自动重试一次；出现多次时视为模型选择替换全部。
 - 任意编辑失败会自动重试一次，并把每次 arguments 记录到测试输出。
+- 两套协议同时请求；一路失败时继续等待另一路，两路都失败才报告本次修改失败。
 - 候选生成后不会立刻覆盖外部文本，必须由用户确认。
-- 只有结构化删除明确得到的空候选可以进入“清空文本框”确认；异常空返回仍会被拒绝。
+- 片段协议只有选中完整原文并返回空片段时才会清空；全文协议返回空 `modified_text` 时也会进入清空确认。
 
 ## 文本大模型
 
@@ -170,10 +185,12 @@ ASR final 会交给所选文本大模型进行听写整理，再注入说话开�
 | --- | --- | --- | --- |
 | 本地 | `Qwen3-4B-Instruct-2507` Q4_K_M | llama.cpp `/chat/completions` | Instruct 模式、thinking 关闭、强制本地 tool calling |
 | 火山方舟 | `doubao-seed-2-0-lite-260215` | 方舟 `/responses` | 显式关闭 thinking，支持 function tools |
-| 火山方舟 | `deepseek-v4-flash-260425` | 方舟 `/responses` | 与豆包复用相同 prompt、schema 和执行器 |
+| 火山方舟 | `deepseek-v4-flash-260425` | 方舟 `/responses` | 与豆包复用相同 prompt、schema 和校验器 |
 
 本地模型在 UI 首帧出现后自动启动并预热固定 prompt。模型加载完成只表示权重已进入内存，
 实际生成速度仍取决于 CPU/GPU、输出 token 数和是否触发重试。
+本地 llama-server 使用两个并发 slot 运行竞速请求；云端会同时发出两次 API 请求，因此编辑模式
+通常会消耗两次请求的推理资源，即使较慢一路的结果最终被忽略。
 
 火山方舟 API Key 只从环境变量读取，不写入 QSettings：
 
@@ -325,14 +342,15 @@ CLI 入口：
 
 ## 独立测试 LLM
 
-不连接 Ring 和 ASR，也可以测试与桌面应用完全相同的 prompt、tool schema 和编辑执行器：
+不连接 Ring 和 ASR，也可以测试片段替换与完整文本两套 prompt、tool schema 和结果校验：
 
 ```powershell
 .\.runtime\venv\Scripts\python.exe .\tools\test_llm.py
 ```
 
-交互模式可选择本地 Qwen、豆包、DeepSeek 或三模型同时比较。每次失败都会自动重试一次，
-所有尝试的 arguments 都会显示，最后集中列出三个模型的结果和耗时。
+交互模式可选择本地 Qwen、豆包、DeepSeek 或三模型同时比较。编辑测试会让每个模型并行运行
+片段替换和完整文本协议，标出竞速胜者；选择三模型时共运行 6 次。所有 arguments、最终文本
+和耗时都会集中展示。
 
 单次三模型编辑比较：
 
@@ -380,7 +398,7 @@ src/proximic_ring/
 ├── audio/                 Ring、WAV 和系统麦克风输入
 ├── asr/                   会话控制、worker 和可插拔 ASR 后端
 ├── assets/                ProxiMic 模型、DSP 参数和本地 LLM 清单
-├── text_processing/       prompts、tool schema、LLM 调用和编辑执行器
+├── text_processing/       prompts、tool schema、LLM 调用和编辑结果校验
 ├── ui/                    PySide6 控制器和 Qt Quick/QML 界面
 ├── detector.py            ProxiMic 两阶段检测
 ├── desktop_target.py      Windows 外部文本读取与替换
@@ -407,7 +425,7 @@ scripts/                   安装、GPU 切换和启动脚本
 
 - PCM 解码、ProxiMic 时序和会话边界。
 - ASR 解耦、缓存、流式更新与火山 WebSocket 协议。
-- 本地 LLM 安装清单、tool calling 和编辑执行器。
+- 本地 LLM 安装清单、tool calling、片段替换与完整文本结果校验。
 - Windows 文本注入、目标替换和合法清空。
 - UI 设置、热词和完整听写/修改确认流程。
 
@@ -430,7 +448,7 @@ SDK 的 BLE 建链只完成了第一步。UI 必须继续验证 NUS 服务并收
 
 ### 为什么修改没有立即写回？
 
-这是安全设计。LLM 和编辑执行器先生成候选，用户确认后才重新激活原文本框并覆盖全文。
+这是安全设计。LLM 先生成完整候选，程序校验后等待用户确认，才重新激活原文本框并覆盖全文。
 
 ### 为什么“删除全文”得到 0 个字符？
 
