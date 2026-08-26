@@ -635,17 +635,17 @@ ApplicationWindow {
                         id: audioEncodingCombo
                         objectName: "audioEncodingCombo"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        model: ["PCM（推荐，匹配近点模型）", "ADPCM（低带宽）", "Opus（需额外运行库）"]
+                        model: ["PCM（原始，高带宽）", "ADPCM（低带宽）", "Opus（推荐，连接更稳定）"]
                         currentIndex: Math.max(0, ["pcm", "adpcm", "opus"].indexOf(appController.audioEncoding))
                         onActivated: appController.audioEncoding = ["pcm", "adpcm", "opus"][currentIndex]
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         text: appController.audioEncoding === "pcm"
-                              ? "默认使用原始 PCM，保持与近点模型训练和阈值校准时的波形一致。"
+                              ? "原始 PCM 带宽最高，BLE 链路繁忙时更容易出现音频停流。"
                               : appController.audioEncoding === "adpcm"
                                 ? "BLE 带宽较低，但有损压缩可能改变近点模型的 Stage2 分数分布。"
-                                : "带宽最低，但需要系统提供可用的 libopus 运行库。"
+                                : "默认使用 Opus 降低 BLE 带宽；SDK 解码后仍向模型提供 16 kHz PCM。"
                         color: root.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
@@ -719,6 +719,25 @@ ApplicationWindow {
                         text: appController.asrBackend === "volcengine"
                               ? "火山引擎是云端识别，不使用本机 CPU 或 GPU。"
                               : appController.gpuStatusText
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
+                    Switch {
+                        id: asrInputGainSwitch
+                        objectName: "asrInputGainSwitch"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "ASR 输入增强（+24 dB）"
+                        checked: appController.asrInputGainEnabled
+                        onToggled: appController.asrInputGainEnabled = checked
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "仅放大送入 ASR 的音频副本，不影响 Ring 原始录音和 ProxiMic 检测；重新连接后生效。"
                         color: root.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap

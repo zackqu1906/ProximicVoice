@@ -11,15 +11,23 @@ from ring_python_sdk.core.constants import (
     CMD_PPG,
     PPG_PACKET_HRV_LEN,
     PPG_PACKET_LEN,
+    PPG_RAW_BYTES_PER_VALUE,
+    PPG_RAW_CH_GREEN,
+    PPG_RAW_CH_IR,
+    PPG_RAW_CH_RED,
+    PPG_RAW_HEADER_LEN,
     PPG_WEAR_BYTES_PER_SAMPLE,
     PPG_WEAR_FLAG_CALIBRATED,
     PPG_WEAR_FLAG_SAR_VALID,
     PPG_WEAR_HEADER_LEN,
     SUBCMD_PPG_PACKET,
+    SUBCMD_PPG_RAW_PACKET,
     SUBCMD_PPG_WEAR_CALIBRATION_STATUS,
     SUBCMD_PPG_WEAR_PACKET,
 )
-from ring_python_sdk.ppg.io import PpgCsvWriter, WearCsvWriter
+from ring_python_sdk.ppg.io import PpgCsvWriter, PpgRawCsvWriter, WearCsvWriter
+
+_PPG_MODE_NAMES = {0: "hrs", 1: "spo2", 2: "wear"}
 
 
 def format_ppg_sample_line(
@@ -64,7 +72,7 @@ def format_ppg_vitals_short(mode: str, hr: int, spo2: int, wear: int) -> str:
 
 @dataclass
 class PpgSample:
-    """One PPG vitals or wear packet for real-time callbacks."""
+    """One PPG vitals, wear, or raw optical packet for real-time callbacks."""
 
     mode: str
     seq: int
@@ -76,6 +84,9 @@ class PpgSample:
     hrv_stress: int = 0
     hrv_rri_num: int = 0
     ir_samples: tuple[int, ...] | None = None
+    green_samples: tuple[int, ...] | None = None
+    red_samples: tuple[int, ...] | None = None
+    channels_mask: int = 0
 
 
 @dataclass
@@ -90,6 +101,7 @@ class PpgProcessor:
     csv_path: Path
     print_samples: bool = True
     wear_csv_path: Path | None = None
+    raw_csv_path: Path | None = None
     mode: str = "hrs"
     log: Callable[[str], None] | None = None
     on_sample: Callable[[PpgSample], None] | None = None
@@ -99,8 +111,10 @@ class PpgProcessor:
     latest_wear: int | None = field(default=None, repr=False)
     _writer: PpgCsvWriter | None = field(default=None, repr=False)
     _wear_writer: WearCsvWriter | None = field(default=None, repr=False)
+    _raw_writer: PpgRawCsvWriter | None = field(default=None, repr=False)
     _last_seq: int | None = field(default=None, repr=False)
     _wear_sample_index: int = field(default=0, repr=False)
+    _raw_sample_index: int = field(default=0, repr=False)
 
     def __post_init__(self) -> None:
         if self.wear_csv_path is None:
@@ -113,6 +127,9 @@ class PpgProcessor:
         if self._wear_writer is not None:
             self._wear_writer.close()
             self._wear_writer = None
+        if self._raw_writer is not None:
+            self._raw_writer.close()
+            self._raw_writer = None
 
     def _emit(self, line: str) -> None:
         if self.log is not None:
@@ -127,6 +144,9 @@ class PpgProcessor:
             return
         if data[1] == SUBCMD_PPG_WEAR_PACKET:
             self._handle_wear(data)
+            return
+        if data[1] == SUBCMD_PPG_RAW_PACKET:
+            self._handle_raw(data)
             return
         if data[1] == SUBCMD_PPG_WEAR_CALIBRATION_STATUS:
             if self.print_samples and len(data) >= 14:
@@ -237,4 +257,84 @@ class PpgProcessor:
             self._emit(
                 f"ppg wear pkt_seq={seq} status={wear} ir={ir_samples} "
                 f"sar_diff={sar_diff} calibrated={calibrated} valid={sar_valid}"
+            )
+
+    def _handle_raw(self, data: bytearray) -> None:
+        if len(data) < PPG_RAW_HEADER_LEN:
+            return
+        seq, mode_id, flags, count, channels_mask, uptime_ms = struct.unpack_from(
+            "<HBBBBI", data, 2
+        )
+        del flags
+        n_ch = (
+            int(bool(channels_mask & PPG_RAW_CH_GREEN))
+            + int(bool(channels_mask & PPG_RAW_CH_RED))
+            + int(bool(channels_mask & PPG_RAW_CH_IR))
+        )
+        if count == 0 or n_ch == 0:
+            return
+        expected = PPG_RAW_HEADER_LEN + count * n_ch * PPG_RAW_BYTES_PER_VALUE
+        if len(data) < expected:
+            return
+
+        values = struct.unpack_from(f"<{count * n_ch}i", data, PPG_RAW_HEADER_LEN)
+        green: list[int] = []
+        red: list[int] = []
+        ir: list[int] = []
+        idx = 0
+        for _ in range(count):
+            if channels_mask & PPG_RAW_CH_GREEN:
+                green.append(values[idx])
+                idx += 1
+            if channels_mask & PPG_RAW_CH_RED:
+                red.append(values[idx])
+                idx += 1
+            if channels_mask & PPG_RAW_CH_IR:
+                ir.append(values[idx])
+                idx += 1
+
+        if self._last_seq is not None:
+            expected_seq = (self._last_seq + 1) & 0xFFFF
+            if seq != expected_seq:
+                self.stats.dropped_packet_count += (seq - expected_seq) & 0xFFFF
+        self._last_seq = seq
+        self.stats.packet_count += 1
+        self.stats.sample_count += count
+
+        mode_name = _PPG_MODE_NAMES.get(mode_id, self.mode)
+        green_t = tuple(green) if green else None
+        red_t = tuple(red) if red else None
+        ir_t = tuple(ir) if ir else None
+
+        if self.raw_csv_path is not None:
+            if self._raw_writer is None:
+                self._raw_writer = PpgRawCsvWriter(self.raw_csv_path)
+            self._raw_writer.write_rows(
+                seq,
+                mode_name,
+                channels_mask,
+                green,
+                red,
+                ir,
+                uptime_ms,
+                self._raw_sample_index,
+            )
+            self._raw_sample_index += count
+
+        if self.on_sample is not None:
+            self.on_sample(
+                PpgSample(
+                    mode=mode_name,
+                    seq=seq,
+                    uptime_ms=uptime_ms,
+                    green_samples=green_t,
+                    red_samples=red_t,
+                    ir_samples=ir_t,
+                    channels_mask=channels_mask,
+                )
+            )
+        if self.print_samples:
+            self._emit(
+                f"ppg raw mode={mode_name} seq={seq} n={count} "
+                f"mask=0x{channels_mask:02x} green={green_t} red={red_t} ir={ir_t}"
             )

@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+import re
 import sys
 
 import pytest
@@ -158,6 +159,7 @@ def test_qml_customer_window_loads(tmp_path):
     audio_encoding_combo = window.findChild(QObject, "audioEncodingCombo")
     device_combo = window.findChild(QObject, "asrDeviceCombo")
     asr_hotwords_field = window.findChild(QObject, "asrHotwordsField")
+    asr_input_gain_switch = window.findChild(QObject, "asrInputGainSwitch")
     gpu_install_button = window.findChild(QObject, "gpuInstallButton")
     dictation_mode_button = window.findChild(QObject, "dictationModeButton")
     edit_mode_button = window.findChild(QObject, "editModeButton")
@@ -182,7 +184,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert device_list is not None and device_list.property("count") == 1
     assert search_field is not None and search_field.property("text") == "Ringo"
     assert audio_encoding_combo is not None
-    assert controller.audioEncoding == "pcm"
+    assert controller.audioEncoding == "opus"
     controller.audioEncoding = "pcm"
     assert controller.audioEncoding == "pcm"
     controller.audioEncoding = "adpcm"
@@ -190,6 +192,9 @@ def test_qml_customer_window_loads(tmp_path):
     assert device_combo is not None
     assert device_combo.property("count") == len(controller.computeDevices)
     assert asr_hotwords_field is not None
+    assert asr_input_gain_switch is not None
+    assert controller.asrInputGainEnabled is True
+    assert asr_input_gain_switch.property("checked") is True
     assert gpu_install_button is not None
     assert gpu_install_button.property("visible") is controller.gpuInstallerAvailable
     assert dictation_mode_button is not None
@@ -252,6 +257,10 @@ def test_qml_customer_window_loads(tmp_path):
     assert log_area.property("font").pixelSize() == 14
     controller._apply_runtime_status("最新日志")
     app.processEvents()
+    assert re.search(
+        r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] 最新日志",
+        controller.logText,
+    )
     assert log_area.property("cursorPosition") == len(log_area.property("text"))
     assert llm_local_model_field is not None
     assert controller.inputMode == "dictation"
@@ -287,8 +296,12 @@ def test_qml_customer_window_loads(tmp_path):
     controller._start_selected_device = lambda: started.append(controller.selector)
     controller.connectToDevice("RING-ID", "Ringo Test")
     assert controller._selected_device is selected_handle
-    assert controller._runtime_settings().encoding == "adpcm"
-    assert controller._runtime_settings().desktop_output is False
+    runtime_settings = controller._runtime_settings()
+    assert runtime_settings.encoding == "adpcm"
+    assert runtime_settings.desktop_output is False
+    assert runtime_settings.ring_device is (
+        None if sys.platform == "win32" else selected_handle
+    )
     assert controller.canReconnect is True
     assert started == []
     controller._apply_scan_finished([], "")
@@ -310,6 +323,15 @@ def test_qml_customer_window_loads(tmp_path):
 
     settings_recorder = SettingsRecorder()
     controller._settings = settings_recorder
+    controller.asrInputGainEnabled = False
+    app.processEvents()
+    assert controller.asrInputGainEnabled is False
+    assert asr_input_gain_switch.property("checked") is False
+    assert controller._runtime_settings().asr_input_gain_enabled is False
+    assert settings_recorder.values["asr/inputGain24DbEnabled"] is False
+    controller.asrInputGainEnabled = True
+    app.processEvents()
+    assert asr_input_gain_switch.property("checked") is True
     controller.asrHotwords = " ProxiMic，豆包\n瑞幸,豆包；张三 "
     app.processEvents()
     assert controller.asrHotwords == "ProxiMic\n豆包\n瑞幸\n张三"
@@ -317,6 +339,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert asr_hotwords_field.property("visible") is True
     runtime_settings = controller._runtime_settings()
     assert runtime_settings.funasr_nano_hotwords == controller.asrHotwords
+    assert runtime_settings.asr_input_gain_enabled is True
     assert runtime_settings.to_namespace().asr_option == [
         "funasr_nano.hotwords=ProxiMic,豆包,瑞幸,张三"
     ]

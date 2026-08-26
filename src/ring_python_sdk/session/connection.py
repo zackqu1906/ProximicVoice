@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 
-from bleak import BleakClient, BleakError
+from bleak import BleakClient, BleakError, BleakScanner
 
 from ring_python_sdk.ble import (
     ensure_nus_characteristics,
@@ -19,10 +20,16 @@ from ring_python_sdk.ble import (
     send_mac_get,
     send_raise_to_wake_get,
     send_raise_to_wake_set,
+    send_reboot,
     send_shipmode_enter,
+    send_temperature_get,
+    send_time_get,
+    send_time_set,
 )
 from ring_python_sdk.core.constants import BATTERY_POLL_INTERVAL_S
 from ring_python_sdk.core.data_paths import MODE_SESSION, new_session_dir
+from ring_python_sdk.core.temperature import TemperatureStatus
+from ring_python_sdk.core.time_sync import TimeStatus
 
 
 class ConnectionMixin:
@@ -65,13 +72,33 @@ class ConnectionMixin:
 
     async def connect_target(self, selector: str) -> bool:
         """Switch to one ring (disconnects current). selector: index / name / address."""
+        sel = selector.strip()
+        # The Windows product UI already has an exact MAC address.  Stop as
+        # soon as that advertiser is seen instead of collecting every nearby
+        # BLE device for the full general-purpose scan timeout.  Scan and
+        # connect still happen in this same asyncio/WinRT thread.
+        if not self.scanned and ":" in sel:
+            targeted_timeout = min(self.timeout_s, 3.0)
+            print(
+                f"Scanning for selected device {sel} "
+                f"(up to {targeted_timeout:.1f}s) ..."
+            )
+            target = await BleakScanner.find_device_by_address(
+                sel, timeout=targeted_timeout
+            )
+            if target is None:
+                print(f"No match for {selector!r}. Try scanning again.")
+                return False
+            self.scanned = [target]
+            print(f"Selected device found: {target.name!r} ({target.address})")
+            return await self._connect_device(target, new_session=True)
+
         if not self.scanned:
             await self.scan(all_devices=True)
         if not self.scanned:
             return False
 
         target = None
-        sel = selector.strip()
         if sel.isdigit():
             idx = int(sel)
             if idx < 0 or idx >= len(self.scanned):
@@ -86,8 +113,8 @@ class ConnectionMixin:
                     target = dev
                     break
             if target is None:
-                # Try a fresh unfiltered scan for the selected opaque identifier
-                # or name.  macOS identifiers are UUIDs rather than MAC addresses.
+                # Refresh without a name filter. macOS identifiers are opaque
+                # UUID strings and custom firmware may use a non-Ringo name.
                 matches = [
                     item.device for item in await scan_all_devices(self.timeout_s)
                 ]
@@ -129,17 +156,26 @@ class ConnectionMixin:
                 print(f"Session dir: {self.session_dir}")
 
             print(f"Connecting {self.target_name!r} ({self.target_address}) ...")
-            self.client = BleakClient(
-                target,
-                timeout=self.timeout_s,
-                disconnected_callback=self._on_ble_disconnected,
-            )
-            try:
-                await self.client.connect()
-            except Exception as exc:
-                print(f"Connect failed: {exc}")
-                self.client = None
-                return False
+            # Windows occasionally returns a transient WinRT E_FAIL while
+            # opening GATT immediately after discovery. Retry this user-
+            # initiated handshake once; this is not background auto-reconnect.
+            for attempt in range(2):
+                self.client = BleakClient(
+                    target,
+                    timeout=self.timeout_s,
+                    disconnected_callback=self._on_ble_disconnected,
+                )
+                try:
+                    await self.client.connect()
+                    break
+                except Exception as exc:
+                    self.client = None
+                    if attempt == 0:
+                        print(f"Connect attempt failed: {exc}; retrying once ...")
+                        await asyncio.sleep(0.75)
+                        continue
+                    print(f"Connect failed after retry: {exc}")
+                    return False
 
             if not self.client.is_connected:
                 print("Connect failed.")
@@ -158,6 +194,7 @@ class ConnectionMixin:
             await self.client.start_notify(self.tx_uuid, self._demux)
             self.reconnecting = False
             self._was_connected = True
+            await self.sync_time(timeout_s=min(self.timeout_s, 2.0))
             await self._ensure_button_capture()
             await self._ensure_raise_to_wake_capture()
             await self._start_battery_poll()
@@ -196,6 +233,7 @@ class ConnectionMixin:
                 await self.client.start_notify(self.tx_uuid, self._demux)
                 self.reconnecting = False
                 self._was_connected = True
+                await self.sync_time(timeout_s=min(self.timeout_s, 2.0))
                 await self._ensure_button_capture()
                 await self._ensure_raise_to_wake_capture()
                 await self._start_battery_poll()
@@ -235,6 +273,7 @@ class ConnectionMixin:
                         await self.client.start_notify(self.tx_uuid, self._demux)
                         self.reconnecting = False
                         self._was_connected = True
+                        await self.sync_time(timeout_s=min(self.timeout_s, 2.0))
                         await self._ensure_button_capture()
                         await self._ensure_raise_to_wake_capture()
                         await self._start_battery_poll()
@@ -299,6 +338,7 @@ class ConnectionMixin:
         self.imu_active = False
         self.ppg_active = False
         self.ppg_mode = ""
+        self.ppg_send_raw = False
         self.swipe_active = False
         self.button_active = False
         self.raise_to_wake_active = False
@@ -312,6 +352,65 @@ class ConnectionMixin:
             await send_battery_get(self.client, self.rx_uuid)
         except Exception as exc:
             print(f"battery query failed: {exc}")
+
+    async def query_temperature(
+        self, timeout_s: float = 2.0
+    ) -> TemperatureStatus | None:
+        """Read one GXT310W0 sample and return its STATUS, or ``None`` on timeout."""
+        if self.client is None or not self.client.is_connected or not self.rx_uuid:
+            return None
+        self._temperature_event.clear()
+        self.temperature_status = None
+        self.temperature_mc = None
+        self.temperature_c = None
+        try:
+            await send_temperature_get(self.client, self.rx_uuid)
+            await asyncio.wait_for(self._temperature_event.wait(), timeout_s)
+        except TimeoutError:
+            print("temperature query timed out")
+            return None
+        except Exception as exc:
+            print(f"temperature query failed: {exc}")
+            return None
+        return self.temperature_status
+
+    async def sync_time(
+        self, unix_ms: int | None = None, timeout_s: float = 2.0
+    ) -> TimeStatus | None:
+        """Set UTC milliseconds and return the ring's resulting TIME STATUS."""
+        if self.client is None or not self.client.is_connected or not self.rx_uuid:
+            return None
+        if unix_ms is None:
+            unix_ms = time.time_ns() // 1_000_000
+        self._time_event.clear()
+        self.time_status = None
+        try:
+            await send_time_set(self.client, self.rx_uuid, unix_ms)
+            await asyncio.wait_for(self._time_event.wait(), timeout_s)
+        except TimeoutError:
+            print("time sync timed out")
+            return None
+        except Exception as exc:
+            print(f"time sync failed: {exc}")
+            return None
+        return self.time_status
+
+    async def query_time(self, timeout_s: float = 2.0) -> TimeStatus | None:
+        """Query the current UTC/uptime anchor from the ring."""
+        if self.client is None or not self.client.is_connected or not self.rx_uuid:
+            return None
+        self._time_event.clear()
+        self.time_status = None
+        try:
+            await send_time_get(self.client, self.rx_uuid)
+            await asyncio.wait_for(self._time_event.wait(), timeout_s)
+        except TimeoutError:
+            print("time query timed out")
+            return None
+        except Exception as exc:
+            print(f"time query failed: {exc}")
+            return None
+        return self.time_status
 
     async def query_info(self) -> None:
         """Send INFO GET once (reply updates device_info via _demux)."""
@@ -340,6 +439,16 @@ class ConnectionMixin:
             await send_shipmode_enter(self.client, self.rx_uuid)
         except Exception as exc:
             print(f"shipmode enter failed: {exc}")
+
+    async def reboot(self) -> None:
+        """Send REBOOT ENTER (success usually disconnects BLE)."""
+        if self.client is None or not self.client.is_connected or not self.rx_uuid:
+            print("reboot skipped (not connected)")
+            return
+        try:
+            await send_reboot(self.client, self.rx_uuid)
+        except Exception as exc:
+            print(f"reboot enter failed: {exc}")
 
     async def set_raise_to_wake(self, enabled: bool) -> None:
         if self.client is None or not self.client.is_connected or not self.rx_uuid:
@@ -443,6 +552,8 @@ class ConnectionMixin:
             self.mac_addr_type = None
             self.shipmode_last_ok = None
             self.shipmode_last_err = None
+            self.reboot_last_ok = None
+            self.reboot_last_err = None
             print("Disconnected.")
         finally:
             self._user_closing = False

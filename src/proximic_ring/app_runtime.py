@@ -84,9 +84,10 @@ class RuntimeSettings:
     ring_selector: str | None = None
     ring_device: object | None = None
     ring_timeout_s: float = 8.0
-    # Keep the default aligned with the PCM waveform distribution used to
-    # train and calibrate the bundled proximity model.
-    encoding: str = "pcm"
+    # Opus is the production default because it keeps BLE traffic low enough
+    # for reliable continuous streaming on Windows.  The SDK still exposes
+    # decoded 16 kHz PCM16 to the detector, regardless of transport codec.
+    encoding: str = "opus"
     data_dir: Path = Path("data")
 
     detector_model: Path | None = None
@@ -101,8 +102,11 @@ class RuntimeSettings:
     streaming_sensevoice_repo: Path | None = None
     funasr_nano_repo: Path | None = None
     funasr_nano_hotwords: str = ""
+    # Applied only after ProxiMic has selected an utterance. Ring capture and
+    # detector calibration continue to use the untouched waveform.
+    asr_input_gain_enabled: bool = True
 
-    asr_pre_roll_s: float = 1.0
+    asr_pre_roll_s: float = 1.5
     asr_end_rejects: int = 2
     asr_stage1_inactivity_s: float = 1.25
     asr_min_duration_s: float = 0.40
@@ -138,6 +142,7 @@ class RuntimeSettings:
             asr_device=self.asr_device,
             asr_language=self.asr_language,
             asr_option=asr_options,
+            asr_gain_db=24.0 if self.asr_input_gain_enabled else 0.0,
             sensevoice_repo=None,
             streaming_sensevoice_repo=(
                 self.streaming_sensevoice_repo
@@ -232,16 +237,14 @@ class RecognitionRuntime:
             source.connect()
             if disconnect_event.is_set():
                 return
-            on_state("正在验证 Ring 麦克风音频…")
-            source.start_stream(buffer_audio=False)
-            if disconnect_event.is_set():
-                return
             on_connected()
-            # Keep the physical MIC stream alive while models load.  Audio is
-            # deliberately not buffered yet, so it cannot reach detection or
-            # ASR.  Some Ring firmware does not reliably resume a second MIC ON
-            # within the same BLE session after MIC OFF.
-            on_state("设备音频验证通过，保持音频流并加载模型…")
+
+            # Keep MIC OFF while importing and constructing the detector/ASR.
+            # Bleak notifications are Python callbacks; heavy model startup can
+            # starve that callback path and the Ring stream was observed to stop
+            # after only 2-3 blocks.  The firmware receiver remains reliable
+            # because it starts MIC only after its lightweight UI is ready.
+            on_state("设备已连接，保持麦克风关闭并加载模型…")
 
             if disconnect_event.is_set():
                 return
@@ -269,8 +272,8 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
-            on_state("模型加载完成，正在确认实时音频…")
-            source.begin_buffering()
+            on_state("模型加载完成，正在启动并确认实时音频…")
+            source.start_stream(buffer_audio=True)
             recognition_was_enabled = False
             on_started()
             while not disconnect_event.is_set():

@@ -16,6 +16,7 @@ ProxiMic Voice 是面向 Ringo 可穿戴设备的近场语音输入与语音编�
   - `funasr_nano`：本地 Fun-ASR-Nano-2512，支持用户热词。
   - `volcengine`：在线豆包 Seed-ASR 流式识别。
 - 实时显示 ASR partial，结束后使用 final 结果进入文本处理。
+- 默认仅对送入 ASR 的音频副本增加 24 dB，可在设置中关闭；Ring 原始录音和 ProxiMic 输入保持不变。
 - 提供“输入到光标”和“修改当前文本”两种工作模式。
 - 使用本地 Qwen3-4B-Instruct-2507 或火山方舟上的豆包/DeepSeek 处理文本。
 - 修改时向所选模型并行发送片段替换和完整文本两套 prompt，采用最先通过校验的结果。
@@ -120,7 +121,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 1. 在设置区选择 ASR 后端、语言和 CPU/GPU。
 2. 点击“选择并连接设备”，在实时扫描列表中选择目标 Ringo。
-3. 应用会依次完成 BLE 连接、PCM 验证、ProxiMic 加载和 ASR 加载。
+3. 应用会依次完成 BLE 连接、ProxiMic/ASR 加载，再开启 Opus 音频并验证解码后的 PCM。
 4. 点击“开启语音识别”。这会启动自动近场监听，不会断开或重连 Ring。
 5. 把光标放进其他应用的文本框。
 6. 使用 `Alt+1` 选择“输入到光标”，或使用 `Alt+2` 选择“修改当前文本”。
@@ -250,13 +251,14 @@ $env:VOLC_ASR_API_KEY = "<your-doubao-speech-app-key>"
 
 ## 音频编码与录音保存
 
-Ring 音频编码默认使用 `PCM`，这是发布版 ProxiMic 模型训练和阈值校准时使用的波形分布。
+桌面产品默认使用 `Opus` 传输，降低 Windows BLE 链路负载；SDK 解码后仍向模型提供
+16 kHz、单声道 PCM。采集训练集时可显式选择 `PCM` 保留原始波形分布。
 
 | 编码 | 特点 |
 | --- | --- |
-| PCM | 默认；质量和模型一致，BLE 带宽占用最高 |
+| PCM | 适合训练数据采集；质量和模型一致，BLE 带宽占用最高 |
 | ADPCM | 带宽较低，但有损压缩可能改变 Stage2 分数和 ASR 输入 |
-| Opus | 带宽更低，需要系统存在可用的 libopus 运行库 |
+| Opus | 桌面产品默认；带宽更低，需要系统存在可用的 libopus 运行库 |
 
 SDK 会保存每次麦克风会话的解码后连续录音：
 
@@ -267,8 +269,8 @@ data/session/20260820_154312/
 └── ring_raise_to_wake.csv
 ```
 
-`ring_audio.wav` 是 16 kHz、单声道 PCM WAV。目录名是会话开始时间；连接验证、MIC 重启也可能
-产生很短的小文件。当前不会按每次 `[ASR] START → END` 自动生成独立语句 WAV。
+`ring_audio.wav` 是 16 kHz、单声道 PCM WAV。目录名是会话开始时间。当前不会按每次
+`[ASR] START → END` 自动生成独立语句 WAV。
 
 ## macOS（Apple Silicon）
 
@@ -303,11 +305,20 @@ CLI 入口：
 | 命令 | 作用 |
 | --- | --- |
 | `ring` | 读取 Ringo 实时音频 |
+| `record` | 仅录制 Ring 连续 WAV，不加载近点模型、ASR 或 LLM |
 | `wav` | 重放 16 kHz PCM16 WAV |
 | `mic` | 使用普通系统麦克风做基线 |
 | `asr-backends` | 列出 ASR 适配器 |
 | `collect` | 采集 near/far/artifact 数据集 |
 | `train` | 训练新的近场二分类模型 |
+
+只录制一段 Ring 麦克风音频：
+
+```powershell
+.\.runtime\venv\Scripts\python.exe -m proximic_ring record --duration 20
+```
+
+录音会保存到 `data/session/<时间>/ring_audio.wav`。这条路径不会构建 ProxiMic、ASR 或 LLM。
 
 同一段 Ring 音频可以同时送给多个 ASR：
 
@@ -373,7 +384,7 @@ $env:ARK_API_KEY = "<your-ark-api-key>"
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip setuptools wheel
-python -m pip install -c requirements-windows.lock -e ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]"
+python -m pip install -c requirements-windows.lock -e ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]"
 python -m proximic_ring.ui
 ```
 
@@ -440,7 +451,7 @@ scripts/                   安装、GPU 切换和启动脚本
 
 ### 日志显示 BLE 已连接，为什么 UI 还在连接？
 
-SDK 的 BLE 建链只完成了第一步。UI 必须继续验证 NUS 服务并收到真实 PCM，才会显示设备已连接。
+BLE/NUS 建链完成后 UI 会显示设备已连接；模型加载完成并收到真实 PCM 后才会进入“准备就绪”。
 
 ### 热词越多越好吗？
 

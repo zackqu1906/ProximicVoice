@@ -64,15 +64,18 @@ class StreamingASRWorker:
         *,
         on_update: Callable[[StreamingASRUpdate], None] | None = None,
         on_error: Callable[[str], None] = print,
+        on_state: Callable[[str], None] | None = None,
     ) -> None:
         self.backend = backend
         self.on_update = on_update
         self.on_error = on_error
+        self.on_state = on_state
         # Session length is bounded by the controller.  SimpleQueue keeps the
         # real-time producer non-blocking and preserves every audio block.
         self._queue: queue.SimpleQueue[tuple[str, np.ndarray, float] | None] = queue.SimpleQueue()
         self._session_samples = 0
         self._session_id = 0
+        self._session_model_started_time_s: float | None = None
         self._session_failed = False
         self._abort_requested = threading.Event()
         name = getattr(backend, "backend_name", type(backend).__name__)
@@ -181,6 +184,16 @@ class StreamingASRWorker:
         if callable(marker):
             marker(chunk_ready_time_s)
 
+    def _report_timing(self, message: str) -> None:
+        """Publish diagnostics without allowing log failures to stop ASR."""
+
+        if self.on_state is None:
+            return
+        try:
+            self.on_state(message)
+        except Exception:
+            return
+
     def _run(self) -> None:
         deferred_item: tuple[str, np.ndarray, float] | None | object = _NO_ITEM
         while True:
@@ -225,6 +238,14 @@ class StreamingASRWorker:
                 if kind == "start":
                     self._session_id += 1
                     self._session_failed = False
+                    model_started_time_s = time.perf_counter()
+                    self._session_model_started_time_s = model_started_time_s
+                    self._report_timing(
+                        f"[ASR TIMING] session={self._session_id} "
+                        f"ASR模型开始接收音频 queue="
+                        f"{max(0.0, model_started_time_s - chunk_ready_time_s) * 1000:.1f}ms "
+                        f"initial_audio={audio.size / self.sample_rate:.3f}s"
+                    )
                     self.backend.start()
                     self._mark_backend_chunk_ready(chunk_ready_time_s)
                     self._session_samples = int(audio.size)
@@ -257,14 +278,37 @@ class StreamingASRWorker:
                     if self._session_failed:
                         self._session_samples = 0
                         self._session_failed = False
+                        self._session_model_started_time_s = None
                         continue
                     # The controller passes its trimmed final utterance here.
                     # A backend may re-decode it to correct provisional text
                     # that saw reject-confirmation tail audio.
                     self._session_samples = int(audio.size)
                     self._mark_backend_chunk_ready(chunk_ready_time_s)
+                    final_started_time_s = time.perf_counter()
+                    self._report_timing(
+                        f"[ASR TIMING] session={self._session_id} "
+                        f"ASR最终推理开始 queue="
+                        f"{max(0.0, final_started_time_s - chunk_ready_time_s) * 1000:.1f}ms "
+                        f"audio={self._session_samples / self.sample_rate:.3f}s"
+                    )
                     text = self.backend.finish(audio)
-                    latency = time.perf_counter() - chunk_ready_time_s
+                    finished_time_s = time.perf_counter()
+                    latency = finished_time_s - chunk_ready_time_s
+                    total_s = (
+                        0.0
+                        if self._session_model_started_time_s is None
+                        else max(
+                            0.0,
+                            finished_time_s - self._session_model_started_time_s,
+                        )
+                    )
+                    self._report_timing(
+                        f"[ASR TIMING] session={self._session_id} ASR模型结束 "
+                        f"final_inference="
+                        f"{max(0.0, finished_time_s - final_started_time_s) * 1000:.1f}ms "
+                        f"since_model_start={total_s:.3f}s"
+                    )
                     self._emit(
                         text,
                         is_final=True,
@@ -273,6 +317,7 @@ class StreamingASRWorker:
                         chunk_ready_time_s=chunk_ready_time_s,
                     )
                     self._session_samples = 0
+                    self._session_model_started_time_s = None
                 else:  # pragma: no cover - internal invariant
                     raise RuntimeError(f"Unknown streaming ASR worker message: {kind}")
             except BaseException as exc:
@@ -283,12 +328,21 @@ class StreamingASRWorker:
                     latency_s=latency,
                     chunk_ready_time_s=chunk_ready_time_s,
                 )
-                if kind == "start":
-                    # A failed connect/session initialization cannot recover
-                    # from feed/end.  Keep the first, useful error and drop
-                    # this session's later events rather than emitting a
-                    # misleading "session was not started" for every block.
+                if kind in {"start", "feed"}:
+                    # A failed connect or a lost live stream cannot recover
+                    # from later feed/end messages.  Close the broken backend,
+                    # keep the first useful error, and drop the rest of this
+                    # session.  The next START will establish a fresh stream.
                     self._session_failed = True
+                    abort_backend = getattr(self.backend, "abort", None)
+                    if callable(abort_backend):
+                        try:
+                            abort_backend()
+                        except Exception:
+                            # Cleanup must not replace the original connection
+                            # error that was already reported above.
+                            pass
                 elif kind == "end":
                     self._session_samples = 0
                     self._session_failed = False
+                    self._session_model_started_time_s = None

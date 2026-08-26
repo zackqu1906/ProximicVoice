@@ -24,6 +24,13 @@ def _device_value(value: str | None):
         return value
 
 
+def _positive_float(value: str) -> float:
+    number = float(value)
+    if number <= 0:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return number
+
+
 def _custom_model_threshold(model_path: Path | None) -> float | None:
     if model_path is None:
         return None
@@ -151,7 +158,7 @@ def _add_asr_args(parser: argparse.ArgumentParser) -> None:
             "for --asr-option funasr_nano.repo=PATH."
         ),
     )
-    parser.add_argument("--asr-pre-roll", type=float, default=1.0, help="Seconds retained before first ACTIVATE")
+    parser.add_argument("--asr-pre-roll", type=float, default=1.5, help="Seconds retained before first ACTIVATE")
     parser.add_argument(
         "--asr-end-rejects",
         type=int,
@@ -263,6 +270,7 @@ def _build_session_controller(
     from .asr import (
         ASRBackendSettings,
         ASRFanout,
+        ASRInputGainSessionSink,
         ASRWorker,
         CompletedUtteranceSessionSink,
         ProximitySessionController,
@@ -341,6 +349,18 @@ def _build_session_controller(
 
     batch_workers = []
     session_sinks = []
+    asr_gain_db = float(getattr(args, "asr_gain_db", 0.0))
+
+    def with_asr_input_gain(sink):
+        if asr_gain_db == 0.0:
+            return sink
+        return ASRInputGainSessionSink(sink, gain_db=asr_gain_db)
+
+    if asr_gain_db != 0.0:
+        on_state(
+            f"[ASR] 输入增益 {asr_gain_db:+g} dB；"
+            "仅影响 ASR，Ring 原始录音与 ProxiMic 保持不变"
+        )
 
     for name in selected:
         settings = ASRBackendSettings(
@@ -374,7 +394,13 @@ def _build_session_controller(
             batch_workers.append(ASRWorker(backend, on_result=_format_asr_result))
         elif kind == "streaming":
             session_sinks.append(
-                StreamingASRWorker(backend, on_update=publish_streaming_update)
+                with_asr_input_gain(
+                    StreamingASRWorker(
+                        backend,
+                        on_update=publish_streaming_update,
+                        on_state=on_state,
+                    )
+                )
             )
         else:  # pragma: no cover - factory invariant
             raise AssertionError(kind)
@@ -383,7 +409,9 @@ def _build_session_controller(
 
     if batch_workers:
         batch_sink = batch_workers[0] if len(batch_workers) == 1 else ASRFanout(batch_workers)
-        session_sinks.append(CompletedUtteranceSessionSink(batch_sink))
+        session_sinks.append(
+            with_asr_input_gain(CompletedUtteranceSessionSink(batch_sink))
+        )
 
     push_to_talk = None
     if args.push_to_talk:
@@ -450,6 +478,24 @@ def build_parser() -> argparse.ArgumentParser:
     )
     _add_detector_args(p)
     _add_asr_args(p)
+
+    p = sub.add_parser(
+        "record",
+        help="Record raw Ringo microphone audio without ProxiMic, ASR, or LLM",
+    )
+    _add_ring_connection_args(p)
+    p.add_argument(
+        "--duration",
+        type=_positive_float,
+        default=10.0,
+        help="Recording duration in seconds (default: 10)",
+    )
+    p.add_argument(
+        "--data-dir",
+        type=Path,
+        default=Path("data"),
+        help="Capture root; WAV is saved under data/session/<timestamp>/",
+    )
 
     p = sub.add_parser("wav", help="Replay a 16 kHz PCM16 WAV file")
     p.add_argument("path", type=Path)
@@ -626,6 +672,40 @@ def main(argv: list[str] | None = None) -> int:
             noise_snr_max_db=args.noise_snr_max_db,
             noise_eval=args.noise_eval,
         )
+
+    if args.command == "record":
+        source = RingAudioSource(
+            name_keyword=args.name,
+            selector=args.selector,
+            timeout_s=args.timeout,
+            encoding=args.encoding,
+            data_root=args.data_dir,
+        )
+        target_samples = int(round(args.duration * source.sample_rate))
+        recorded_samples = 0
+        try:
+            with source:
+                print(f"Recording raw Ring audio for {args.duration:g}s ...")
+                while recorded_samples < target_samples:
+                    block = source.read(
+                        min(320, target_samples - recorded_samples)
+                    )
+                    if block is None:
+                        break
+                    recorded_samples += int(block.size)
+        except KeyboardInterrupt:
+            print("\nRecording stopped by user.")
+
+        capture = (
+            str(source.capture_path)
+            if source.capture_path is not None
+            else "(none)"
+        )
+        print(
+            f"Recorded {recorded_samples / source.sample_rate:.3f}s; "
+            f"WAV saved to: {capture}"
+        )
+        return 0
 
     selected_asr = _selected_asr_backends(args)
     if args.disable_proximic_detector and not selected_asr:

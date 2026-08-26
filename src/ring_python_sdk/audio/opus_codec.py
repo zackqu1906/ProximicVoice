@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
+from pathlib import Path
 import struct
+import sys
 from collections.abc import Iterable
 from typing import Any
 
@@ -14,6 +17,7 @@ OPUS_FRAMES_PER_BLOCK = 5
 OPUS_BLOCK_SAMPLES = OPUS_FRAME_SAMPLES * OPUS_FRAMES_PER_BLOCK
 OPUS_MAX_FRAME_BYTES = 256
 PCM_SAMPLE_BYTES = 2
+_WINDOWS_DLL_HANDLES: list[object] = []
 
 
 class OpusCodecError(RuntimeError):
@@ -25,6 +29,7 @@ class OpusUnavailableError(OpusCodecError):
 
 
 def _load_opuslib() -> Any:
+    _prepare_windows_opus_runtime()
     try:
         import opuslib
     except (ImportError, OSError) as exc:
@@ -36,6 +41,45 @@ def _load_opuslib() -> Any:
             "`uv sync` (opuslib is a default dependency)."
         ) from exc
     return opuslib
+
+
+def _prepare_windows_opus_runtime() -> None:
+    """Make the project-local libopus visible to opuslib on Windows."""
+    if os.name != "nt":
+        return
+
+    candidates: list[Path] = []
+    configured = str(os.environ.get("PROXIMIC_OPUS_DIR", "")).strip()
+    if configured:
+        candidates.append(Path(configured).expanduser())
+
+    # Editable/source installation: <project>/src/ring_python_sdk/audio/...
+    source_file = Path(__file__).resolve()
+    if len(source_file.parents) > 3:
+        candidates.append(source_file.parents[3] / ".runtime" / "opus")
+    # Conda environments commonly install libopus under Library/bin.
+    candidates.append(Path(sys.prefix) / "Library" / "bin")
+
+    for directory in candidates:
+        resolved = directory.resolve()
+        if not any(
+            (resolved / filename).is_file()
+            for filename in ("opus.dll", "libopus-0.dll")
+        ):
+            continue
+        current_path = os.environ.get("PATH", "")
+        path_entries = current_path.split(os.pathsep) if current_path else []
+        if str(resolved).casefold() not in {
+            entry.casefold() for entry in path_entries
+        }:
+            os.environ["PATH"] = str(resolved) + os.pathsep + current_path
+        add_directory = getattr(os, "add_dll_directory", None)
+        if callable(add_directory):
+            try:
+                _WINDOWS_DLL_HANDLES.append(add_directory(str(resolved)))
+            except OSError:
+                pass
+        return
 
 
 def _parse_block(payload: bytes) -> list[bytes]:

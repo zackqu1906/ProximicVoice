@@ -393,9 +393,9 @@ class VolcengineStreamingASR:
                         continue
                     raise
                 if frame is None:
-                    if not self._receiver_stop.is_set():
-                        raise RuntimeError("Volcengine ASR WebSocket closed before a final response")
-                    return
+                    if self._receiver_stop.is_set() or self._final_seen:
+                        return
+                    raise RuntimeError("Volcengine ASR WebSocket closed before a final response")
                 if isinstance(frame, str):
                     frame = frame.encode("latin1")
                 text, is_final, summary, response_sequence = self._consume_frame(bytes(frame))
@@ -419,8 +419,13 @@ class VolcengineStreamingASR:
                 if is_final:
                     self._final_seen = True
                     self._final_response.set()
+                    # A negative/final server sequence completes this one-shot
+                    # recognition stream.  The service may close the WebSocket
+                    # immediately afterwards; do not call recv() again and
+                    # misreport that normal close as a lost connection.
+                    return
         except BaseException as exc:
-            if not self._receiver_stop.is_set():
+            if not self._receiver_stop.is_set() and not self._final_seen:
                 self._receiver_error = exc
                 self._final_response.set()
                 self._log(f"receiver failed: {exc}")

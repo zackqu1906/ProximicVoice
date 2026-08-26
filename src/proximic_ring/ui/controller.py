@@ -300,20 +300,21 @@ class AppController(QObject):
             )
         except (TypeError, ValueError):
             encoding_default_version = 0
-        if encoding_default_version < 1:
-            # One-time migration from the short-lived ADPCM UI default.  Later
-            # explicit user selections remain persistent.
-            saved_audio_encoding = "pcm"
+        if encoding_default_version < 2:
+            # Move existing installations to the transport verified by the
+            # firmware receiver.  Users can still explicitly select PCM/ADPCM
+            # after this one-time reliability migration.
+            saved_audio_encoding = "opus"
             self._settings.setValue("ring/audioEncoding", saved_audio_encoding)
-            self._settings.setValue("ring/audioEncodingDefaultVersion", 1)
+            self._settings.setValue("ring/audioEncodingDefaultVersion", 2)
         else:
             saved_audio_encoding = str(
-                self._settings.value("ring/audioEncoding", "pcm")
+                self._settings.value("ring/audioEncoding", "opus")
             ).strip().lower()
         self._audio_encoding = (
             saved_audio_encoding
             if saved_audio_encoding in {"adpcm", "pcm", "opus"}
-            else "pcm"
+            else "opus"
         )
         self._model_path = str(
             self._settings.value(
@@ -368,6 +369,10 @@ class AppController(QObject):
             normalize_funasr_nano_hotwords(
                 str(self._settings.value("asr/funasrNanoHotwords", ""))
             )
+        )
+        self._asr_input_gain_enabled = self._bool_setting(
+            "asr/inputGain24DbEnabled",
+            True,
         )
         self._desktop_output = (
             WINDOWS_DESKTOP_INPUT_SUPPORTED
@@ -750,6 +755,18 @@ class AppController(QObject):
             "_funasr_hotwords",
             normalized,
             "asr/funasrNanoHotwords",
+        )
+
+    @Property(bool, notify=settingsChanged)
+    def asrInputGainEnabled(self) -> bool:
+        return self._asr_input_gain_enabled
+
+    @asrInputGainEnabled.setter
+    def asrInputGainEnabled(self, value: bool) -> None:
+        self._set_setting(
+            "_asr_input_gain_enabled",
+            bool(value),
+            "asr/inputGain24DbEnabled",
         )
 
     @Property(bool, notify=settingsChanged)
@@ -1372,9 +1389,9 @@ class AppController(QObject):
             self._set_status("正在准备识别", text, "starting")
         elif text.startswith("模型加载完成，正在确认实时音频"):
             self._set_status("正在确认实时音频", text, "starting")
-        elif text.startswith("STAGE2 "):
-            # Keep detector telemetry in the log without replacing the
-            # user-facing status text every detector cycle.
+        elif text.startswith(("STAGE2 ", "[ASR]", "[ASR TIMING]")):
+            # Keep detector/ASR telemetry in the log without replacing the
+            # user-facing status text at every diagnostic milestone.
             return
         elif text.startswith("设备连接已中断"):
             self._set_status("设备连接异常", text, "error")
@@ -2011,7 +2028,13 @@ class AppController(QObject):
         text = str(message).strip()
         if not text:
             return
-        self._log_lines.append(text)
+        # Wall-clock time is useful for correlating device/model logs.  Actual
+        # durations are measured separately with perf_counter in the ASR
+        # worker so an OS clock adjustment cannot corrupt latency numbers.
+        timestamp = datetime.now().astimezone().strftime(
+            "%Y-%m-%d %H:%M:%S.%f"
+        )[:-3]
+        self._log_lines.append(f"[{timestamp}] {text}")
         del self._log_lines[:-200]
         self.logChanged.emit()
 
@@ -2036,10 +2059,17 @@ class AppController(QObject):
             raise ValueError("请先扫描并选择要连接的设备")
         if self._stage1_threshold <= 0:
             raise ValueError("Stage1 threshold 必须大于 0")
+        # A BLEDevice discovered by the picker belongs to the picker's short-
+        # lived asyncio loop.  Reusing it from the separate runtime thread is
+        # not the path exercised by the working firmware receiver and can make
+        # WinRT notifications stop shortly after connecting.  On Windows pass
+        # only the stable address and resolve a fresh BLEDevice in the runtime
+        # BLE loop.  CoreBluetooth still needs its opaque scan handle on macOS.
+        connection_device = None if sys.platform == "win32" else self._selected_device
         return RuntimeSettings(
             ring_name=self._device_name.strip(),
             ring_selector=self._selector.strip() or None,
-            ring_device=self._selected_device,
+            ring_device=connection_device,
             encoding=self._audio_encoding,
             detector_model=model,
             stage1_threshold=self._stage1_threshold,
@@ -2050,6 +2080,7 @@ class AppController(QObject):
             streaming_sensevoice_repo=repo,
             funasr_nano_repo=funasr_repo,
             funasr_nano_hotwords=self._funasr_hotwords,
+            asr_input_gain_enabled=self._asr_input_gain_enabled,
             # The UI commits either the LLM result or the raw fallback itself.
             # Feeding ASR finals into the legacy output here would inject the
             # unprocessed text once and then inject the processed text again.

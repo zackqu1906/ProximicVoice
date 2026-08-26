@@ -17,10 +17,19 @@ from proximic_ring.events import Stage2Event
 def test_runtime_defaults_only_enable_windows_desktop_features():
     args = RuntimeSettings().to_namespace()
 
-    assert args.encoding == "pcm"
+    assert args.encoding == "opus"
     expected = os.name == "nt"
     assert args.desktop_output is expected
     assert args.push_to_talk is expected
+    assert args.asr_gain_db == 24.0
+    assert args.asr_pre_roll == 1.5
+
+
+def test_runtime_can_disable_asr_input_gain_without_changing_ring_audio():
+    args = RuntimeSettings(asr_input_gain_enabled=False).to_namespace()
+
+    assert args.asr_gain_db == 0.0
+    assert args.encoding == "opus"
 
 
 def test_runtime_settings_preserve_working_detector_and_asr_values():
@@ -92,7 +101,7 @@ def test_nano_hotwords_normalize_ui_separators_and_duplicates():
     assert args.asr_option is None
 
 
-def test_ui_runtime_connects_and_validates_audio_before_loading_models(monkeypatch):
+def test_ui_runtime_loads_models_before_starting_microphone(monkeypatch):
     events = []
 
     class FakeSource:
@@ -105,7 +114,7 @@ def test_ui_runtime_connects_and_validates_audio_before_loading_models(monkeypat
             events.append("device-connected")
 
         def start_stream(self, *, buffer_audio=True):
-            assert buffer_audio is False
+            assert buffer_audio is True
             events.append("audio-validated")
 
         def pause_stream(self):
@@ -153,13 +162,13 @@ def test_ui_runtime_connects_and_validates_audio_before_loading_models(monkeypat
         on_started=lambda: events.append("runtime-ready"),
     )
 
-    assert events.index("device-connected") < events.index("audio-validated")
-    assert events.index("audio-validated") < events.index("ui-connected")
+    assert events.index("device-connected") < events.index("ui-connected")
     assert events.index("ui-connected") < events.index("detector-loaded")
     assert "audio-paused" not in events
     assert events.index("detector-loaded") < events.index("asr-loaded")
-    assert events.index("asr-loaded") < events.index("audio-buffering")
-    assert events.index("audio-buffering") < events.index("runtime-ready")
+    assert "audio-buffering" not in events
+    assert events.index("asr-loaded") < events.index("audio-validated")
+    assert events.index("audio-validated") < events.index("runtime-ready")
     assert events.index("runtime-ready") < events.index("ui-disconnected")
 
 

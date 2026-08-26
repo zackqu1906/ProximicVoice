@@ -11,7 +11,9 @@ PySide6==6.11.1
 PySide6-Addons==6.11.1
 PySide6-Essentials==6.11.1
 shiboken6==6.11.1
-bleak==3.0.2
+bleak==3.0.1
+comtypes==1.4.16
+opuslib==3.0.1
 asr-decoder==0.1.2
 online-fbank==0.0.4
 pyopenjtalk-plus==0.4.1.post9

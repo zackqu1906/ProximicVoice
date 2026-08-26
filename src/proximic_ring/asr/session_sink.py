@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from typing import Protocol
 
 import numpy as np
@@ -36,6 +37,42 @@ class CompletedUtteranceSessionSink:
         x = np.asarray(final_audio_16k, dtype=np.float32).reshape(-1)
         if x.size:
             self.sink.submit(x)
+
+    def abort(self) -> None:
+        abort = getattr(self.sink, "abort", None)
+        if callable(abort):
+            abort()
+
+    def close(self) -> None:
+        self.sink.close()
+
+
+class ASRInputGainSessionSink:
+    """Apply gain only to the audio copy consumed by an ASR session sink."""
+
+    def __init__(self, sink: SessionSink, *, gain_db: float) -> None:
+        gain_db = float(gain_db)
+        if not math.isfinite(gain_db):
+            raise ValueError("gain_db must be finite")
+        self.sink = sink
+        self.gain_db = gain_db
+        self.linear_gain = float(10.0 ** (gain_db / 20.0))
+
+    def _apply(self, audio_16k: np.ndarray) -> np.ndarray:
+        x = np.asarray(audio_16k, dtype=np.float32).reshape(-1)
+        return np.clip(x * self.linear_gain, -1.0, 1.0).astype(
+            np.float32,
+            copy=False,
+        )
+
+    def start(self, initial_audio_16k: np.ndarray) -> None:
+        self.sink.start(self._apply(initial_audio_16k))
+
+    def feed(self, audio_16k: np.ndarray) -> None:
+        self.sink.feed(self._apply(audio_16k))
+
+    def end(self, final_audio_16k: np.ndarray) -> None:
+        self.sink.end(self._apply(final_audio_16k))
 
     def abort(self) -> None:
         abort = getattr(self.sink, "abort", None)

@@ -44,6 +44,10 @@ class MicCaptureAssembler:
         self._completed: dict[int, tuple[int, bytes]] = {}
         self.completed_frames: int = 0
         self.incomplete_notify_packets: int = 0
+        self.repeated_completed_seq_packets: int = 0
+        self.last_frame_seq: int | None = None
+        self.last_frag_idx: int | None = None
+        self.last_frag_count: int | None = None
 
     def add_packet(self, packet: bytes) -> Optional[tuple[int, bytes, int]]:
         """Return (subcmd, frame_payload, frame_seq) when a frame completes."""
@@ -64,11 +68,15 @@ class MicCaptureAssembler:
         frag_idx = packet[4] | (packet[5] << 8)
         frag_count = packet[6] | (packet[7] << 8)
         payload = packet[MIC_HEADER_SIZE:]
+        self.last_frame_seq = frame_seq
+        self.last_frag_idx = frag_idx
+        self.last_frag_count = frag_count
 
         if frag_count == 0 or frag_idx >= frag_count:
             return None
 
         if frame_seq in self._completed:
+            self.repeated_completed_seq_packets += 1
             return None
 
         frame = self._inflight.get(frame_seq)

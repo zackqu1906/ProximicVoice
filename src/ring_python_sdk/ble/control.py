@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 import struct
 from typing import Any
@@ -24,21 +25,32 @@ from ring_python_sdk.core.constants import (
     DEFAULT_LED_BLINK_MS,
     DEFAULT_LED_BRIGHTNESS,
     IMU_ENCODE_RAW,
-    IMU_ENCODE_TOKEN,
-    IMU_START_PACKET_LEN_WITH_ENCODE,
+    imu_encode_name,
+    IMU_START_PACKET_LEN_WITH_LP,
+    IMU_LP_ON,
+    IMU_LP_OFF,
     LED_BLINK_PACKET_LEN,
     LED_MODE_PACKET_LEN,
     LED_SET_PACKET_LEN,
     MIC_ENCODE_OPUS,
+    MIC_GAIN_DEFAULT_DB_X2,
+    MIC_HARDWARE_GAIN_DB_MAX,
+    MIC_HARDWARE_GAIN_DB_MIN,
     MIC_START_PACKET_LEN,
+    MIC_START_PACKET_WITH_GAIN_LEN,
+    MIC_SOFTWARE_GAIN_DB_MAX,
+    MIC_SOFTWARE_GAIN_DB_MIN,
     NUS_RX_CHAR_UUID,
     NUS_SERVICE_UUID,
     NUS_TX_CHAR_UUID,
+    PPG_START_FLAG_SEND_RAW,
     PPG_START_PACKET_LEN,
     SUBCMD_BLE_TEST_START,
     SUBCMD_BLE_TEST_STOP,
     SUBCMD_IMU_START,
     SUBCMD_IMU_STOP,
+    SUBCMD_IMU_CALIBRATION_GET,
+    SUBCMD_IMU_CALIBRATION_RUN,
     SUBCMD_LED_BLINK,
     SUBCMD_LED_MODE,
     SUBCMD_LED_SET,
@@ -57,12 +69,31 @@ from ring_python_sdk.core.constants import (
     build_power_mode_set,
     build_power_mute_get,
     build_power_mute_set,
+    build_health_list,
+    build_health_read,
+    build_health_start,
+    build_health_status_get,
+    build_health_stop,
+    build_mic_record_list,
+    build_mic_record_read,
+    build_mic_record_start,
+    build_mic_record_status_get,
+    build_mic_record_stop,
 )
 from ring_python_sdk.core.battery_status import build_battery_get
 from ring_python_sdk.core.device_info import build_info_get
 from ring_python_sdk.core.mac_status import build_mac_get
 from ring_python_sdk.core.pcba_status import build_pcba_status_get
+from ring_python_sdk.core.reboot import build_reboot_enter
 from ring_python_sdk.core.shipmode import build_shipmode_enter
+from ring_python_sdk.core.temperature import build_temperature_get
+from ring_python_sdk.core.time_sync import build_time_get, build_time_set
+from ring_python_sdk.core.identity import (
+    build_identity_challenge,
+    build_identity_get,
+    build_identity_lock,
+    build_identity_provision,
+)
 
 
 @dataclass(frozen=True)
@@ -78,30 +109,25 @@ class DiscoveredBLEDevice:
 async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
     """Return every nearby BLE device without applying a name filter.
 
-    On Windows ``identifier`` is normally a MAC address.  On macOS Bleak uses
-    CoreBluetooth identifiers, which are UUID strings and must be preserved as
-    opaque values.
+    The product UI allows selecting devices whose advertised name does not
+    contain ``Ringo``.  Keep opaque CoreBluetooth UUIDs intact on macOS while
+    also retaining RSSI for display.
     """
 
     print(f"Scanning BLE devices for {timeout:.1f}s ...")
-    discovered = await BleakScanner.discover(timeout=timeout, return_adv=True)
-    if isinstance(discovered, dict):
-        items = discovered.values()
-    else:
-        items = [(device, None) for device in discovered]
-
     by_identifier: dict[str, DiscoveredBLEDevice] = {}
-    for item in items:
-        if isinstance(item, tuple):
-            device, advertisement = item
-        else:
-            device, advertisement = item, None
+
+    def _on_detect(device: Any, advertisement: Any) -> None:
         identifier = str(getattr(device, "address", "") or "").strip()
         if not identifier:
-            continue
+            return
         name = str(
             getattr(device, "name", None)
-            or (getattr(advertisement, "local_name", None) if advertisement else None)
+            or (
+                getattr(advertisement, "local_name", None)
+                if advertisement
+                else None
+            )
             or ""
         ).strip()
         raw_rssi = getattr(advertisement, "rssi", None) if advertisement else None
@@ -116,6 +142,15 @@ async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
             rssi=rssi,
         )
 
+    # A continuous callback scanner retains advertisements that can be missed
+    # by a one-shot discover() call, especially sparse advertisers on macOS.
+    scanner = BleakScanner(detection_callback=_on_detect)
+    await scanner.start()
+    try:
+        await asyncio.sleep(timeout)
+    finally:
+        await scanner.stop()
+
     results = list(by_identifier.values())
     results.sort(
         key=lambda item: (
@@ -127,13 +162,45 @@ async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
     return results
 
 
+async def send_identity_get(client: BleakClient, rx_uuid: str) -> None:
+    await client.write_gatt_char(rx_uuid, build_identity_get(), response=False)
+
+
+async def send_identity_provision(
+    client: BleakClient, rx_uuid: str, sn: str
+) -> None:
+    await client.write_gatt_char(
+        rx_uuid, build_identity_provision(sn), response=False
+    )
+
+
+async def send_identity_challenge(
+    client: BleakClient, rx_uuid: str, challenge: bytes
+) -> None:
+    await client.write_gatt_char(
+        rx_uuid, build_identity_challenge(challenge), response=False
+    )
+
+
+async def send_identity_lock(client: BleakClient, rx_uuid: str) -> None:
+    await client.write_gatt_char(rx_uuid, build_identity_lock(), response=False)
+
+
+async def send_time_set(client: BleakClient, rx_uuid: str, unix_ms: int) -> None:
+    await client.write_gatt_char(rx_uuid, build_time_set(unix_ms), response=False)
+
+
+async def send_time_get(client: BleakClient, rx_uuid: str) -> None:
+    await client.write_gatt_char(rx_uuid, build_time_get(), response=False)
+
+
 async def find_ring(name_keyword: str, timeout: float):
     matches = await scan_rings(name_keyword, timeout)
     return matches[0] if matches else None
 
 
 async def scan_rings(name_keyword: str, timeout: float):
-    """Scan and return all devices whose name contains name_keyword (case-insensitive)."""
+    """Return devices whose name contains ``name_keyword`` (case-insensitive)."""
     keyword = name_keyword.casefold()
     return [
         item.device
@@ -168,6 +235,8 @@ async def send_mic_control(
     on: bool,
     *,
     encode: int = MIC_ENCODE_OPUS,
+    hardware_gain_db: float | None = None,
+    software_gain_db: float | None = None,
 ) -> None:
     if not client.is_connected:
         print(f"mic {'ON' if on else 'OFF'} skipped (BLE disconnected)")
@@ -175,8 +244,28 @@ async def send_mic_control(
 
     try:
         if on:
-            packet = bytes([CMD_MIC, SUBCMD_MIC_START, encode & 0xFF])
-            if len(packet) != MIC_START_PACKET_LEN:
+            fields = [CMD_MIC, SUBCMD_MIC_START, encode & 0xFF]
+            if hardware_gain_db is not None or software_gain_db is not None:
+                hardware_gain_db_x2 = _mic_gain_db_x2(
+                    hardware_gain_db,
+                    name="hardware_gain_db",
+                    minimum=MIC_HARDWARE_GAIN_DB_MIN,
+                    maximum=MIC_HARDWARE_GAIN_DB_MAX,
+                )
+                software_gain_db_x2 = _mic_gain_db_x2(
+                    software_gain_db,
+                    name="software_gain_db",
+                    minimum=MIC_SOFTWARE_GAIN_DB_MIN,
+                    maximum=MIC_SOFTWARE_GAIN_DB_MAX,
+                )
+                fields.extend(
+                    [hardware_gain_db_x2 & 0xFF, software_gain_db_x2 & 0xFF]
+                )
+            packet = bytes(fields)
+            if len(packet) not in {
+                MIC_START_PACKET_LEN,
+                MIC_START_PACKET_WITH_GAIN_LEN,
+            }:
                 raise RuntimeError(
                     f"mic start packet length mismatch: {len(packet)}"
                 )
@@ -190,6 +279,53 @@ async def send_mic_control(
         print(f"mic {'ON' if on else 'OFF'} failed: {exc}")
 
 
+def _mic_gain_db_x2(
+    value: float | None, *, name: str, minimum: float, maximum: float
+) -> int:
+    if value is None:
+        return MIC_GAIN_DEFAULT_DB_X2
+    gain = float(value)
+    scaled = gain * 2.0
+    rounded = round(scaled)
+    if abs(scaled - rounded) > 1e-9:
+        raise ValueError(f"{name} must use 0.5 dB steps")
+    if gain < minimum or gain > maximum:
+        raise ValueError(f"{name} must be between {minimum:g} and {maximum:g} dB")
+    return int(rounded)
+
+
+async def send_mic_record_status_get(client: BleakClient, rx_uuid: str) -> None:
+    await client.write_gatt_char(
+        rx_uuid, build_mic_record_status_get(), response=False
+    )
+
+
+async def send_mic_record_start(client: BleakClient, rx_uuid: str) -> None:
+    await client.write_gatt_char(rx_uuid, build_mic_record_start(), response=False)
+
+
+async def send_mic_record_stop(client: BleakClient, rx_uuid: str) -> None:
+    await client.write_gatt_char(rx_uuid, build_mic_record_stop(), response=False)
+
+
+async def send_mic_record_list(client: BleakClient, rx_uuid: str) -> None:
+    await client.write_gatt_char(rx_uuid, build_mic_record_list(), response=False)
+
+
+async def send_mic_record_read(
+    client: BleakClient,
+    rx_uuid: str,
+    recording_id: int = 0,
+    offset: int = 0,
+    max_len: int = 0,
+) -> None:
+    await client.write_gatt_char(
+        rx_uuid,
+        build_mic_record_read(recording_id, offset, max_len),
+        response=False,
+    )
+
+
 async def send_imu_start(
     client: BleakClient,
     rx_uuid: str,
@@ -199,26 +335,32 @@ async def send_imu_start(
     accel_fs_g: int = DEFAULT_IMU_ACCEL_FS_G,
     frames_per_packet: int = DEFAULT_IMU_FRAMES_PER_PACKET,
     encode_mode: int = IMU_ENCODE_RAW,
+    lp: bool = False,
 ) -> None:
+    if lp and encode_mode != IMU_ENCODE_RAW:
+        raise ValueError("IMU LP mode only supports encode_mode=raw")
+    lp_byte = IMU_LP_ON if lp else IMU_LP_OFF
     payload = struct.pack(
-        "<HHHBBB",
+        "<HHHBBBB",
         gyro_hz & 0xFFFF,
         accel_hz & 0xFFFF,
         gyro_fs_dps & 0xFFFF,
         accel_fs_g & 0xFF,
         frames_per_packet & 0xFF,
         encode_mode & 0xFF,
+        lp_byte & 0xFF,
     )
     packet = bytes([CMD_IMU, SUBCMD_IMU_START]) + payload
-    if len(packet) != IMU_START_PACKET_LEN_WITH_ENCODE:
+    if len(packet) != IMU_START_PACKET_LEN_WITH_LP:
         raise RuntimeError(f"imu start packet length mismatch: {len(packet)}")
     await client.write_gatt_char(rx_uuid, packet, response=False)
-    encode_name = "token" if encode_mode == IMU_ENCODE_TOKEN else "raw"
+    encode_name = imu_encode_name(encode_mode)
     print(
         "imu START sent: "
         f"gyro={gyro_hz}Hz accel={accel_hz}Hz "
         f"gyro_fs={gyro_fs_dps}dps accel_fs={accel_fs_g}g "
-        f"frames_per_packet={frames_per_packet} encode={encode_name}"
+        f"frames_per_packet={frames_per_packet} encode={encode_name} "
+        f"lp={int(lp)}"
     )
 
 
@@ -226,6 +368,18 @@ async def send_imu_stop(client: BleakClient, rx_uuid: str) -> None:
     packet = bytes([CMD_IMU, SUBCMD_IMU_STOP])
     await client.write_gatt_char(rx_uuid, packet, response=False)
     print("imu STOP command sent")
+
+
+async def send_imu_calibration_get(client: BleakClient, rx_uuid: str) -> None:
+    packet = bytes([CMD_IMU, SUBCMD_IMU_CALIBRATION_GET])
+    await client.write_gatt_char(rx_uuid, packet, response=False)
+    print("imu calibration query sent")
+
+
+async def send_imu_calibration_run(client: BleakClient, rx_uuid: str) -> None:
+    packet = bytes([CMD_IMU, SUBCMD_IMU_CALIBRATION_RUN])
+    await client.write_gatt_char(rx_uuid, packet, response=False)
+    print("imu calibration command sent")
 
 
 async def send_ble_test_start(
@@ -260,17 +414,26 @@ async def send_ble_test_stop(client: BleakClient, rx_uuid: str) -> None:
     print("ble test STOP command sent")
 
 
-async def send_ppg_start(client: BleakClient, rx_uuid: str, mode: int) -> None:
+def encode_ppg_start(mode: int, send_raw: bool = False) -> bytes:
+    flags = PPG_START_FLAG_SEND_RAW if send_raw else 0
+    packet = bytes([CMD_PPG, SUBCMD_PPG_START, mode & 0xFF, flags & 0xFF])
+    if len(packet) != PPG_START_PACKET_LEN:
+        raise RuntimeError(f"ppg start packet length mismatch: {len(packet)}")
+    return packet
+
+
+async def send_ppg_start(
+    client: BleakClient, rx_uuid: str, mode: int, *, send_raw: bool = False
+) -> None:
     if not client.is_connected:
         print("ppg START skipped (BLE disconnected)")
         return
 
-    packet = bytes([CMD_PPG, SUBCMD_PPG_START, mode & 0xFF])
-    if len(packet) != PPG_START_PACKET_LEN:
-        raise RuntimeError(f"ppg start packet length mismatch: {len(packet)}")
+    packet = encode_ppg_start(mode, send_raw=send_raw)
     await client.write_gatt_char(rx_uuid, packet, response=False)
     label = {0: "HRS", 1: "SpO2", 2: "Wear"}.get(mode, str(mode))
-    print(f"ppg START sent (mode={label})")
+    raw = " raw" if send_raw else ""
+    print(f"ppg START sent (mode={label}{raw})")
 
 
 async def send_ppg_stop(client: BleakClient, rx_uuid: str) -> None:
@@ -323,6 +486,13 @@ async def send_battery_get(client: BleakClient, rx_uuid: str) -> None:
     await client.write_gatt_char(rx_uuid, build_battery_get(), response=False)
 
 
+async def send_temperature_get(client: BleakClient, rx_uuid: str) -> None:
+    """Request a GXT310W0 TEMPERATURE STATUS sample."""
+    if not client.is_connected:
+        return
+    await client.write_gatt_char(rx_uuid, build_temperature_get(), response=False)
+
+
 async def send_info_get(client: BleakClient, rx_uuid: str) -> None:
     """Request INFO STATUS (firmware version + hardware component table)."""
     if not client.is_connected:
@@ -344,6 +514,61 @@ async def send_shipmode_enter(client: BleakClient, rx_uuid: str) -> None:
         return
     await client.write_gatt_char(rx_uuid, build_shipmode_enter(), response=False)
     print("shipmode ENTER sent (expect power-off or RESULT fail)")
+
+
+async def send_reboot(client: BleakClient, rx_uuid: str) -> None:
+    """Request MCU cold reboot. Success usually disconnects BLE."""
+    if not client.is_connected:
+        print("reboot ENTER skipped (BLE disconnected)")
+        return
+    await client.write_gatt_char(rx_uuid, build_reboot_enter(), response=False)
+    print("reboot ENTER sent (expect disconnect or RESULT fail)")
+
+
+async def send_health_start(client: BleakClient, rx_uuid: str) -> None:
+    if not client.is_connected:
+        print("health START skipped (BLE disconnected)")
+        return
+    await client.write_gatt_char(rx_uuid, build_health_start(), response=False)
+    print("health START sent")
+
+
+async def send_health_stop(client: BleakClient, rx_uuid: str) -> None:
+    if not client.is_connected:
+        print("health STOP skipped (BLE disconnected)")
+        return
+    await client.write_gatt_char(rx_uuid, build_health_stop(), response=False)
+    print("health STOP sent")
+
+
+async def send_health_status_get(client: BleakClient, rx_uuid: str) -> None:
+    if not client.is_connected:
+        return
+    await client.write_gatt_char(rx_uuid, build_health_status_get(), response=False)
+
+
+async def send_health_read(
+    client: BleakClient,
+    rx_uuid: str,
+    session_id: int = 0,
+    offset: int = 0,
+    max_len: int = 0,
+) -> None:
+    if not client.is_connected:
+        print("health READ skipped (BLE disconnected)")
+        return
+    await client.write_gatt_char(
+        rx_uuid,
+        build_health_read(session_id, offset, max_len),
+        response=False,
+    )
+
+
+async def send_health_list(client: BleakClient, rx_uuid: str) -> None:
+    if not client.is_connected:
+        print("health LIST skipped (BLE disconnected)")
+        return
+    await client.write_gatt_char(rx_uuid, build_health_list(), response=False)
 
 
 async def send_led_set(client: BleakClient, rx_uuid: str, on: bool) -> None:

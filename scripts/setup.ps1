@@ -194,12 +194,15 @@ if ($InstalledTorchFlavor -ne $ResolvedCompute) {
 
 Write-Host "[7/9] Installing Proximic Voice and ASR dependencies..."
 $Extras = if ($SkipFunASR) {
-    ".[ring,asr-streaming-sensevoice,asr-volcengine,ui]"
+    ".[ring-opus,asr-streaming-sensevoice,asr-volcengine,ui]"
 } else {
-    ".[ring,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]"
+    ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]"
 }
 & $VenvPython -m pip install -c $ConstraintFile -e $Extras
 Assert-LastCommand "project dependency installation"
+& (Join-Path $PSScriptRoot "install-opus-runtime.ps1") `
+    -InstallRoot (Join-Path $RuntimeRoot "opus") `
+    -DownloadRoot $DownloadRoot
 
 Write-Host "[8/9] Preparing the default local LLM package..."
 if ($SkipLocalLLM) {
@@ -226,9 +229,9 @@ $ComputeCheck = if ($ResolvedCompute -eq "cuda") {
     "assert torch.version.cuda is None"
 }
 $SelfCheck = if ($SkipFunASR) {
-    "import sys, torch, PySide6, proximic_ring; import proximic_ring.ui.main; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); $ComputeCheck; print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('PySide6:', PySide6.__version__); print('Project:', proximic_ring.__file__); print('Installation self-check passed.')"
+    "import sys, torch, PySide6, comtypes, cryptography, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; from ring_python_sdk.audio.opus_codec import OrderedOpusDecoder; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); OrderedOpusDecoder(eager=True); $ComputeCheck; print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('PySide6:', PySide6.__version__); print('Ring SDK:', ring_python_sdk.__file__); print('Project:', proximic_ring.__file__); print('Opus decoder: ready'); print('Installation self-check passed.')"
 } else {
-    "import sys, torch, torchaudio, PySide6, proximic_ring; import proximic_ring.ui.main; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); $ComputeCheck; print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('TorchAudio:', torchaudio.__version__); print('PySide6:', PySide6.__version__); print('Project:', proximic_ring.__file__); print('Installation self-check passed.')"
+    "import sys, torch, torchaudio, PySide6, comtypes, cryptography, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; from ring_python_sdk.audio.opus_codec import OrderedOpusDecoder; assert sys.prefix.lower().startswith(r'$VenvRoot'.lower()); OrderedOpusDecoder(eager=True); $ComputeCheck; print('Python:', sys.version.split()[0]); print('Torch:', torch.__version__); print('TorchAudio:', torchaudio.__version__); print('PySide6:', PySide6.__version__); print('Ring SDK:', ring_python_sdk.__file__); print('Project:', proximic_ring.__file__); print('Opus decoder: ready'); print('Installation self-check passed.')"
 }
 & $VenvPython -c $SelfCheck
 Assert-LastCommand "installation self-check"

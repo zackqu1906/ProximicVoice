@@ -47,6 +47,18 @@ class FakeWebSocket:
         self.closed = True
 
 
+class ClosingAfterFinalWebSocket(FakeWebSocket):
+    def __init__(self):
+        super().__init__()
+        self.recv_calls = 0
+
+    def recv(self):
+        self.recv_calls += 1
+        if self.responses:
+            return self.responses.pop(0)
+        raise ConnectionError("Connection to remote host was lost")
+
+
 def test_native_streaming_uses_new_console_headers_and_returns_partial(monkeypatch):
     monkeypatch.setenv("TEST_VOLC_KEY", "speech-app-key")
     ws = FakeWebSocket()
@@ -81,6 +93,24 @@ def test_native_streaming_uses_new_console_headers_and_returns_partial(monkeypat
     assert struct.unpack_from(">i", ws.sent[0], 4)[0] == 1
     assert ws.sent[-1][1] == 0x23
     assert struct.unpack_from(">i", ws.sent[-1], 4)[0] < 0
+
+
+def test_server_close_after_final_is_not_reported_as_connection_loss(monkeypatch):
+    monkeypatch.setenv("TEST_VOLC_KEY", "speech-app-key")
+    ws = ClosingAfterFinalWebSocket()
+    backend = VolcengineStreamingASR(
+        api_key_env="TEST_VOLC_KEY",
+        ws_factory=lambda *_args, **_kwargs: ws,
+        chunk_ms=200,
+    )
+
+    backend.start()
+    backend.feed(np.ones(3201, dtype=np.float32) * 0.1)
+    final = backend.finish(np.empty(0, dtype=np.float32))
+
+    assert final == "你好世界"
+    assert ws.recv_calls == 2
+    assert ws.closed
 
 
 def test_response_summary_handles_empty_final_result(monkeypatch):

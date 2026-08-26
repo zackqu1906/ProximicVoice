@@ -11,6 +11,7 @@ from ring_python_sdk.core.seq_tracker import SeqTracker
 from ring_python_sdk.core.constants import (
     CMD_IMU,
     IMU_BYTES_PER_FRAME,
+    IMU_BYTES_PER_FRAME_ACCEL,
     IMU_DELTA_FIXED_BYTES,
     IMU_DELTA_FIRST_FRAME_BYTES,
     IMU_PACKET_HEADER_LEN,
@@ -22,6 +23,7 @@ from ring_python_sdk.core.constants import (
     imu_token_packet_len,
 )
 from ring_python_sdk.imu.float16 import decode_imu_token_frames
+from ring_python_sdk.imu.frame import apply_chip_to_host_physical
 from ring_python_sdk.imu.io import IMU_SAMPLE_COLUMNS, save_imu_samples
 from ring_python_sdk.core.constants import DEFAULT_IMU_CHIP
 from ring_python_sdk.imu.units import (
@@ -142,6 +144,7 @@ class ImuProcessor:
         live_plot: Any | None = None,
         imu_chip: str = DEFAULT_IMU_CHIP,
         encode_mode: str = "raw",
+        lp: bool = False,
         on_sample: Callable[[ImuSample], None] | None = None,
     ) -> None:
         self.csv_path = csv_path
@@ -154,6 +157,7 @@ class ImuProcessor:
         self.frames_per_packet = frames_per_packet
         self.imu_chip = normalize_imu_chip(imu_chip)
         self.encode_mode = encode_mode
+        self.lp = bool(lp)
         self._live_plot = live_plot
         self.on_sample = on_sample
         self.stats = ImuStats()
@@ -266,18 +270,32 @@ class ImuProcessor:
 
         is_token = packet[1] == SUBCMD_IMU_PACKET_TOKEN
         if packet[1] == SUBCMD_IMU_PACKET:
-            expected_len = imu_packet_len(frame_count)
+            bytes_per_frame = (
+                IMU_BYTES_PER_FRAME_ACCEL if self.lp else IMU_BYTES_PER_FRAME
+            )
+            expected_len = imu_packet_len(frame_count, lp=self.lp)
             if len(packet) < expected_len:
                 self.stats.dropped_packet_count += 1
                 return
-            frames = [
-                struct.unpack_from(
-                    "<6h",
-                    packet,
-                    IMU_PACKET_HEADER_LEN + frame_idx * IMU_BYTES_PER_FRAME,
-                )
-                for frame_idx in range(frame_count)
-            ]
+            if self.lp:
+                frames = [
+                    struct.unpack_from(
+                        "<3h",
+                        packet,
+                        IMU_PACKET_HEADER_LEN + frame_idx * bytes_per_frame,
+                    )
+                    + (0, 0, 0)
+                    for frame_idx in range(frame_count)
+                ]
+            else:
+                frames = [
+                    struct.unpack_from(
+                        "<6h",
+                        packet,
+                        IMU_PACKET_HEADER_LEN + frame_idx * bytes_per_frame,
+                    )
+                    for frame_idx in range(frame_count)
+                ]
             self.stats.raw_packet_count += 1
         elif packet[1] == SUBCMD_IMU_PACKET_DELTA:
             try:
@@ -328,9 +346,13 @@ class ImuProcessor:
                 raw = None
             else:
                 accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z = frame
+                # Wire frame is chip LSB; keep raw as chip, rotate after unit convert.
                 raw = (accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z)
                 ax, ay, az, gx, gy, gz = self._convert_sample(
                     accel_x, accel_y, accel_z, gyro_x, gyro_y, gyro_z
+                )
+                ax, ay, az, gx, gy, gz = apply_chip_to_host_physical(
+                    ax, ay, az, gx, gy, gz
                 )
 
             if self.on_sample is not None:

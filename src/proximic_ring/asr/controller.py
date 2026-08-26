@@ -35,7 +35,7 @@ class ProximitySessionController:
         self,
         sink,
         *,
-        pre_roll_s: float = 1.0,
+        pre_roll_s: float = 1.5,
         end_rejects: int = 2,
         stage1_inactivity_s: float = 1.25,
         stage2_delay_s: float = 0.50,

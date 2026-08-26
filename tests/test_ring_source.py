@@ -3,7 +3,6 @@ import threading
 import time
 
 import numpy as np
-import pytest
 
 from proximic_ring.audio.ring import RingAudioSource
 
@@ -128,13 +127,16 @@ def test_ring_source_thread_uses_sdk_live_callback(monkeypatch, tmp_path):
         source.close()
 
 
-def test_watchdog_disconnects_once_without_recovery(monkeypatch, tmp_path):
+def test_stream_monitor_keeps_connected_session_alive_until_audio_resumes(
+    monkeypatch, tmp_path, capsys
+):
     import sys
     import types
 
     from proximic_ring.audio import ring as ring_module
 
     counters = {"connect": 0, "mic_on": 0, "disconnect": 0}
+    callback_holder = {}
 
     class FakeClient:
         is_connected = True
@@ -144,11 +146,14 @@ def test_watchdog_disconnects_once_without_recovery(monkeypatch, tmp_path):
             self.output_path = tmp_path / "stalled.wav"
 
     class FakeSession:
+        latest = None
+
         def __init__(self, **kwargs):
             assert kwargs["auto_reconnect"] is False
             self.client = FakeClient()
             self.mic_active = False
             self.mic = None
+            type(self).latest = self
 
         async def connect(self):
             counters["connect"] += 1
@@ -159,6 +164,7 @@ def test_watchdog_disconnects_once_without_recovery(monkeypatch, tmp_path):
             self.mic_active = True
             self.mic = FakeMic()
             assert on_pcm is not None
+            callback_holder["on_pcm"] = on_pcm
             on_pcm(0, struct.pack("<320h", *([1024] * 320)))
 
         async def mic_off(self):
@@ -182,25 +188,130 @@ def test_watchdog_disconnects_once_without_recovery(monkeypatch, tmp_path):
     monkeypatch.setattr(ring_module, "_WATCHDOG_POLL_S", 0.01)
     monkeypatch.setattr(ring_module, "_WATCHDOG_CONFIRM_S", 0.01)
 
-    # UI model loading starts the stream only as a physical validation probe.
-    # A long model import must not be mistaken for a device stall.
-    probe = RingAudioSource(data_root=tmp_path, encoding="pcm")
-    probe.connect()
-    probe.start_stream(buffer_audio=False)
-    time.sleep(0.08)
-    assert probe.error is None
-    probe.close()
-
-    source = RingAudioSource(data_root=tmp_path, encoding="pcm")
+    source = RingAudioSource(data_root=tmp_path, encoding="opus")
     source.open()
     try:
         assert source.read(320) is not None
-        with pytest.raises(RuntimeError, match="reconnect manually"):
-            source.read(320)
+        time.sleep(0.10)
+        assert source.error is None
+        assert counters["disconnect"] == 0
+
+        callback_holder["on_pcm"](
+            1, struct.pack("<320h", *([2048] * 320))
+        )
+        time.sleep(0.03)
+        resumed = source.read(320)
+        assert resumed is not None
+        np.testing.assert_allclose(
+            resumed, np.full(320, 0.0625, dtype=np.float32)
+        )
+
+        assert FakeSession.latest is not None
+        FakeSession.latest.client.is_connected = False
+        deadline = time.monotonic() + 1.0
+        while source.error is None and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert source.error is not None
+        assert "physically lost" in str(source.error)
     finally:
         source.close()
 
-    assert counters == {"connect": 2, "mic_on": 2, "disconnect": 2}
+    output = capsys.readouterr().out
+    assert "PCM STREAM STALLED" in output
+    assert "Keeping the BLE session open" in output
+    assert "PCM callbacks resumed" in output
+    assert counters == {"connect": 1, "mic_on": 1, "disconnect": 1}
+
+
+def test_stream_monitor_restarts_mic_once_for_early_startup_stall(
+    monkeypatch, tmp_path, capsys
+):
+    import sys
+    import types
+
+    from proximic_ring.audio import ring as ring_module
+
+    counters = {"connect": 0, "mic_on": 0, "mic_off": 0, "disconnect": 0}
+
+    class FakeClient:
+        is_connected = True
+
+    class FakeMic:
+        def __init__(self):
+            self.output_path = tmp_path / f"segment-{counters['mic_on']}.wav"
+
+    class FakeSession:
+        def __init__(self, **kwargs):
+            assert kwargs["auto_reconnect"] is False
+            self.client = FakeClient()
+            self.mic_active = False
+            self.mic = None
+
+        async def connect(self):
+            counters["connect"] += 1
+            return True
+
+        async def mic_on(self, encoding, *, on_pcm=None):
+            counters["mic_on"] += 1
+            self.mic_active = True
+            self.mic = FakeMic()
+            assert on_pcm is not None
+            value = 1024 * counters["mic_on"]
+            on_pcm(
+                counters["mic_on"] - 1,
+                struct.pack("<320h", *([value] * 320)),
+            )
+
+        async def mic_off(self):
+            counters["mic_off"] += 1
+            self.mic_active = False
+
+        async def disconnect(self):
+            counters["disconnect"] += 1
+            self.client.is_connected = False
+
+    sdk = types.ModuleType("ring_python_sdk")
+    sdk.RingSession = FakeSession
+    core = types.ModuleType("ring_python_sdk.core")
+    constants = types.ModuleType("ring_python_sdk.core.constants")
+    constants.DEFAULT_SAMPLE_RATE = 16_000
+    constants.DEFAULT_CHANNELS = 1
+    constants.DEFAULT_SAMPLE_WIDTH_BYTES = 2
+    monkeypatch.setitem(sys.modules, "ring_python_sdk", sdk)
+    monkeypatch.setitem(sys.modules, "ring_python_sdk.core", core)
+    monkeypatch.setitem(sys.modules, "ring_python_sdk.core.constants", constants)
+    monkeypatch.setattr(ring_module, "_INITIAL_MIC_SETTLE_S", 0.0)
+    monkeypatch.setattr(ring_module, "_EARLY_STARTUP_STALL_S", 0.04)
+    monkeypatch.setattr(ring_module, "_MIC_RECOVERY_PAUSE_S", 0.01)
+    monkeypatch.setattr(ring_module, "_WATCHDOG_POLL_S", 0.01)
+    monkeypatch.setattr(ring_module, "_WATCHDOG_STALL_S", 1.0)
+
+    source = RingAudioSource(data_root=tmp_path, encoding="opus")
+    source.open()
+    try:
+        first = source.read(320)
+        assert first is not None
+
+        deadline = time.monotonic() + 1.0
+        while counters["mic_on"] < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+        assert counters["mic_on"] == 2
+        assert counters["mic_off"] == 1
+        assert counters["disconnect"] == 0
+        assert source.error is None
+        second = source.read(320)
+        assert second is not None
+        np.testing.assert_allclose(
+            second, np.full(320, 0.0625, dtype=np.float32)
+        )
+    finally:
+        source.close()
+
+    output = capsys.readouterr().out
+    assert "restarting MIC once" in output
+    assert "MIC startup recovery succeeded" in output
+    assert counters == {"connect": 1, "mic_on": 2, "mic_off": 2, "disconnect": 1}
 
 
 def test_begin_buffering_requires_fresh_post_model_pcm(tmp_path):
@@ -218,3 +329,28 @@ def test_begin_buffering_requires_fresh_post_model_pcm(tmp_path):
     finally:
         callback.join()
         source.close()
+
+
+def test_windows_cancel_during_cleanup_does_not_escape():
+    import asyncio
+
+    calls = {"disconnect": 0}
+
+    class FakeSession:
+        mic_active = True
+
+        async def mic_off(self):
+            exc = OSError("The I/O operation has been aborted")
+            exc.winerror = 995
+            raise exc
+
+        async def disconnect(self):
+            calls["disconnect"] += 1
+            exc = OSError("The operation was canceled by the user")
+            exc.winerror = 1223
+            raise exc
+
+    source = RingAudioSource()
+    asyncio.run(source._shutdown_session(FakeSession()))
+
+    assert calls["disconnect"] == 1

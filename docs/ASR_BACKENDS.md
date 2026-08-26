@@ -489,7 +489,7 @@ python -m proximic_ring ring `
 Typical terminal output:
 
 ```text
-[ASR] START t=12.540s (pre-roll=1.00s)
+[ASR] START t=12.540s (pre-roll=1.50s)
 ASR-PARTIAL[streaming_sensevoice/iic/SenseVoiceSmall] latency=...ms: 帮我
 ASR-PARTIAL[streaming_sensevoice/iic/SenseVoiceSmall] latency=...ms: 帮我打开这个
 ASR-PARTIAL[streaming_sensevoice/iic/SenseVoiceSmall] latency=...ms: 帮我打开这个项目

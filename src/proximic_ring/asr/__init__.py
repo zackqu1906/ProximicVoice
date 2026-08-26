@@ -8,7 +8,12 @@ from .factory import (
     create_asr_backend,
     create_streaming_asr_backend,
 )
-from .session_sink import CompletedUtteranceSessionSink, SessionFanout, SessionSink
+from .session_sink import (
+    ASRInputGainSessionSink,
+    CompletedUtteranceSessionSink,
+    SessionFanout,
+    SessionSink,
+)
 from .streaming import StreamingASRBackend, StreamingASRUpdate, StreamingASRWorker
 from .worker import ASRFanout, ASRWorker, UtteranceSink
 from .sensevoice import SenseVoiceASR
@@ -18,6 +23,7 @@ __all__ = [
     "ASRBackendCache",
     "ASRBackendSettings",
     "ASRFanout",
+    "ASRInputGainSessionSink",
     "ASRResult",
     "ASRWorker",
     "CompletedUtteranceSessionSink",

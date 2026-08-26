@@ -18,13 +18,25 @@ def test_scan_all_devices_keeps_non_ringo_and_macos_identifiers(monkeypatch):
     printer = _device("Office Printer", "AA:BB:CC:DD:EE:01")
     unnamed_ring = _device(None, "57A74F5D-18EA-4C3B-83B2-987ED0512456")
 
-    async def discover(**_kwargs):
-        return {
-            "printer": (printer, _advertisement(rssi=-70)),
-            "ring": (unnamed_ring, _advertisement(local_name="My Voice Ring", rssi=-42)),
-        }
+    class FakeScanner:
+        def __init__(self, *, detection_callback):
+            self.callback = detection_callback
 
-    monkeypatch.setattr(control.BleakScanner, "discover", discover)
+        async def start(self):
+            self.callback(printer, _advertisement(rssi=-70))
+            self.callback(
+                unnamed_ring,
+                _advertisement(local_name="My Voice Ring", rssi=-42),
+            )
+
+        async def stop(self):
+            return None
+
+    async def no_wait(_timeout):
+        return None
+
+    monkeypatch.setattr(control, "BleakScanner", FakeScanner)
+    monkeypatch.setattr(control.asyncio, "sleep", no_wait)
 
     found = asyncio.run(control.scan_all_devices(0.01))
 
@@ -75,6 +87,44 @@ def test_connect_target_rescans_without_name_filter(monkeypatch):
     connected = asyncio.run(session.connect_target("MACOS-OPAQUE-UUID"))
 
     assert connected is True
+    assert session.connected_target is selected
+    assert session.new_session is True
+
+
+def test_connect_target_exact_mac_uses_short_targeted_scan(monkeypatch):
+    address = "CC:01:8C:31:2C:C7"
+    selected = _device("Ringo2CC7", address)
+    calls = []
+
+    class FakeScanner:
+        @classmethod
+        async def find_device_by_address(cls, target, timeout):
+            calls.append((target, timeout))
+            return selected
+
+    async def unexpected_full_scan(*_args, **_kwargs):
+        raise AssertionError("an exact Windows MAC should use targeted discovery")
+
+    monkeypatch.setattr(connection, "BleakScanner", FakeScanner)
+    monkeypatch.setattr(connection, "scan_all_devices", unexpected_full_scan)
+
+    class FakeConnection(connection.ConnectionMixin):
+        name_keyword = "Ringo"
+        timeout_s = 8.0
+
+        def __init__(self):
+            self.scanned = []
+
+        async def _connect_device(self, target, *, new_session):
+            self.connected_target = target
+            self.new_session = new_session
+            return True
+
+    session = FakeConnection()
+    connected = asyncio.run(session.connect_target(address))
+
+    assert connected is True
+    assert calls == [(address, 3.0)]
     assert session.connected_target is selected
     assert session.new_session is True
 

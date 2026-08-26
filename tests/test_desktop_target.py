@@ -5,6 +5,7 @@ from proximic_ring.desktop_target import (
     DesktopTextSnapshot,
     WindowsDesktopTextTarget,
 )
+from proximic_ring.windows_uia import UIATextControlRef, WindowsUIATextBridge
 
 
 def test_capture_retries_transient_empty_clipboard_and_restores_original() -> None:
@@ -82,3 +83,97 @@ def test_replace_empty_text_selects_all_and_clears_field() -> None:
         ("hotkey", (adapter.VK_CONTROL, adapter.VK_A)),
         ("press", adapter.VK_BACK),
     ]
+
+
+def _codex_target() -> DesktopTargetRef:
+    return DesktopTargetRef(
+        10,
+        20,
+        "Codex task",
+        process_id=30,
+        process_name="ChatGPT.exe",
+        uia_control=UIATextControlRef(
+            process_id=30,
+            runtime_id=(42, 1, 2),
+            control_type_id=50004,
+            name="随心输入",
+            class_name="ProseMirror ProseMirror-focused",
+        ),
+    )
+
+
+def test_codex_capture_reads_only_uia_composer_without_clipboard() -> None:
+    adapter = object.__new__(WindowsDesktopTextTarget)
+    calls: list[object] = []
+
+    class UIA:
+        def read_text(self, control, window_handle):
+            calls.append(("read", control, window_handle))
+            return "只读取当前提问框"
+
+    class Clipboard:
+        def snapshot(self):
+            raise AssertionError("Codex composer must not use clipboard Select-All")
+
+    adapter._uia = UIA()
+    adapter._clipboard = Clipboard()
+    target = _codex_target()
+
+    snapshot = adapter.capture_text(target)
+
+    assert snapshot == DesktopTextSnapshot(target, "只读取当前提问框")
+    assert calls == [("read", target.uia_control, 10)]
+
+
+def test_codex_uia_failure_never_falls_back_to_page_select_all() -> None:
+    adapter = object.__new__(WindowsDesktopTextTarget)
+
+    class UIA:
+        def read_text(self, _control, _window_handle):
+            raise RuntimeError("stale element")
+
+    class Clipboard:
+        def snapshot(self):
+            raise AssertionError("unsafe clipboard fallback")
+
+    adapter._uia = UIA()
+    adapter._clipboard = Clipboard()
+
+    try:
+        adapter.capture_text(_codex_target())
+    except RuntimeError as exc:
+        assert "避免复制整页或历史对话" in str(exc)
+    else:
+        raise AssertionError("UIA failure must reject the edit")
+
+
+def test_codex_replace_uses_exact_uia_value_pattern() -> None:
+    adapter = object.__new__(WindowsDesktopTextTarget)
+    calls: list[object] = []
+
+    class UIA:
+        def set_text(self, control, window_handle, text):
+            calls.append(("set", control, window_handle, text))
+
+    adapter._uia = UIA()
+    adapter._activate = lambda target: calls.append(("activate", target))
+    target = _codex_target()
+
+    adapter.replace(DesktopTextSnapshot(target, "旧提问"), "新提问")
+
+    assert calls == [
+        ("activate", target),
+        ("set", target.uia_control, 10, "新提问"),
+    ]
+
+
+def test_prosemirror_placeholder_is_not_part_of_captured_text() -> None:
+    target = _codex_target().uia_control
+    assert target is not None
+
+    assert WindowsUIATextBridge._normalize_value(
+        "\n随心输入", target
+    ) == ""
+    assert WindowsUIATextBridge._normalize_value(
+        "当前草稿\n随心输入", target
+    ) == "当前草稿"

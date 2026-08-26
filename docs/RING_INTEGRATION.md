@@ -3,6 +3,30 @@
 This project is no longer protocol-neutral: it is wired to the supplied
 `ring-python-sdk` implementation.
 
+## Integrated SDK snapshot
+
+The bundled `src/ring_python_sdk` has been updated from the supplied
+`ring-python-sdk-main` tree. The product-specific unfiltered device picker and
+manual reconnect default are kept on top of that snapshot. On Windows the
+picker passes only the selected address to the runtime, which resolves a fresh
+`BLEDevice` in the same asyncio loop used for connection and notifications.
+
+Connection-relevant changes in the newer SDK are:
+
+- MIC recording control/status/list/read packets are separated from live MIC
+  audio before codec reassembly. This prevents newer-firmware control packets
+  from being interpreted as PCM/ADPCM/Opus fragments.
+- Device time is synchronized after notifications start. The operation is
+  best-effort and does not make a failed sync abort the connection.
+- MIC start supports explicit hardware and software gain values while retaining
+  the legacy three-byte command when no gain is supplied.
+- Identity, temperature, reboot, flash health recording, MIC recording, and
+  IMU/PPG calibration protocols are now available. Identity support adds the
+  `cryptography` runtime dependency.
+
+The SDK update does not change the live audio fragment assembler or codec
+decoder, so it cannot by itself repair a real radio/firmware stream stop.
+
 ## Verified SDK audio contract
 
 From the supplied SDK source:
@@ -35,35 +59,58 @@ Ringo microphone
 The WAV written by the SDK is a useful experiment/debug recording, but it is
 **not** read back into the real-time inference path.
 
-The desktop runtime uses a two-phase startup. It first connects BLE, validates
-the NUS service, starts the microphone, and requires a real PCM callback. Only
-then does it load the ProxiMic and ASR models. PCM received while models load is
-discarded instead of building an unbounded inference backlog; buffering starts
-when recognition is ready.
+The desktop runtime connects BLE and validates NUS with MIC still off. It loads
+the ProxiMic and ASR models first, then sends one MIC ON and requires a real PCM
+callback before recognition starts. This matches the reliable firmware receiver
+path and prevents heavy Python model initialization from starving Bleak's live
+notification callbacks immediately after MIC ON.
 
-The device picker retains Bleak's selected `BLEDevice` and passes it directly
-to `BleakClient`. It does not discard the selection and run another fixed scan;
-this is important for macOS identifiers and devices using rotating addresses.
+On Windows, a `BLEDevice` created by the picker's temporary scan loop is never
+passed into the separate runtime thread. The runtime scans for the selected
+address again with targeted discovery, returning as soon as that address is
+advertised and waiting at most 3 seconds. Scan, connect, and notifications still
+share one asyncio/WinRT MTA thread just like the firmware receiver. The BLE
+connection handshake keeps its normal timeout. On macOS the opaque CoreBluetooth
+scan handle is retained because it cannot be reconstructed from a MAC address.
 
-The stream watchdog is fail-closed. If PCM stops, it closes and disconnects the
-session immediately. It never restarts MIC or reconnects BLE in the background;
-the user must explicitly choose **Reconnect device** in the UI.
+The supported Windows environment pins Bleak 3.0.1, matching the receiver
+environment used for the continuous Opus test.
 
-After the initial real-PCM validation, the runtime keeps MIC active during
-detector/ASR initialization but discards those callbacks instead of sending them
-to inference. Once initialization finishes, it requires a fresh PCM callback
-before buffering and arming the watchdog. This avoids an unreliable second MIC
-ON command on firmware that cannot resume within the same BLE session.
+The stream monitor reports a decoded-PCM gap after 5 seconds plus a 1-second
+confirmation window, but it does not tear down a BLE connection that Windows
+still reports as connected. It keeps waiting for callbacks, reports recovery,
+and lets the user disconnect explicitly if the device does not resume. Initial
+MIC startup still requires real PCM and fails cleanly if none arrives. If audio
+stops within the first five callbacks, the runtime sends one controlled MIC OFF / MIC
+ON recovery after a two-second gap; it never loops that recovery indefinitely.
+
+On Windows, disconnecting a WinRT BLE client cancels pending GATT operations.
+Bleak may surface this as WinError 995 (I/O aborted because the thread/application
+requested it) or WinError 1223 (operation canceled by the user). During teardown
+these messages are expected consequences of the application closing the link,
+not proof that the person using Windows manually interrupted it. Cleanup logs
+them without replacing the original stream/startup error.
+
+Stream diagnostics include notification count, decoded block count, partial
+notification count, the last frame/fragment position, and repeated completed
+sequence count. If the last frame remains partially assembled while the BLE
+client still reports connected, the notification stream paused in the middle of
+a firmware frame. The monitor preserves the session so a later callback can
+continue the stream instead of manufacturing a Windows cancel error by
+disconnecting it.
 
 ## Codec choice
 
-The customer desktop UI and the live proximity diagnostic default to `pcm` so
-the detector receives the waveform distribution used for model training and
-threshold calibration.
+The customer desktop UI defaults to `opus`, matching the firmware receiver path
+verified on Windows. The SDK decodes it back to 16 kHz mono PCM16 before the
+detector sees it. Dataset collection can still explicitly use `pcm` when exact
+training-waveform fidelity is required.
 
-- `pcm`: recommended for proximity-model consistency, but creates more BLE traffic;
+- `pcm`: recommended for dataset collection, but creates much more BLE traffic;
 - `adpcm`: lower on-air bandwidth, but lossy compression can shift Stage2 scores;
-- `opus`: efficient on-air, but requires `opuslib` and a native libopus runtime.
+- `opus`: production default and efficient on-air. Windows setup installs `opuslib` plus a project-local
+  `.runtime/opus/opus.dll`; the SDK adds that directory only to the current
+  process DLL search path.
 
 The detector receives PCM16 in all three cases, but lossy codecs need not preserve
 the same waveform or score distribution as raw PCM.

@@ -1,5 +1,5 @@
 {
-  "recommended_stage2_threshold": 0.8461704552173615,
+  "recommended_stage2_threshold": -0.006574936211109161,
   "label_mapping": {
     "near": 0,
     "far": 1,

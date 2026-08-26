@@ -310,7 +310,7 @@ class StatusMixin:
             s = self.swipe.stats
             lines.append(
                 f"swipe infer={s.event_count} triggers={s.trigger_count} "
-                f"packets={s.packet_count} "
+                f"profile={s.profile_count} packets={s.packet_count} "
                 f"dropped={s.dropped_packet_count} rate={rates['swipe']:.1f}/s"
             )
         if self.button is not None:
@@ -372,7 +372,11 @@ class StatusMixin:
             if self.swipe is not None:
                 if self.swipe._file is not None:
                     self.swipe._file.flush()  # type: ignore[union-attr]
+                if self.swipe._profile_file is not None:
+                    self.swipe._profile_file.flush()  # type: ignore[union-attr]
                 targets.append(self.swipe.csv_path)
+                if self.swipe.profile_csv_path is not None:
+                    targets.append(self.swipe.profile_csv_path)
         if channel is None or channel == "button":
             if self.button is not None:
                 if self.button._file is not None:

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
 from ring_python_sdk.audio import AudioProcessor
@@ -11,16 +12,28 @@ from ring_python_sdk.ble import (
     send_ble_test_stop,
     send_imu_start,
     send_imu_stop,
+    send_imu_calibration_get,
+    send_imu_calibration_run,
     send_led_blink,
     send_led_mode,
     send_led_set,
     send_mic_control,
+    send_mic_record_list,
+    send_mic_record_read,
+    send_mic_record_start,
+    send_mic_record_status_get,
+    send_mic_record_stop,
     send_ppg_start,
     send_ppg_stop,
     send_swipe_start,
     send_swipe_stop,
     send_wear_calibrate,
     send_wear_calibration_get,
+    send_health_start,
+    send_health_stop,
+    send_health_status_get,
+    send_health_read,
+    send_health_list,
 )
 from ring_python_sdk.ble_test.processor import BleTestProcessor
 from ring_python_sdk.button.processor import ButtonProcessor
@@ -42,11 +55,14 @@ from ring_python_sdk.core.constants import (
     DEFAULT_LED_BRIGHTNESS,
     DEFAULT_OUTPUT,
     DEFAULT_PPG_OUTPUT,
+    DEFAULT_PPG_RAW_OUTPUT,
     DEFAULT_RAISE_TO_WAKE_OUTPUT,
     DEFAULT_SWIPE_OUTPUT,
     DEFAULT_WEAR_OUTPUT,
     IMU_ENCODE_RAW,
     IMU_ENCODE_TOKEN,
+    MIC_RECORD_ID_LATEST,
+    imu_encode_name,
     LED_MODE_BLINK,
     LED_MODE_BREATHE,
     LED_MODE_ON,
@@ -66,6 +82,8 @@ class SensorsMixin:
         self,
         encode_name: str = "opus",
         *,
+        hardware_gain_db: float | None = None,
+        software_gain_db: float | None = None,
         on_pcm: Callable[[int, bytes], None] | None = None,
     ) -> None:
         assert self.client is not None
@@ -88,7 +106,14 @@ class SensorsMixin:
         except OpusUnavailableError as exc:
             print(str(exc))
             return
-        await send_mic_control(self.client, self.rx_uuid, on=True, encode=encode)
+        await send_mic_control(
+            self.client,
+            self.rx_uuid,
+            on=True,
+            encode=encode,
+            hardware_gain_db=hardware_gain_db,
+            software_gain_db=software_gain_db,
+        )
         self.mic_active = True
         print(f"mic capturing -> {path}")
 
@@ -105,6 +130,103 @@ class SensorsMixin:
             self.mic = None
         self.mic_active = False
 
+    async def mic_recording_status_get(self):
+        assert self.client is not None
+        self._mic_record_status_event.clear()
+        await send_mic_record_status_get(self.client, self.rx_uuid)
+        try:
+            await asyncio.wait_for(
+                self._mic_record_status_event.wait(), timeout=self.timeout_s
+            )
+        except TimeoutError:
+            pass
+        return self.mic_recording_status
+
+    async def _mic_recording_control(self, *, start: bool):
+        assert self.client is not None
+        self._mic_record_status_event.clear()
+        if start:
+            await send_mic_record_start(self.client, self.rx_uuid)
+        else:
+            await send_mic_record_stop(self.client, self.rx_uuid)
+        try:
+            await asyncio.wait_for(
+                self._mic_record_status_event.wait(), timeout=self.timeout_s
+            )
+        except TimeoutError:
+            pass
+        return self.mic_recording_status
+
+    async def mic_recording_start(self):
+        """Start the same local Opus-to-flash recording used by button double-click."""
+        return await self._mic_recording_control(start=True)
+
+    async def mic_recording_stop(self):
+        """Stop the active local Opus-to-flash recording and finalize it."""
+        return await self._mic_recording_control(start=False)
+
+    async def mic_recording_list(self):
+        assert self.client is not None
+        self._mic_record_list_event.clear()
+        self.mic_recording_latest_id = None
+        self.mic_recording_latest_info = None
+        await send_mic_record_list(self.client, self.rx_uuid)
+        try:
+            await asyncio.wait_for(
+                self._mic_record_list_event.wait(), timeout=self.timeout_s
+            )
+        except TimeoutError:
+            pass
+        return self.mic_recording_latest_info
+
+    async def mic_recording_read(
+        self,
+        recording_id: int = MIC_RECORD_ID_LATEST,
+        offset: int = 0,
+        max_len: int = 0,
+    ):
+        assert self.client is not None
+        self._mic_record_read_event.clear()
+        self._mic_record_read_buf = bytearray()
+        self._mic_record_read_off = offset
+        self.mic_recording_last_data = None
+        self.mic_recording_last_read_end = None
+        await send_mic_record_read(
+            self.client, self.rx_uuid, recording_id, offset, max_len
+        )
+        try:
+            await asyncio.wait_for(
+                self._mic_record_read_event.wait(), timeout=self.timeout_s
+            )
+        except TimeoutError:
+            pass
+        return self.mic_recording_last_data, self.mic_recording_last_read_end
+
+    async def mic_recording_download(
+        self, recording_id: int = MIC_RECORD_ID_LATEST, max_len: int = 0
+    ) -> bytes:
+        """Upload one complete recording as stored Opus-block bytes."""
+        offset = 0
+        buf = bytearray()
+        resolved_id = recording_id
+        while True:
+            data, end = await self.mic_recording_read(
+                resolved_id, offset, max_len
+            )
+            if data is not None:
+                resolved_id = data.recording_id
+                if data.payload:
+                    buf.extend(data.payload)
+            if end is None:
+                break
+            if end.err_code:
+                raise OSError(-end.err_code, "MIC recording upload failed")
+            resolved_id = end.recording_id
+            offset = end.next_offset
+            if end.done:
+                break
+        return bytes(buf)
+
     # --- imu ---
     async def imu_on(
         self,
@@ -114,6 +236,7 @@ class SensorsMixin:
         accel_fs: int = DEFAULT_IMU_ACCEL_FS_G,
         frames_per_packet: int = DEFAULT_IMU_FRAMES_PER_PACKET,
         encode_mode: int = IMU_ENCODE_RAW,
+        lp: bool = False,
         *,
         on_sample: Callable[[ImuSample], None] | None = None,
     ) -> None:
@@ -121,8 +244,10 @@ class SensorsMixin:
         if self.imu_active:
             print("imu already on")
             return
+        if lp and encode_mode != IMU_ENCODE_RAW:
+            raise ValueError("IMU LP mode only supports encode_mode=raw")
         path = self._seg_path("imu", DEFAULT_IMU_OUTPUT)
-        encode_name = "token" if encode_mode == IMU_ENCODE_TOKEN else "raw"
+        encode_name = imu_encode_name(encode_mode)
         if self.imu_plot_enabled and self.imu_plot is None:
             self.imu_plot = create_imu_plot(
                 window_seconds=self.imu_plot_window,
@@ -143,6 +268,7 @@ class SensorsMixin:
             live_plot=self.imu_plot if self.imu_plot_enabled else None,
             imu_chip=self.imu_chip,
             encode_mode=encode_name,
+            lp=lp,
             on_sample=on_sample,
         )
         await send_imu_start(
@@ -154,9 +280,11 @@ class SensorsMixin:
             accel_fs,
             frames_per_packet,
             encode_mode,
+            lp=lp,
         )
         self.imu_active = True
-        print(f"imu capturing ({encode_name}) -> {path}")
+        mode_tag = f"{encode_name}+lp" if lp else encode_name
+        print(f"imu capturing ({mode_tag}) -> {path}")
 
     async def imu_off(self) -> None:
         assert self.client is not None
@@ -172,11 +300,20 @@ class SensorsMixin:
             self.imu = None
         self.imu_active = False
 
+    async def imu_calibration(self) -> None:
+        assert self.client is not None
+        await send_imu_calibration_get(self.client, self.rx_uuid)
+
+    async def imu_calibrate(self) -> None:
+        assert self.client is not None
+        await send_imu_calibration_run(self.client, self.rx_uuid)
+
     # --- ppg ---
     async def ppg_on(
         self,
         mode_name: str = "hrs",
         *,
+        send_raw: bool = False,
         on_sample: Callable[[PpgSample], None] | None = None,
     ) -> None:
         assert self.client is not None
@@ -185,27 +322,35 @@ class SensorsMixin:
             print("ppg mode: hrs | spo2 | wear")
             return
         mode_label = {0: "hrs", 1: "spo2", 2: "wear"}[mode]
+        # Wear already streams IR via WEAR_PACKET; send_raw only applies to HRS/SpO2.
+        want_raw = bool(send_raw) and mode != 2
         if self.ppg_active:
-            if self.ppg_mode == mode_label:
-                print(f"ppg already on ({mode_label})")
+            if self.ppg_mode == mode_label and self.ppg_send_raw == want_raw:
+                print(f"ppg already on ({mode_label}{' raw' if want_raw else ''})")
                 return
             await self.ppg_off()
         default = DEFAULT_WEAR_OUTPUT if mode == 2 else DEFAULT_PPG_OUTPUT
         path = self._seg_path("ppg", default)
+        raw_path = (
+            self._seg_path("ppg_raw", DEFAULT_PPG_RAW_OUTPUT) if want_raw else None
+        )
         # ppg on implies printing vitals (hr / spo2 / wear) to TUI Log.
         self.print_flags.ppg = True
         self.ppg = PpgProcessor(
             path,
             print_samples=True,
             wear_csv_path=path if mode == 2 else None,
+            raw_csv_path=raw_path,
             mode=mode_label,
             log=self.emit_live,
             on_sample=on_sample,
         )
-        await send_ppg_start(self.client, self.rx_uuid, mode)
+        await send_ppg_start(self.client, self.rx_uuid, mode, send_raw=want_raw)
         self.ppg_active = True
         self.ppg_mode = mode_label
-        print(f"ppg capturing ({mode_label}) -> {path}")
+        self.ppg_send_raw = want_raw
+        suffix = " raw" if want_raw else ""
+        print(f"ppg capturing ({mode_label}{suffix}) -> {path}")
 
     async def ppg_off(self) -> None:
         assert self.client is not None
@@ -220,6 +365,7 @@ class SensorsMixin:
             self.ppg = None
         self.ppg_active = False
         self.ppg_mode = ""
+        self.ppg_send_raw = False
 
     async def ppg_calibrate(self) -> None:
         assert self.client is not None
@@ -396,3 +542,67 @@ class SensorsMixin:
             print(self.ble_test.format_summary())
             self.ble_test = None
         self.ble_test_active = False
+
+    # --- health ---
+    async def health_on(self) -> None:
+        assert self.client is not None
+        await send_health_start(self.client, self.rx_uuid)
+
+    async def health_off(self) -> None:
+        assert self.client is not None
+        await send_health_stop(self.client, self.rx_uuid)
+
+    async def health_status_get(self) -> None:
+        assert self.client is not None
+        await send_health_status_get(self.client, self.rx_uuid)
+
+    async def health_read(
+        self, session_id: int = 0, offset: int = 0, max_len: int = 0
+    ):
+        assert self.client is not None
+        self._health_read_event.clear()
+        self._health_read_buf = bytearray()
+        self._health_read_off = offset
+        self.health_last_data = None
+        self.health_last_read_end = None
+        await send_health_read(
+            self.client, self.rx_uuid, session_id, offset, max_len
+        )
+        try:
+            await asyncio.wait_for(
+                self._health_read_event.wait(), timeout=self.timeout_s
+            )
+        except TimeoutError:
+            pass
+        return self.health_last_data, self.health_last_read_end
+
+    async def health_list(self):
+        assert self.client is not None
+        self._health_list_event.clear()
+        self.health_sessions = []
+        await send_health_list(self.client, self.rx_uuid)
+        try:
+            await asyncio.wait_for(
+                self._health_list_event.wait(), timeout=self.timeout_s
+            )
+        except TimeoutError:
+            pass
+        return list(self.health_sessions)
+
+    async def health_download(self, session_id: int = 0, max_len: int = 0):
+        from ring_python_sdk.core.health import parse_health_records
+
+        offset = 0
+        buf = bytearray()
+        while True:
+            data, end = await self.health_read(session_id, offset, max_len)
+            if data is not None and data.payload:
+                buf.extend(data.payload)
+            if end is None:
+                break
+            offset = end.next_offset
+            if end.done:
+                break
+        records = parse_health_records(bytes(buf))
+        self.health_records = records
+        return records

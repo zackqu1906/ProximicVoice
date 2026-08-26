@@ -82,8 +82,13 @@ def test_streaming_backend_is_discoverable_and_classified():
 
 def test_streaming_worker_emits_partial_then_final_without_blocking_caller():
     updates = []
+    states = []
     backend = FakeStreamingBackend()
-    worker = StreamingASRWorker(backend, on_update=updates.append)
+    worker = StreamingASRWorker(
+        backend,
+        on_update=updates.append,
+        on_state=states.append,
+    )
 
     worker.start(np.ones(160, dtype=np.float32))
     worker.feed(np.ones(80, dtype=np.float32))
@@ -96,6 +101,11 @@ def test_streaming_worker_emits_partial_then_final_without_blocking_caller():
     assert [u.session_id for u in updates] == [1, 1, 1]
     assert all(u.chunk_ready_time_s is not None for u in updates)
     assert all(u.latency_s >= 0 for u in updates)
+    assert any("session=1 ASR模型开始接收音频" in state for state in states)
+    assert any("session=1 ASR最终推理开始" in state for state in states)
+    assert any("session=1 ASR模型结束" in state for state in states)
+    assert any("queue=" in state for state in states)
+    assert any("final_inference=" in state for state in states)
 
 
 def test_streaming_worker_coalesces_stale_feed_backlog():
@@ -136,6 +146,67 @@ def test_streaming_worker_reports_connect_error_once_then_drops_failed_session()
     assert backend.calls == ["start"]
     assert len(updates) == 1
     assert updates[0].error == "connect failed"
+
+
+def test_streaming_worker_aborts_lost_feed_and_reconnects_on_next_start():
+    updates = []
+
+    class RecoveringBackend:
+        backend_name = "recovering_stream"
+        model_name = "recovering-model"
+
+        def __init__(self):
+            self.calls = []
+            self.session = 0
+            self.feed_count = 0
+
+        def start(self):
+            self.session += 1
+            self.feed_count = 0
+            self.calls.append(f"start-{self.session}")
+
+        def feed(self, audio):
+            self.feed_count += 1
+            self.calls.append(f"feed-{self.session}-{self.feed_count}")
+            if self.session == 1 and self.feed_count == 2:
+                raise ConnectionError("connection lost")
+            return None
+
+        def finish(self, final_audio):
+            self.calls.append(f"finish-{self.session}")
+            return "recovered"
+
+        def abort(self):
+            self.calls.append(f"abort-{self.session}")
+
+    backend = RecoveringBackend()
+    worker = StreamingASRWorker(
+        backend,
+        on_update=updates.append,
+        on_error=lambda _: None,
+    )
+
+    worker.start(np.ones(160, dtype=np.float32))
+    worker.feed(np.ones(80, dtype=np.float32))
+    worker.feed(np.ones(80, dtype=np.float32))
+    worker.end(np.ones(320, dtype=np.float32))
+    worker.start(np.ones(160, dtype=np.float32))
+    worker.end(np.ones(320, dtype=np.float32))
+    worker.close()
+
+    assert backend.calls == [
+        "start-1",
+        "feed-1-1",
+        "feed-1-2",
+        "abort-1",
+        "start-2",
+        "feed-2-1",
+        "finish-2",
+    ]
+    assert len(updates) == 2
+    assert updates[0].error == "connection lost"
+    assert updates[1].text == "recovered"
+    assert updates[1].is_final
 
 
 def test_third_party_adapter_uses_external_api_and_redecodes_trimmed_final(monkeypatch):

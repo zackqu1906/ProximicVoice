@@ -33,6 +33,17 @@ WEAR_SAMPLE_COLUMNS = (
     "uptime_ms",
 )
 
+PPG_RAW_SAMPLE_COLUMNS = (
+    "packet_seq",
+    "sample_index",
+    "mode",
+    "channels_mask",
+    "green",
+    "red",
+    "ir",
+    "uptime_ms",
+)
+
 
 def resolve_ppg_output_path(args: argparse.Namespace) -> Path:
     session = new_session_dir(MODE_PPG)
@@ -104,6 +115,45 @@ class WearCsvWriter:
                     sar_bl,
                     sar_diff,
                     ir_raw,
+                    uptime_ms,
+                ]
+            )
+        self._file.flush()
+
+    def close(self) -> None:
+        self._file.close()
+
+
+class PpgRawCsvWriter:
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self._file = path.open("w", newline="", encoding="utf-8")
+        self._writer = csv.writer(self._file)
+        self._writer.writerow(PPG_RAW_SAMPLE_COLUMNS)
+
+    def write_rows(
+        self,
+        seq: int,
+        mode: str,
+        channels_mask: int,
+        green: list[int],
+        red: list[int],
+        ir: list[int],
+        uptime_ms: int,
+        start_index: int,
+    ) -> None:
+        count = max(len(green), len(red), len(ir))
+        for offset in range(count):
+            self._writer.writerow(
+                [
+                    seq,
+                    start_index + offset,
+                    mode,
+                    channels_mask,
+                    green[offset] if offset < len(green) else "",
+                    red[offset] if offset < len(red) else "",
+                    ir[offset] if offset < len(ir) else "",
                     uptime_ms,
                 ]
             )

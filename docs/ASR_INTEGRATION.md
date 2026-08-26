@@ -49,7 +49,7 @@ trigger. This is detector-event inactivity, not RMS silence and not a second VAD
 Defaults:
 
 ```text
-pre-roll                 1.00 s
+pre-roll                 1.50 s
 Stage2 reject count      2
 Stage1 inactivity        1.25 s
 minimum utterance        0.40 s
@@ -66,11 +66,11 @@ but its whole audio tail is not useful to ASR. The session controller therefore
 cuts the submitted waveform at the first reject's Stage2 endpoint. This reduces
 far-speech / ambient tail contamination.
 
-## Why the 1 s pre-roll stays
+## Why the 1.5 s pre-roll stays
 
 The first Stage2 decision arrives only after the 0.5 s delay. Starting waveform
 capture at the ACTIVATE event would lose the beginning of the command. The
-controller keeps the latest 1 s of the original 16 kHz Ring waveform and prepends
+controller keeps the latest 1.5 s of the original 16 kHz Ring waveform and prepends
 it when a new session starts.
 
 This never changes ProxiMic input. ProxiMic still performs its own 16 kHz -> 8 kHz

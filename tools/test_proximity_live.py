@@ -195,7 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     output_path = _csv_path(args)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     stage2_scores: list[float] = []
-    started_at = time.monotonic()
+    started_at: float | None = None
 
     print(f"\n事件 CSV        : {output_path}")
     print("请先关闭主界面中的 Ring 连接。测试开始后分别在近处、远处说话。")
@@ -218,6 +218,9 @@ def main(argv: list[str] | None = None) -> int:
             writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
             writer.writeheader()
             with source:
+                # Count only live PCM/inference time. BLE scan, connection and
+                # NUS setup must not consume the requested test duration.
+                started_at = time.monotonic()
                 while args.duration == 0 or time.monotonic() - started_at < args.duration:
                     block = source.read(320)
                     if block is None:
@@ -273,7 +276,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
 
     stats = detector.stats
-    elapsed = time.monotonic() - started_at
+    elapsed = time.monotonic() - started_at if started_at is not None else 0.0
     activation_rate = stats.activations / stats.stage2_runs if stats.stage2_runs else 0.0
     print("\n诊断汇总")
     print(f"  实际运行       : {elapsed:.2f} s")
