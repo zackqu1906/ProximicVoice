@@ -78,6 +78,7 @@ class _EditReview:
     instruction: str
     proposed_text: str
     snapshot: DesktopTextSnapshot
+    failure_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -210,6 +211,7 @@ class AppController(QObject):
         self._interaction_state = "idle"
         self._edit_review: _EditReview | None = None
         self._retry_snapshot: DesktopTextSnapshot | None = None
+        self._retry_target_armed = False
         self._pending_feedback_reason: _PendingFeedbackReason | None = None
         self._log_lines: list[str] = []
         self._ptt_active = False
@@ -618,6 +620,14 @@ class AppController(QObject):
     @Property(bool, notify=interactionChanged)
     def reviewPending(self) -> bool:
         return self._edit_review is not None
+
+    @Property(bool, notify=interactionChanged)
+    def reviewFailed(self) -> bool:
+        return bool(self._edit_review and self._edit_review.failure_error)
+
+    @Property(bool, notify=interactionChanged)
+    def reviewCanConfirm(self) -> bool:
+        return bool(self._edit_review and not self._edit_review.failure_error)
 
     @Property(bool, notify=feedbackReasonChanged)
     def feedbackReasonVisible(self) -> bool:
@@ -1647,7 +1657,7 @@ class AppController(QObject):
                         "上一条修改仍在等待确认，请先确认、取消或选择重说"
                     )
                     return
-                retrying_same_target = self._interaction_state == "retry"
+                retrying_same_target = self._retry_target_armed
                 snapshot = self._retry_snapshot if retrying_same_target else None
                 if not retrying_same_target:
                     # A failed/noop edit must not pin all future edits to the
@@ -1674,6 +1684,7 @@ class AppController(QObject):
                     # Consume the explicit retry snapshot.  A later failure
                     # may offer it again, but an unrelated edit will recapture.
                     self._retry_snapshot = None
+                    self._retry_target_armed = False
                 self._submit_text_processing(
                     text,
                     normalized_session_id,
@@ -1827,17 +1838,16 @@ class AppController(QObject):
                 f"大模型{label}处理失败：{result.error}"
             )
             if result.mode == INPUT_MODE_EDIT:
-                try:
-                    self._modification_dataset.abandon_request(
-                        result.request_id, str(result.error)
-                    )
-                except BaseException as exc:
-                    self._append_log(f"修改数据终态保存失败：{exc}")
-                if context.snapshot is not None:
-                    self._retry_snapshot = context.snapshot
-                self._reject_edit_request(
-                    f"大模型修改失败，外部文本保持不变：{result.error}"
-                )
+                if context.snapshot is None:
+                    try:
+                        self._modification_dataset.abandon_request(
+                            result.request_id, "修改目标快照已经失效"
+                        )
+                    except BaseException:
+                        pass
+                    self._reject_edit_request("修改目标快照已经失效")
+                    return
+                self._begin_failed_edit_review(result, context.snapshot)
                 return
         else:
             if result.mode == INPUT_MODE_EDIT:
@@ -2003,10 +2013,53 @@ class AppController(QObject):
             )
             self._set_status("等待确认修改", detail, "manual")
 
+    def _begin_failed_edit_review(
+        self,
+        result: TextProcessingResult,
+        snapshot: DesktopTextSnapshot,
+    ) -> None:
+        error = str(result.error or "大模型没有返回可用的修改结果").strip()
+        self._retry_snapshot = None
+        self._retry_target_armed = False
+        self._edit_review = _EditReview(
+            request_id=result.request_id,
+            session_id=result.session_id,
+            instruction=result.raw_text,
+            proposed_text="",
+            snapshot=snapshot,
+            failure_error=error,
+        )
+        self._edit_preview_html = ""
+        self._transcript_text = "\n".join(
+            (
+                "大模型修改失败，原文本保持不变",
+                error,
+                "Esc 取消  ·  按住右 Alt 重说",
+            )
+        )
+        self._transcript_final = True
+        self._transcript_visible = True
+        self._hide_overlay_timer.stop()
+        self._set_interaction_state("review_error")
+        self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._record_history(
+            "修改 · 大模型失败",
+            raw=result.raw_text,
+            detail=error,
+        )
+        self._append_log("大模型修改失败，等待用户重说或取消")
+        if self._recognition_enabled:
+            self._set_status(
+                "大模型修改失败",
+                "原文本未改变；请重说修改要求或取消",
+                "error",
+            )
+
     @Slot()
     def confirmEdit(self) -> None:
         review = self._edit_review
-        if review is None:
+        if review is None or review.failure_error:
             return
         self._clear_feedback_reason()
         try:
@@ -2076,7 +2129,12 @@ class AppController(QObject):
             message="已取消，本次修改没有执行", state="cancelled", hide_ms=2200
         )
         if feedback_saved:
-            self._offer_feedback_reason(review.request_id, "cancel")
+            if review.failure_error:
+                self._mark_automatic_llm_failure_reason(
+                    review.request_id, "cancel"
+                )
+            else:
+                self._offer_feedback_reason(review.request_id, "cancel")
 
     @Slot()
     def retryEdit(self) -> None:
@@ -2091,6 +2149,7 @@ class AppController(QObject):
         except BaseException as exc:
             self._append_log(f"修改数据重说反馈保存失败：{exc}")
         self._retry_snapshot = review.snapshot
+        self._retry_target_armed = True
         self._edit_review = None
         self._edit_preview_html = ""
         self.inputMode = INPUT_MODE_EDIT
@@ -2105,7 +2164,32 @@ class AppController(QObject):
         if self._recognition_enabled:
             self._set_status("请重说修改要求", "下一段语音仍然修改同一个文本框", "manual")
         if feedback_saved:
-            self._offer_feedback_reason(review.request_id, "retry")
+            if review.failure_error:
+                self._mark_automatic_llm_failure_reason(
+                    review.request_id, "retry"
+                )
+            else:
+                self._offer_feedback_reason(review.request_id, "retry")
+
+    def _mark_automatic_llm_failure_reason(
+        self, request_id: int, action: str
+    ) -> None:
+        try:
+            saved = self._modification_dataset.annotate_feedback_reason(
+                request_id,
+                action,
+                "llm_error",
+                input_method="automatic",
+            )
+        except BaseException as exc:
+            self._append_log(f"大模型失败原因自动保存失败：{exc}")
+            return
+        if saved:
+            action_label = "重说" if action == "retry" else "取消"
+            self._append_log(
+                f"已自动标记本次{action_label}原因："
+                f"{FEEDBACK_REASON_LABELS['llm_error']}"
+            )
 
     @Slot(str)
     def selectFeedbackReason(
@@ -2192,6 +2276,7 @@ class AppController(QObject):
         self._edit_review = None
         self._edit_preview_html = ""
         self._retry_snapshot = None
+        self._retry_target_armed = False
         self._transcript_text = message
         self._transcript_final = True
         self._transcript_visible = True
@@ -2286,6 +2371,7 @@ class AppController(QObject):
             self._edit_review = None
             self._edit_preview_html = ""
             self._retry_snapshot = None
+            self._retry_target_armed = False
             self._set_interaction_state("idle")
             self.interactionChanged.emit()
 

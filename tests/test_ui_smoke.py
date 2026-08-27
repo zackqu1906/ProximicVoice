@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 import re
@@ -594,6 +595,87 @@ def test_qml_customer_window_loads(tmp_path):
     controller.cancelEdit()
     assert controller.reviewPending is False
     assert desktop_target.current_text == "不得意外清空。"
+
+    # An LLM edit failure remains actionable instead of briefly flashing and
+    # abandoning the Episode. Retrying automatically records the known cause
+    # and creates the next Attempt in the same Episode.
+    desktop_target.current_text = "大模型失败时保留的原文。"
+    controller._apply_runtime_update("把原文改得更清楚", True, "", 60)
+    failed_request = submitted[6]
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=failed_request.request_id,
+            session_id=60,
+            mode=failed_request.mode,
+            raw_text=failed_request.raw_text,
+            final_text=failed_request.target_text,
+            latency_s=0.3,
+            used_llm=True,
+            target_text=failed_request.target_text,
+            error="两种编辑协议均失败（返回格式无效）",
+        )
+    )
+    app.processEvents()
+    assert controller.reviewPending is True
+    assert controller.reviewFailed is True
+    assert controller.reviewCanConfirm is False
+    assert controller.interactionState == "review_error"
+    assert "两种编辑协议均失败" in controller.transcriptText
+    assert controller._hide_overlay_timer.isActive() is False
+    assert confirm_edit_button.property("visible") is False
+    assert cancel_edit_button.property("visible") is True
+    assert retry_edit_button.property("visible") is True
+    controller.confirmEdit()
+    assert controller.reviewPending is True
+
+    failed_attempt_path = (
+        controller._modification_dataset.user_root
+        / failed_request.episode_id
+        / failed_request.attempt_id
+        / "attempt.json"
+    )
+    failed_attempt = json.loads(failed_attempt_path.read_text(encoding="utf-8"))
+    assert failed_attempt["status"] == "failed"
+    assert failed_attempt["llm_error"] == "两种编辑协议均失败（返回格式无效）"
+    episode_path = failed_attempt_path.parents[1] / "episode.json"
+    episode = json.loads(episode_path.read_text(encoding="utf-8"))
+    assert episode["final_status"] == "active"
+
+    controller.retryEdit()
+    assert controller.reviewPending is False
+    assert controller.interactionState == "retry"
+    assert controller.feedbackReasonVisible is False
+    failed_attempt = json.loads(failed_attempt_path.read_text(encoding="utf-8"))
+    retry_reason = failed_attempt["feedback"][-1]["failure_reason"]
+    assert retry_reason["code"] == "llm_error"
+    assert retry_reason["input_method"] == "automatic"
+    assert "已自动标记本次重说原因：大模型理解错误" in controller.logText
+
+    controller._apply_runtime_update("改得简洁清楚", True, "", 61)
+    recovered_request = submitted[7]
+    assert recovered_request.episode_id == failed_request.episode_id
+    assert recovered_request.attempt_id != failed_request.attempt_id
+    assert recovered_request.target_text == "大模型失败时保留的原文。"
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=recovered_request.request_id,
+            session_id=61,
+            mode=recovered_request.mode,
+            raw_text=recovered_request.raw_text,
+            final_text="恢复后的清楚文本。",
+            latency_s=0.2,
+            used_llm=True,
+            target_text=recovered_request.target_text,
+        )
+    )
+    controller.confirmEdit()
+    assert desktop_target.current_text == "恢复后的清楚文本。"
+    episode = json.loads(episode_path.read_text(encoding="utf-8"))
+    assert episode["attempt_ids"] == [
+        failed_request.attempt_id,
+        recovered_request.attempt_id,
+    ]
+    assert episode["final_status"] == "completed"
 
     submitted_before_oversized_capture = len(submitted)
     desktop_target.current_text = "页面内容" * (MAX_EDIT_TARGET_CHARS // 4 + 1)

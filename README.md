@@ -220,6 +220,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 8. 输入模式可通过按钮选择是否再由文本 LLM 整理；按住右 `Alt` 说话，松开后等待处理完成。
 9. 修改模式出现确认状态后，按 `Enter` 应用或按 `Esc` 取消。
 
+如果大模型没有返回可用的编辑结果，悬浮窗会持续显示具体错误，只允许取消或重说，
+不会修改原文本。重说会继续当前 Episode，并自动把失败 Attempt 标记为
+`llm_error`；下一次成功确认后再结束整个 Episode。
+
 “暂停语音识别”只暂停 ProxiMic 和 ASR，Ring 仍保持连接；“断开设备”才会释放麦克风和 BLE。
 
 ## 两种文本模式

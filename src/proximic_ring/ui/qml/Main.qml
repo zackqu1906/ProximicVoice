@@ -380,6 +380,7 @@ ApplicationWindow {
                         Button {
                             objectName: "confirmEditButton"
                             text: "确认应用"
+                            visible: appController.reviewCanConfirm
                             onClicked: appController.confirmEdit()
                         }
                         Button {
@@ -1043,9 +1044,11 @@ ApplicationWindow {
             anchors.fill: parent
             radius: 18
             color: "#E9111620"
-            border.color: appController.reviewPending
-                          ? "#8AC084FC"
-                          : (appController.transcriptFinal ? "#594DD4AC" : "#477892FF")
+            border.color: appController.reviewFailed
+                          ? "#8AFF646F"
+                          : appController.reviewPending
+                            ? "#8AC084FC"
+                            : (appController.transcriptFinal ? "#594DD4AC" : "#477892FF")
             border.width: 1
             Column {
                 id: overlayContent
@@ -1057,9 +1060,11 @@ ApplicationWindow {
                     id: overlayText
                     width: parent.width
                     text: appController.transcriptText
-                    color: appController.reviewPending
-                           ? "#E4D0FF"
-                           : (appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB")
+                    color: appController.reviewFailed
+                           ? "#FF9DA5"
+                           : appController.reviewPending
+                             ? "#E4D0FF"
+                             : (appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB")
                     font.family: "Microsoft YaHei UI"
                     font.pixelSize: 17
                     wrapMode: Text.Wrap
@@ -1067,7 +1072,7 @@ ApplicationWindow {
 
                 Label {
                     width: parent.width
-                    visible: appController.reviewPending
+                    visible: appController.reviewCanConfirm
                     text: "修改后："
                     color: "#AEB8C8"
                     font.family: "Microsoft YaHei UI"
@@ -1078,7 +1083,7 @@ ApplicationWindow {
                     id: editPreviewText
                     objectName: "editPreviewText"
                     width: parent.width
-                    visible: appController.reviewPending
+                    visible: appController.reviewCanConfirm
                     text: appController.editPreviewHtml
                     textFormat: Text.RichText
                     color: "#F5F7FB"

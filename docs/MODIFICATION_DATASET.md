@@ -23,6 +23,16 @@ dataset/<anonymous_user_id>/<episode_id>/
 - `attempt.json` 保存目标全文、应用名、ASR 摘要、LLM 配置、候选和用户反馈事件。
 - `episode.json` 汇总重说产生的 Attempt，并在确认、取消、应用失败或中断时持久化终态。
 
+LLM 没有返回可用编辑结果时，错误会立即保存在该 Attempt 的 `llm_error`，两条分支
+各自的原始返回、校验错误和延迟仍保存在 `llm_branches.jsonl`。此时 Episode 保持
+`active`，界面持续显示具体错误，并只允许用户重说或取消，不会因提示超时而直接把
+Episode 标为 abandoned。
+
+用户在这个已知 LLM 失败状态选择重说时，当前 Attempt 会先实时写入 `retry`，随后
+自动附加 `failure_reason.code = "llm_error"` 和 `input_method = "automatic"`；不再要求
+用户额外选择原因。下一段语音会复用原目标文本，在同一 Episode 下创建新的 Attempt。
+若用户选择取消，同样会自动标注已知的 `llm_error`，然后把 Episode 结束为 cancelled。
+
 确认或取消后，UI 会重新读取目标控件中的真实文本。回读值与已知候选/原文不同
 时，Episode 的 `manually_corrected` 为 `true`。`retry` 只结束当前 Attempt，下一段
 语音会创建同一 Episode 下的新 Attempt；音频不会跨 Attempt 重新配对。
