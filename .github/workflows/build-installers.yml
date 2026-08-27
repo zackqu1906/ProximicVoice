@@ -19,18 +19,28 @@ jobs:
             pyproject.toml
             requirements-windows.lock
             requirements-packaging.txt
-      - name: Prepare lightweight packaging runtime
+      - name: Create packaging virtual environment
         shell: pwsh
         run: |
           python -m venv .runtime/venv
           $Python = ".\.runtime\venv\Scripts\python.exe"
           & $Python -m pip install --upgrade pip setuptools wheel
+      - name: Install CPU PyTorch
+        shell: pwsh
+        run: |
+          $Python = ".\.runtime\venv\Scripts\python.exe"
           & $Python -m pip install --index-url https://download.pytorch.org/whl/cpu `
             "torch==2.11.0" "torchaudio==2.11.0"
+      - name: Install application and packaging dependencies
+        shell: pwsh
+        run: |
+          $Python = ".\.runtime\venv\Scripts\python.exe"
           & $Python -m pip install -c requirements-windows.lock `
             ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" `
             -r requirements-packaging.txt
-          .\scripts\install-opus-runtime.ps1
+      - name: Install Windows Opus runtime
+        shell: pwsh
+        run: ./scripts/install-opus-runtime.ps1
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
