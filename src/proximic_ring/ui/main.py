@@ -7,7 +7,7 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
-    from ..runtime_paths import configure_runtime_environment
+    from ..runtime_paths import configure_runtime_environment, resource_root
 
     configure_runtime_environment()
     try:
@@ -73,7 +73,14 @@ def main(argv: list[str] | None = None) -> int:
     # frame instead of making the user's first utterance pay this cost.
     if startup_probe:
         # Packaging CI sets this flag to prove the frozen executable can import
-        # the application, create Qt, load QML and enter its event loop.
+        # the application, QML, and the dynamically loaded ASR modules.
+        from ..asr.backends.streaming_sensevoice import StreamingSenseVoiceASR
+
+        StreamingSenseVoiceASR._load_external_class(
+            resource_root() / "third_party" / "streaming-sensevoice"
+        )
+        __import__("funasr.auto.auto_model")
+        print("[startup] packaged ASR imports ready")
         QTimer.singleShot(300, app.quit)
     else:
         QTimer.singleShot(600, controller.warmLocalModel)

@@ -60,6 +60,38 @@ def test_compute_device_discovery_lists_cuda(monkeypatch):
     assert AppController._detect_nvidia_gpu_name() == ""
 
 
+def test_device_scan_keeps_one_snapshot_until_manual_rescan(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication, QSettings
+
+    from proximic_ring.ui.controller import AppController
+
+    _app = QCoreApplication.instance() or QCoreApplication(["device-scan-test"])
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    controller = AppController()
+    scans = []
+    monkeypatch.setattr(controller, "_scan_devices_once", lambda: scans.append(True))
+
+    controller.scanDevices()
+    assert scans == [True]
+
+    controller._scan_busy = True
+    controller._apply_scan_finished(
+        [{"name": "Ringo Test", "identifier": "RING-ID", "rssi": -40}],
+        "",
+    )
+    assert scans == [True]
+    assert controller.availableDevices == [
+        {"name": "Ringo Test", "identifier": "RING-ID", "rssi": -40}
+    ]
+    assert controller.scanMessage == "已发现 1 个设备，显示 1 个匹配“Ringo”的设备"
+
+    controller.scanDevices()
+    assert scans == [True, True]
+    assert controller.availableDevices == []
+
+
 def test_qml_customer_window_loads(tmp_path):
     pytest.importorskip("PySide6")
     from PySide6.QtCore import (

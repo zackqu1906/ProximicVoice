@@ -9,15 +9,15 @@ hiddenimports, binaries, datas = add_qt6_dependencies(__file__)
 qml_binaries, qml_datas = pyside6_library_info.collect_qtqml_files()
 
 _ROOTS = {
-    "PySide6/qml/QtCore",
-    "PySide6/qml/QtQml",
-    "PySide6/qml/QtQml/Models",
-    "PySide6/qml/QtQml/WorkerScript",
-    "PySide6/qml/QtQuick",
-    "PySide6/qml/QtQuick/Controls",
-    "PySide6/qml/QtQuick/Layouts",
-    "PySide6/qml/QtQuick/Templates",
-    "PySide6/qml/QtQuick/Window",
+    "PySide6/Qt/qml/QtCore",
+    "PySide6/Qt/qml/QtQml",
+    "PySide6/Qt/qml/QtQml/Models",
+    "PySide6/Qt/qml/QtQml/WorkerScript",
+    "PySide6/Qt/qml/QtQuick",
+    "PySide6/Qt/qml/QtQuick/Controls",
+    "PySide6/Qt/qml/QtQuick/Layouts",
+    "PySide6/Qt/qml/QtQuick/Templates",
+    "PySide6/Qt/qml/QtQuick/Window",
 }
 
 
