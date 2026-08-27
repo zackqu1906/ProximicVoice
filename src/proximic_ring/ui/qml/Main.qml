@@ -1089,4 +1089,67 @@ ApplicationWindow {
             }
         }
     }
+
+    Window {
+        id: feedbackReasonOverlay
+        objectName: "feedbackReasonOverlay"
+        width: 250
+        height: 166
+        readonly property real rightSideX: transcriptOverlay.x + transcriptOverlay.width + 12
+        x: rightSideX + width <= Screen.width - 16
+           ? rightSideX
+           : Math.max(16, transcriptOverlay.x + transcriptOverlay.width - width)
+        y: rightSideX + width <= Screen.width - 16
+           ? Math.max(16, transcriptOverlay.y + transcriptOverlay.height - height)
+           : Math.max(16, transcriptOverlay.y - height - 12)
+        visible: appController.feedbackReasonVisible
+        color: "transparent"
+        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 16
+            color: "#F2141924"
+            border.color: "#637892FF"
+            border.width: 1
+
+            Column {
+                anchors.fill: parent
+                anchors.margins: 16
+                spacing: 7
+
+                Label {
+                    text: appController.feedbackReasonPrompt
+                    color: "#F5F7FB"
+                    font.family: "Microsoft YaHei UI"
+                    font.pixelSize: 15
+                    font.bold: true
+                }
+                Label {
+                    text: "Alt+A   语音识别错误"
+                    color: "#DDE5F2"
+                    font.family: "Microsoft YaHei UI"
+                    font.pixelSize: 13
+                }
+                Label {
+                    text: "Alt+L   大模型理解错误"
+                    color: "#DDE5F2"
+                    font.family: "Microsoft YaHei UI"
+                    font.pixelSize: 13
+                }
+                Label {
+                    text: "Alt+O   其他原因"
+                    color: "#DDE5F2"
+                    font.family: "Microsoft YaHei UI"
+                    font.pixelSize: 13
+                }
+                Label {
+                    text: "10 秒内不选择则不标记"
+                    color: "#8F9BAD"
+                    font.family: "Microsoft YaHei UI"
+                    font.pixelSize: 11
+                }
+            }
+        }
+    }
 }

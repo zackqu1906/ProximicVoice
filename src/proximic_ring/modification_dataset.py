@@ -17,6 +17,12 @@ import numpy as np
 SCHEMA_VERSION = 1
 PROMPT_VERSION = "edit-race-v1"
 _MAX_PENDING_SESSIONS = 8
+FEEDBACK_REASON_LABELS = {
+    "asr_error": "语音识别错误",
+    "llm_error": "大模型理解错误",
+    "other": "其他原因",
+}
+_REASONABLE_FEEDBACK_ACTIONS = {"retry", "cancel"}
 
 
 def _utc_now() -> str:
@@ -259,6 +265,55 @@ class ModificationDatasetCollector:
 
     def abandon_request(self, request_id: int, error: str) -> None:
         self.feedback(request_id, "abandoned", error=error)
+
+    def annotate_feedback_reason(
+        self,
+        request_id: int,
+        action: str,
+        reason_code: str,
+        *,
+        input_method: str = "keyboard",
+    ) -> bool:
+        """Attach an optional reason to the matching persisted feedback event.
+
+        The retry/cancel event is written first so closing or crashing the app
+        cannot lose the user's primary action.  This method performs a later
+        atomic rewrite only if the user explicitly supplies a reason.
+        """
+        normalized_action = str(action).strip().lower()
+        normalized_reason = str(reason_code).strip().lower()
+        if normalized_action not in _REASONABLE_FEEDBACK_ACTIONS:
+            raise ValueError(f"unsupported feedback reason action: {action}")
+        if normalized_reason not in FEEDBACK_REASON_LABELS:
+            raise ValueError(f"unsupported feedback reason: {reason_code}")
+
+        with self._lock:
+            reference = self._request_attempts.get(int(request_id))
+            if reference is None:
+                return False
+            episode_id, attempt_id = reference
+            attempt_path = self._attempt_dir(episode_id, attempt_id) / "attempt.json"
+            attempt = self._read_json(attempt_path)
+            event = next(
+                (
+                    item
+                    for item in reversed(attempt.get("feedback", []))
+                    if item.get("action") == normalized_action
+                    and "failure_reason" not in item
+                ),
+                None,
+            )
+            if event is None:
+                return False
+            event["failure_reason"] = {
+                "code": normalized_reason,
+                "label": FEEDBACK_REASON_LABELS[normalized_reason],
+                "selected_at": _utc_now(),
+                "input_method": str(input_method).strip() or "unknown",
+            }
+            attempt["updated_at"] = _utc_now()
+            self._write_json(attempt_path, attempt)
+            return True
 
     @staticmethod
     def _new_id(prefix: str) -> str:

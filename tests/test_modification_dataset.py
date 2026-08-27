@@ -6,6 +6,7 @@ import threading
 import wave
 
 import numpy as np
+import pytest
 
 from proximic_ring.modification_dataset import ModificationDatasetCollector
 from proximic_ring.asr.session_sink import RawAudioObserverSessionSink
@@ -95,6 +96,19 @@ def test_retry_attempts_share_episode_and_persist_complete_training_trace(tmp_pa
     )
     collector.record_llm_result(10, _result(10, 1, "正式文本。", "fragment"))
     collector.feedback(10, "retry")
+    first_attempt_path = (
+        tmp_path
+        / "dataset"
+        / "anonymous-1"
+        / episode_id
+        / first_attempt
+        / "attempt.json"
+    )
+    unmarked_retry = json.loads(first_attempt_path.read_text(encoding="utf-8"))
+    assert "failure_reason" not in unmarked_retry["feedback"][0]
+    assert collector.annotate_feedback_reason(
+        10, "retry", "asr_error", input_method="keyboard"
+    ) is True
 
     collector.record_audio(2, np.zeros(800, dtype=np.float32))
     collector.record_asr_update(_update(2, "改成公文语气", final=True))
@@ -143,7 +157,41 @@ def test_retry_attempts_share_episode_and_persist_complete_training_trace(tmp_pa
     first_meta = json.loads((first_dir / "attempt.json").read_text(encoding="utf-8"))
     assert first_meta["feedback"][0]["action"] == "retry"
     assert "preview_dwell_ms" in first_meta["feedback"][0]
+    assert first_meta["feedback"][0]["failure_reason"]["code"] == "asr_error"
+    assert first_meta["feedback"][0]["failure_reason"]["label"] == "语音识别错误"
+    assert first_meta["feedback"][0]["failure_reason"]["input_method"] == "keyboard"
+    assert "selected_at" in first_meta["feedback"][0]["failure_reason"]
     assert first_meta["llm"]["winner_branch"] == "fragment"
+
+
+def test_cancel_reason_can_be_attached_after_episode_is_finalized(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    episode_id, attempt_id = collector.begin_attempt(
+        request_id=20,
+        session_id=2,
+        target_text="原文。",
+        application="editor.exe",
+        provider="local",
+        model="qwen.gguf",
+    )
+    collector.feedback(20, "cancel", final_text="原文。")
+
+    assert collector.annotate_feedback_reason(20, "cancel", "llm_error") is True
+    attempt_path = (
+        tmp_path
+        / "dataset"
+        / "anonymous-1"
+        / episode_id
+        / attempt_id
+        / "attempt.json"
+    )
+    attempt = json.loads(attempt_path.read_text(encoding="utf-8"))
+    assert attempt["feedback"][-1]["failure_reason"]["code"] == "llm_error"
+    assert attempt["feedback"][-1]["failure_reason"]["label"] == "大模型理解错误"
+    assert collector.annotate_feedback_reason(20, "cancel", "other") is False
+
+    with pytest.raises(ValueError, match="unsupported feedback reason"):
+        collector.annotate_feedback_reason(20, "cancel", "unknown")
 
 
 def test_collection_race_waits_for_and_records_both_parallel_branches():

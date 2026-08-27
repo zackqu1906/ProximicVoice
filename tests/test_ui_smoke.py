@@ -176,6 +176,7 @@ def test_qml_customer_window_loads(tmp_path):
     cancel_edit_button = window.findChild(QObject, "cancelEditButton")
     retry_edit_button = window.findChild(QObject, "retryEditButton")
     edit_preview_text = window.findChild(QObject, "editPreviewText")
+    feedback_reason_overlay = window.findChild(QObject, "feedbackReasonOverlay")
     log_area = window.findChild(QObject, "logArea")
     primary_connection_button = window.findChild(QObject, "primaryConnectionButton")
     secondary_connection_button = window.findChild(QObject, "secondaryConnectionButton")
@@ -197,6 +198,8 @@ def test_qml_customer_window_loads(tmp_path):
     assert edit_mode_button is not None
     assert dictation_llm_button is not None
     assert voice_input_card is not None
+    assert feedback_reason_overlay is not None
+    assert controller.feedbackReasonVisible is False
     assert controller.llmEnabled is True
     QMetaObject.invokeMethod(picker, "close")
     QTest.qWait(300)
@@ -487,6 +490,14 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.interactionState == "retry"
     app.processEvents()
     assert confirm_edit_button.property("visible") is False
+    assert controller.feedbackReasonVisible is True
+    assert feedback_reason_overlay.property("visible") is True
+    assert controller.feedbackReasonPrompt == "刚才为什么重说？"
+    controller._apply_voice_action("reason_asr_error")
+    app.processEvents()
+    assert controller.feedbackReasonVisible is False
+    assert feedback_reason_overlay.property("visible") is False
+    assert "已标记本次重说原因：语音识别错误" in controller.logText
 
     controller._apply_runtime_update("改得简洁正式", True, "", 44)
     retry_request = submitted[2]
@@ -526,6 +537,9 @@ def test_qml_customer_window_loads(tmp_path):
         )
     )
     controller.cancelEdit()
+    app.processEvents()
+    assert controller.feedbackReasonVisible is True
+    assert controller.feedbackReasonPrompt == "刚才为什么取消？"
     assert desktop_target.current_text == "正式的新文本。"
     assert desktop_target.released[-1] == target_ref
     assert "修改 · 已取消" in controller.sessionHistoryText
@@ -552,6 +566,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert "确认后将清空目标文本框" in controller.transcriptText
     assert desktop_target.current_text == "正式的新文本。"
     controller.confirmEdit()
+    assert controller.feedbackReasonVisible is False
     assert desktop_target.current_text == ""
     assert desktop_target.replaced[-1] == ""
     assert controller.reviewPending is False

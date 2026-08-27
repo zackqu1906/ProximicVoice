@@ -21,6 +21,9 @@ ACTION_EDIT = "edit"
 ACTION_CONFIRM = "confirm"
 ACTION_CANCEL = "cancel"
 ACTION_RETRY = "retry"
+ACTION_REASON_ASR_ERROR = "reason_asr_error"
+ACTION_REASON_LLM_ERROR = "reason_llm_error"
+ACTION_REASON_OTHER = "reason_other"
 
 
 if os.name == "nt":
@@ -61,18 +64,27 @@ class WindowsVoiceActionHotkeys:
         0x0D: ACTION_CONFIRM,    # Enter while a review is visible
         0x1B: ACTION_CANCEL,     # Escape while a review is visible
     }
+    _FEEDBACK_REASON_ACTIONS = {
+        0x41: ACTION_REASON_ASR_ERROR,  # Alt+A
+        0x4C: ACTION_REASON_LLM_ERROR,  # Alt+L
+        0x4F: ACTION_REASON_OTHER,      # Alt+O
+    }
 
     def __init__(
         self,
         on_action: Callable[[str], None],
         *,
         is_review_active: Callable[[], bool] | None = None,
+        is_feedback_reason_active: Callable[[], bool] | None = None,
         on_error: Callable[[str], None] = print,
     ) -> None:
         if os.name != "nt":
             raise RuntimeError("全局语音动作快捷键目前仅支持 Windows")
         self._on_action = on_action
         self._is_review_active = is_review_active or (lambda: False)
+        self._is_feedback_reason_active = (
+            is_feedback_reason_active or (lambda: False)
+        )
         self._on_error = on_error
         self._ready = threading.Event()
         self._thread_id = 0
@@ -114,11 +126,12 @@ class WindowsVoiceActionHotkeys:
                     message = int(w_param)
                     is_down = message in (self.WM_KEYDOWN, self.WM_SYSKEYDOWN)
                     is_up = message in (self.WM_KEYUP, self.WM_SYSKEYUP)
-                    action = None
-                    if self._alt_down(user32):
-                        action = self._ALT_ACTIONS.get(key)
-                    if action is None and self._is_review_active():
-                        action = self._REVIEW_ACTIONS.get(key)
+                    action = self._action_for_key(
+                        key,
+                        alt_down=self._alt_down(user32),
+                        review_active=self._is_review_active(),
+                        feedback_reason_active=self._is_feedback_reason_active(),
+                    )
                     if is_up:
                         was_consumed = key in self._pressed_actions
                         self._pressed_actions.discard(key)
@@ -162,6 +175,27 @@ class WindowsVoiceActionHotkeys:
 
     def _alt_down(self, user32) -> bool:
         return bool(user32.GetAsyncKeyState(self.VK_MENU) & 0x8000)
+
+    @classmethod
+    def _action_for_key(
+        cls,
+        key: int,
+        *,
+        alt_down: bool,
+        review_active: bool,
+        feedback_reason_active: bool,
+    ) -> str | None:
+        if alt_down and feedback_reason_active:
+            reason_action = cls._FEEDBACK_REASON_ACTIONS.get(int(key))
+            if reason_action is not None:
+                return reason_action
+        if alt_down:
+            action = cls._ALT_ACTIONS.get(int(key))
+            if action is not None:
+                return action
+        if review_active:
+            return cls._REVIEW_ACTIONS.get(int(key))
+        return None
 
     @staticmethod
     def _configure_win32(user32, kernel32) -> None:

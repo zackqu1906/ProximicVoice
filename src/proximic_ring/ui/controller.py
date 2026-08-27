@@ -24,7 +24,11 @@ from ..app_runtime import (
 )
 from ..desktop_target import DesktopTargetRef, DesktopTextSnapshot
 from ..model_packages import install_default_local_model
-from ..modification_dataset import ModificationDatasetCollector, PROMPT_VERSION
+from ..modification_dataset import (
+    FEEDBACK_REASON_LABELS,
+    ModificationDatasetCollector,
+    PROMPT_VERSION,
+)
 from ..runtime_paths import app_data_root, is_frozen, resource_root
 from ..text_processing import (
     DEFAULT_ARK_API_KEY_ENV,
@@ -54,6 +58,9 @@ from ..voice_actions import (
     ACTION_CONFIRM,
     ACTION_EDIT,
     ACTION_INPUT,
+    ACTION_REASON_ASR_ERROR,
+    ACTION_REASON_LLM_ERROR,
+    ACTION_REASON_OTHER,
     ACTION_RETRY,
 )
 
@@ -71,6 +78,12 @@ class _EditReview:
     instruction: str
     proposed_text: str
     snapshot: DesktopTextSnapshot
+
+
+@dataclass(frozen=True)
+class _PendingFeedbackReason:
+    request_id: int
+    action: str
 
 
 _EDIT_DIFF_COLOR = "#FF646F"
@@ -160,6 +173,7 @@ class AppController(QObject):
     inputModeChanged = Signal()
     textProcessingChanged = Signal()
     localModelInstallationChanged = Signal()
+    feedbackReasonChanged = Signal()
 
     _runtimeStatus = Signal(str)
     _runtimeConnected = Signal()
@@ -196,6 +210,7 @@ class AppController(QObject):
         self._interaction_state = "idle"
         self._edit_review: _EditReview | None = None
         self._retry_snapshot: DesktopTextSnapshot | None = None
+        self._pending_feedback_reason: _PendingFeedbackReason | None = None
         self._log_lines: list[str] = []
         self._ptt_active = False
         self._input_mode = normalize_input_mode(
@@ -402,6 +417,10 @@ class AppController(QObject):
         self._hide_overlay_timer = QTimer(self)
         self._hide_overlay_timer.setSingleShot(True)
         self._hide_overlay_timer.timeout.connect(self._hide_transcript)
+        self._feedback_reason_timer = QTimer(self)
+        self._feedback_reason_timer.setSingleShot(True)
+        self._feedback_reason_timer.setInterval(10_000)
+        self._feedback_reason_timer.timeout.connect(self._clear_feedback_reason)
         self._quit_timer = QTimer(self)
         self._quit_timer.setInterval(100)
         self._quit_timer.timeout.connect(self._finish_quit)
@@ -599,6 +618,17 @@ class AppController(QObject):
     @Property(bool, notify=interactionChanged)
     def reviewPending(self) -> bool:
         return self._edit_review is not None
+
+    @Property(bool, notify=feedbackReasonChanged)
+    def feedbackReasonVisible(self) -> bool:
+        return self._pending_feedback_reason is not None
+
+    @Property(str, notify=feedbackReasonChanged)
+    def feedbackReasonPrompt(self) -> str:
+        pending = self._pending_feedback_reason
+        if pending is not None and pending.action == "cancel":
+            return "刚才为什么取消？"
+        return "刚才为什么重说？"
 
     @Property(str, notify=logChanged)
     def logText(self) -> str:
@@ -1105,6 +1135,7 @@ class AppController(QObject):
     def _start_selected_device(self) -> None:
         if self._worker is not None and self._worker.is_alive():
             return
+        self._clear_feedback_reason()
         try:
             settings = self._runtime_settings()
         except BaseException as exc:
@@ -1326,6 +1357,7 @@ class AppController(QObject):
             QCoreApplication.quit()
             return
         self._quitting = True
+        self._clear_feedback_reason()
         self._cancel_pending_text_processing()
         self._text_processing_worker.close(wait=False)
         self._quit_wait_ticks = 0
@@ -1976,6 +2008,7 @@ class AppController(QObject):
         review = self._edit_review
         if review is None:
             return
+        self._clear_feedback_reason()
         try:
             self._desktop_target_adapter().replace(
                 review.snapshot, review.proposed_text
@@ -2022,6 +2055,8 @@ class AppController(QObject):
         review = self._edit_review
         if review is None:
             return
+        self._clear_feedback_reason()
+        feedback_saved = False
         final_text, manually_corrected = self._read_back_edit_text(
             review, fallback=review.snapshot.text
         )
@@ -2032,6 +2067,7 @@ class AppController(QObject):
                 final_text=final_text,
                 manually_corrected=manually_corrected,
             )
+            feedback_saved = True
         except BaseException as exc:
             self._append_log(f"修改数据取消反馈保存失败：{exc}")
         self._desktop_target_adapter().release_selection(review.snapshot.target)
@@ -2039,14 +2075,19 @@ class AppController(QObject):
         self._finish_edit_review(
             message="已取消，本次修改没有执行", state="cancelled", hide_ms=2200
         )
+        if feedback_saved:
+            self._offer_feedback_reason(review.request_id, "cancel")
 
     @Slot()
     def retryEdit(self) -> None:
         review = self._edit_review
         if review is None:
             return
+        self._clear_feedback_reason()
+        feedback_saved = False
         try:
             self._modification_dataset.feedback(review.request_id, "retry")
+            feedback_saved = True
         except BaseException as exc:
             self._append_log(f"修改数据重说反馈保存失败：{exc}")
         self._retry_snapshot = review.snapshot
@@ -2063,6 +2104,48 @@ class AppController(QObject):
         self._record_history("修改 · 等待重说", raw=review.instruction)
         if self._recognition_enabled:
             self._set_status("请重说修改要求", "下一段语音仍然修改同一个文本框", "manual")
+        if feedback_saved:
+            self._offer_feedback_reason(review.request_id, "retry")
+
+    @Slot(str)
+    def selectFeedbackReason(
+        self, reason_code: str, input_method: str = "keyboard"
+    ) -> None:
+        pending = self._pending_feedback_reason
+        if pending is None:
+            return
+        normalized_reason = str(reason_code).strip().lower()
+        try:
+            saved = self._modification_dataset.annotate_feedback_reason(
+                pending.request_id,
+                pending.action,
+                normalized_reason,
+                input_method=input_method,
+            )
+        except BaseException as exc:
+            self._append_log(f"修改失败原因保存失败：{exc}")
+            saved = False
+        if saved:
+            label = FEEDBACK_REASON_LABELS.get(normalized_reason, normalized_reason)
+            action_label = "重说" if pending.action == "retry" else "取消"
+            self._append_log(f"已标记本次{action_label}原因：{label}")
+        self._clear_feedback_reason()
+
+    def _offer_feedback_reason(self, request_id: int, action: str) -> None:
+        self._pending_feedback_reason = _PendingFeedbackReason(
+            request_id=int(request_id), action=str(action)
+        )
+        self._feedback_reason_timer.start()
+        self.feedbackReasonChanged.emit()
+
+    @Slot()
+    def _clear_feedback_reason(self) -> None:
+        if self._pending_feedback_reason is None:
+            self._feedback_reason_timer.stop()
+            return
+        self._pending_feedback_reason = None
+        self._feedback_reason_timer.stop()
+        self.feedbackReasonChanged.emit()
 
     def _read_back_edit_text(
         self, review: _EditReview, *, fallback: str
@@ -2098,6 +2181,12 @@ class AppController(QObject):
             self.cancelEdit()
         elif action == ACTION_RETRY:
             self.retryEdit()
+        elif action == ACTION_REASON_ASR_ERROR:
+            self.selectFeedbackReason("asr_error")
+        elif action == ACTION_REASON_LLM_ERROR:
+            self.selectFeedbackReason("llm_error")
+        elif action == ACTION_REASON_OTHER:
+            self.selectFeedbackReason("other")
 
     def _finish_edit_review(self, *, message: str, state: str, hide_ms: int) -> None:
         self._edit_review = None
@@ -2163,6 +2252,7 @@ class AppController(QObject):
         self._append_log(f"修改目标已读取：{title}（{len(text)} 个字符）")
 
     def _cancel_pending_text_processing(self) -> None:
+        self._clear_feedback_reason()
         had_pending = bool(self._pending_text_requests)
         for request_id in tuple(self._pending_text_requests):
             try:

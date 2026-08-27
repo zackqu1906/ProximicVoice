@@ -52,6 +52,7 @@ def main(argv: list[str] | None = None) -> int:
             voice_action_hotkeys = WindowsVoiceActionHotkeys(
                 controller.dispatchVoiceAction,
                 is_review_active=lambda: controller.reviewPending,
+                is_feedback_reason_active=lambda: controller.feedbackReasonVisible,
             )
             app.aboutToQuit.connect(voice_action_hotkeys.close)
         except BaseException as exc:

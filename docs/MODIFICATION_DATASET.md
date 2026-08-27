@@ -27,5 +27,17 @@ dataset/<anonymous_user_id>/<episode_id>/
 时，Episode 的 `manually_corrected` 为 `true`。`retry` 只结束当前 Attempt，下一段
 语音会创建同一 Episode 下的新 Attempt；音频不会跨 Attempt 重新配对。
 
+`retry` 或 `cancel` 按下后，右侧会显示 10 秒的可选失败原因提示：
+
+- `Alt+A`：`asr_error`，语音识别错误；
+- `Alt+L`：`llm_error`，大模型理解错误；
+- `Alt+O`：`other`，用户想法变化、没说好等其他原因。
+
+主操作会先实时写入 `attempt.json`。用户在提示有效期内选择原因后，程序再把
+`failure_reason`（包含 `code`、显示标签、选择时间和输入方式）原子回写到对应的
+retry/cancel 事件。超时或在选择前执行下一次 retry/confirm/cancel 时，不写任何原因
+字段；训练数据不得把这种未标注情况解释成“其他”。这些设备无关的原因动作以后可
+直接由 Ring 手势接口触发。
+
 训练集构建时应只用同一个 Attempt 的 `audio_raw.wav` 和 ASR final。重说后的最终文本
 可以作为 Episode 监督目标或偏好 chosen，但不得直接标注到重说前的音频上。
