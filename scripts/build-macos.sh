@@ -32,6 +32,32 @@ else
     codesign --force --deep --sign - "$APP"
 fi
 
+codesign --verify --deep --strict --verbose=2 "$APP"
+plutil -lint "$APP/Contents/Info.plist"
+APP_EXECUTABLE="$APP/Contents/MacOS/ProximicVoice"
+if ! file "$APP_EXECUTABLE" | grep -q "arm64"; then
+    echo "Packaged executable is not Apple Silicon arm64: $APP_EXECUTABLE" >&2
+    exit 1
+fi
+
+# Building a DMG proves only that files were collected.  Start the frozen app
+# on the macOS builder as well so platform-only imports, native libraries and
+# missing QML modules fail the build instead of failing on the user's Mac.
+SMOKE_DATA_ROOT="$PROJECT_ROOT/.build/macos-smoke-data"
+rm -rf "$SMOKE_DATA_ROOT"
+mkdir -p "$SMOKE_DATA_ROOT"
+QT_QPA_PLATFORM=offscreen \
+PROXIMIC_DATA_HOME="$SMOKE_DATA_ROOT" \
+PROXIMIC_STARTUP_PROBE=1 \
+    "$APP_EXECUTABLE"
+SMOKE_LOG="$SMOKE_DATA_ROOT/logs/startup.log"
+if [[ ! -f "$SMOKE_LOG" ]] || ! grep -q "QML root window ready" "$SMOKE_LOG"; then
+    echo "macOS packaged application did not complete its startup probe." >&2
+    [[ -f "$SMOKE_LOG" ]] && cat "$SMOKE_LOG" >&2
+    exit 1
+fi
+echo "macOS packaged startup probe passed."
+
 DMG_ROOT="$PROJECT_ROOT/.build/dmg"
 rm -rf "$DMG_ROOT"
 mkdir -p "$DMG_ROOT"

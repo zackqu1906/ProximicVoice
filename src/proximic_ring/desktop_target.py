@@ -9,7 +9,6 @@ this module without changing ASR or LLM code.
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 from dataclasses import dataclass
 import os
 import time
@@ -18,6 +17,10 @@ import uuid
 
 from .desktop_output import WindowsUnicodeTextInjector
 from .windows_uia import UIATextControlRef, WindowsUIATextBridge
+
+
+if os.name == "nt":
+    from ctypes import wintypes
 
 
 class ClipboardBridge(Protocol):

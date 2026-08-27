@@ -81,6 +81,18 @@ dist/ProximicVoice-0.6.0-macos-arm64.dmg
 签名；如果 macOS 提示无法验证开发者，请在 Finder 中按住 Control 点击应用并选择
 **打开**，或进入 **系统设置 → 隐私与安全性 → 仍要打开**。首次启动时允许蓝牙和麦克风权限。
 
+如果应用图标出现后立即退出，新版本会弹出启动错误并把完整诊断写到：
+
+```text
+~/Library/Application Support/ProxiMic Voice/logs/startup.log
+```
+
+也可以在“终端”直接启动以复现，并把上述日志发给开发者：
+
+```bash
+"/Applications/Proximic Voice.app/Contents/MacOS/ProximicVoice"
+```
+
 macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI；Windows 专用的全局快捷键、跨应用
 文本读取和写回目前不在 macOS 上提供。
 

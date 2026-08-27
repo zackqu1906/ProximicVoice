@@ -9,11 +9,14 @@ the user's clipboard.
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 import os
 import queue
 import threading
 from typing import Callable, Protocol
+
+
+if os.name == "nt":
+    from ctypes import wintypes
 
 
 class TextInjector(Protocol):

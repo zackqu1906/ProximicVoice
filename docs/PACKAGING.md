@@ -45,7 +45,9 @@ $env:WINDOWS_TIMESTAMP_URL = "http://timestamp.digicert.com" # 可省略
 ```
 
 产物：`dist/ProximicVoice-0.6.0-macos-arm64.dmg`。构建脚本把 Homebrew libopus
-复制进 `.app`，用户电脑不需要安装 Homebrew。
+复制进 `.app`，用户电脑不需要安装 Homebrew。生成 DMG 前，脚本会实际启动冻结后的
+可执行文件并完成 QApplication、控制器和 QML 根窗口冒烟测试；启动失败会直接终止构建，
+详细信息写入 `.build/macos-smoke-data/logs/startup.log`。
 
 要让下载后的应用在其他 Mac 上无警告打开，构建机必须配置 Developer ID：
 

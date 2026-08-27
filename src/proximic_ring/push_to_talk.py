@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 import os
 import threading
 from typing import Callable
+
+
+if os.name == "nt":
+    from ctypes import wintypes
 
 
 class PushToTalkState:

@@ -7,10 +7,13 @@ the same values later without knowing anything about QML or desktop text APIs.
 from __future__ import annotations
 
 import ctypes
-from ctypes import wintypes
 import os
 import threading
 from typing import Callable
+
+
+if os.name == "nt":
+    from ctypes import wintypes
 
 
 ACTION_INPUT = "input"

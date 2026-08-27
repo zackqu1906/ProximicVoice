@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from argparse import Namespace
 import ctypes
-from ctypes import wintypes
 from dataclasses import dataclass
 import os
 from pathlib import Path
@@ -22,6 +21,13 @@ from .audio import RingAudioSource
 from .cli import _build_detector, _build_session_controller
 from .events import Stage2Event
 from .runner import format_event
+
+
+# ``ctypes.wintypes`` is not portable: importing it on macOS raises
+# ``ValueError: _type_ 'v' not supported`` before the UI can create a window.
+# Keep every Win32-only import behind the same platform guard as its use.
+if os.name == "nt":
+    from ctypes import wintypes
 
 
 WINDOWS_DESKTOP_INPUT_SUPPORTED = os.name == "nt"

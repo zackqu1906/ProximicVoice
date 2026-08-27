@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import signal
 import sys
@@ -21,6 +22,8 @@ def main(argv: list[str] | None = None) -> int:
 
     from .controller import AppController
 
+    startup_probe = os.environ.get("PROXIMIC_STARTUP_PROBE", "").strip() == "1"
+    print("[startup] creating QApplication")
     app = QApplication(list(sys.argv if argv is None else argv))
     app.setApplicationName("ProxiMic Voice")
     app.setApplicationDisplayName("ProxiMic Voice")
@@ -40,6 +43,7 @@ def main(argv: list[str] | None = None) -> int:
     app.setWindowIcon(icon)
 
     controller = AppController()
+    print("[startup] controller ready")
     voice_action_hotkeys = None
     if sys.platform == "win32":
         try:
@@ -54,13 +58,24 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[voice-actions] 全局交互快捷键不可用：{exc}", file=sys.stderr)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("appController", controller)
+    qml_errors: list[str] = []
+    engine.warnings.connect(
+        lambda warnings: qml_errors.extend(str(item) for item in warnings)
+    )
     engine.load(QUrl.fromLocalFile(str(base / "qml" / "Main.qml")))
     if not engine.rootObjects():
-        return 1
+        detail = "\n".join(qml_errors) or "QML engine did not create a root window"
+        raise RuntimeError(f"主界面加载失败：{detail}")
     window = engine.rootObjects()[0]
+    print("[startup] QML root window ready")
     # Load model weights and seed both stable prompt prefixes after the first
     # frame instead of making the user's first utterance pay this cost.
-    QTimer.singleShot(600, controller.warmLocalModel)
+    if startup_probe:
+        # Packaging CI sets this flag to prove the frozen executable can import
+        # the application, create Qt, load QML and enter its event loop.
+        QTimer.singleShot(300, app.quit)
+    else:
+        QTimer.singleShot(600, controller.warmLocalModel)
 
     tray_available = QSystemTrayIcon.isSystemTrayAvailable()
     controller.setTrayAvailable(tray_available)
