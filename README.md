@@ -11,6 +11,79 @@ ProxiMic Voice 是面向 Ringo 可穿戴设备的近场语音输入与语音编�
 项目同时保留了完整的命令行、数据采集、模型训练和多 ASR 对比能力，既可以作为桌面产品使用，
 也可以作为近场、低声和耳语识别实验平台继续开发。
 
+## 下载、生成并安装桌面安装包
+
+仓库源码 ZIP 和桌面安装包是两种不同的文件：
+
+- 只想安装使用：进入 [GitHub Releases](https://github.com/zackqu1906/ProximicVoice/releases)，
+  Windows 下载 `*-windows-x64-setup.exe`，Apple Silicon macOS 下载 `*-macos-arm64.dmg`。
+- 从仓库首页选择 **Code → Download ZIP**：下载的是源码，不包含 `dist/` 安装包目录；
+  解压后需要按下面的步骤在对应系统上生成安装包。
+
+安装包不包含 ASR 权重和约 2.5 GB 的本地文本模型。相应功能首次使用时会联网下载，
+以后从用户缓存目录复用。
+
+### Windows 10/11 x64：从源码生成 `.exe`
+
+1. 解压源码 ZIP，安装 [Inno Setup 6](https://jrsoftware.org/isdl.php)。
+2. 在解压后的项目根目录打开 PowerShell。
+3. 首次构建时执行：
+
+```powershell
+cd C:\你的路径\ProximicVoice
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Compute cpu -SkipLocalLLM
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1
+```
+
+构建完成后，安装包位于：
+
+```text
+dist\installer\ProximicVoice-0.6.0-windows-x64-setup.exe
+```
+
+双击 `.exe`，按安装向导完成安装。当前 Demo 尚未使用商业代码签名证书，SmartScreen
+可能显示“发布者未知”；确认文件来自本仓库后，可选择 **更多信息 → 仍要运行**。
+
+后续只修改 Python、QML、提示词或其他业务代码时，关闭正在运行的 ProxiMic Voice，
+然后使用快速重建命令：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1 -SkipDependencyInstall
+```
+
+新的安装包会覆盖 `dist\installer\` 中的同名文件。如果修改了 `pyproject.toml`、
+依赖锁文件或新增依赖，应先重新执行 `setup.ps1 -Compute cpu -SkipLocalLLM`，再构建安装包。
+
+### Apple Silicon macOS 12+：从源码生成 `.dmg`
+
+当前只提供 Apple Silicon（M1/M2/M3/M4 等 arm64）构建，不支持 Intel Mac。
+构建机需要联网，并安装 Xcode Command Line Tools、Homebrew 和 Python 3.11：
+
+```bash
+xcode-select --install
+brew install python@3.11
+```
+
+解压源码 ZIP，在“终端”进入项目根目录并执行：
+
+```bash
+cd /你的路径/ProximicVoice
+bash ./scripts/build-macos.sh
+```
+
+构建完成后可找到：
+
+```text
+dist/ProximicVoice-0.6.0-macos-arm64.dmg
+```
+
+双击 `.dmg`，把 **Proximic Voice.app** 拖入 **Applications**。当前 Demo 使用 ad-hoc
+签名；如果 macOS 提示无法验证开发者，请在 Finder 中按住 Control 点击应用并选择
+**打开**，或进入 **系统设置 → 隐私与安全性 → 仍要打开**。首次启动时允许蓝牙和麦克风权限。
+
+macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI；Windows 专用的全局快捷键、跨应用
+文本读取和写回目前不在 macOS 上提供。
+
 ## 当前可以做什么
 
 - 发现并连接 Ringo BLE 设备，验证 NUS 服务和真实麦克风 PCM 数据。
