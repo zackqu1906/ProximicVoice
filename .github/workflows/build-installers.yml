@@ -35,7 +35,7 @@ jobs:
       - name: Build Apple Silicon app and DMG
         env:
           PROXIMIC_PYTHON: python3.11
-        run: ./scripts/build-macos.sh
+        run: bash ./scripts/build-macos.sh
       - uses: actions/upload-artifact@v4
         with:
           name: ProximicVoice-macos-arm64
