@@ -142,6 +142,7 @@ ASR partial / final
                ├── 片段：original_text + modified_text → Python 替换
                └── 全文：modified_text → 完整候选
                → 采用最先返回且通过校验的结果
+               → 较慢分支在后台完成并补写采集记录
                → Enter / Esc 确认
                → 写回原文本框
 ```
@@ -271,6 +272,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 - `original_text` 不存在时校验器拒绝结果并自动重试一次；出现多次时视为模型选择替换全部。
 - 任意编辑失败会自动重试一次，并把每次 arguments 记录到测试输出。
 - 两套协议同时请求；一路失败时继续等待另一路，两路都失败才报告本次修改失败。
+- 任一路先通过校验就立即显示候选；另一条分支只在后台补全采集记录，不阻塞 UI。
 - 候选生成后不会立刻覆盖外部文本，必须由用户确认。
 - 片段协议只有选中完整原文并返回空片段时才会清空；全文协议返回空 `modified_text` 时也会进入清空确认。
 

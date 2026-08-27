@@ -1146,3 +1146,47 @@ def test_worker_preserves_raw_model_output_for_debugging():
     assert results[0].final_text == "我准备去瑞幸开会。"
     assert '"original_text":"星巴克"' in results[0].model_output
     assert calls[0][-1] == EDIT_MODE_RACE
+
+
+def test_worker_keeps_background_trace_bound_to_its_original_request():
+    callbacks = []
+
+    class CollectingProcessor:
+        def process_with_collection_trace(
+            self, *_args, on_collection_complete
+        ):
+            callbacks.append(on_collection_complete)
+            return "候选文本。", "{}", (), "fragment"
+
+    completed = threading.Event()
+    results = []
+    traces = []
+
+    def on_result(result):
+        results.append(result)
+        if len(results) == 2:
+            completed.set()
+
+    worker = TextProcessingWorker(
+        processor=CollectingProcessor(),
+        on_result=on_result,
+        on_trace=traces.append,
+    )
+    for request_id in (71, 72):
+        worker.submit(
+            TextProcessingRequest(
+                request_id=request_id,
+                session_id=request_id,
+                mode=INPUT_MODE_EDIT,
+                raw_text="改一下",
+                settings=LLMSettings(enabled=True, model="example-model"),
+                target_text="原文。",
+            )
+        )
+
+    assert completed.wait(1.0)
+    callbacks[0]((), "fragment")
+    callbacks[1]((), "fragment")
+    worker.close(wait=True)
+
+    assert [trace.request_id for trace in traces] == [71, 72]

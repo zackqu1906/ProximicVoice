@@ -46,6 +46,7 @@ from ..text_processing import (
     LLM_PROVIDER_OPENAI,
     LLM_PROVIDER_VOLCENGINE,
     LLMSettings,
+    LLMTraceCollection,
     TextProcessingRequest,
     TextProcessingResult,
     TextProcessingWorker,
@@ -185,6 +186,7 @@ class AppController(QObject):
     _pushToTalkChanged = Signal(bool)
     _scanFinished = Signal(object, str)
     _textProcessed = Signal(object)
+    _llmTraceCollected = Signal(object)
     _llmWarmupFinished = Signal(str, float)
     _localModelInstallProgress = Signal(str, int, int)
     _localModelInstallFinished = Signal(object, str)
@@ -440,6 +442,7 @@ class AppController(QObject):
         self._pushToTalkChanged.connect(self._apply_push_to_talk)
         self._scanFinished.connect(self._apply_scan_finished)
         self._textProcessed.connect(self._apply_text_processed)
+        self._llmTraceCollected.connect(self._apply_llm_trace_collected)
         self._llmWarmupFinished.connect(self._apply_llm_warmup_finished)
         self._localModelInstallProgress.connect(
             self._apply_local_model_install_progress
@@ -450,6 +453,7 @@ class AppController(QObject):
         self._voiceActionRequested.connect(self._apply_voice_action)
         self._text_processing_worker = TextProcessingWorker(
             on_result=self._textProcessed.emit,
+            on_trace=self._llmTraceCollected.emit,
             on_warmup=lambda error, latency: self._llmWarmupFinished.emit(
                 error or "", latency
             ),
@@ -1876,16 +1880,12 @@ class AppController(QObject):
                 self._reject_edit_request("修改目标快照已经失效")
                 return
             if result.final_text == result.target_text:
-                try:
-                    self._modification_dataset.abandon_request(
-                        result.request_id, "LLM candidate is unchanged"
-                    )
-                except BaseException:
-                    pass
-                self._retry_snapshot = context.snapshot
-                self._reject_edit_request(
-                    "大模型未找到可可靠执行的修改。请确认说话前光标位于"
-                    "包含目标词的外部文本框，再按住右 Alt 重说"
+                self._begin_failed_edit_review(
+                    replace(
+                        result,
+                        error="大模型未找到可可靠执行的修改",
+                    ),
+                    context.snapshot,
                 )
                 return
             self._begin_edit_review(
@@ -1898,6 +1898,19 @@ class AppController(QObject):
             )
             return
         self._commit_input_text(result, context.target)
+
+    @Slot(object)
+    def _apply_llm_trace_collected(self, trace: object) -> None:
+        if not isinstance(trace, LLMTraceCollection):
+            return
+        try:
+            self._modification_dataset.record_llm_branches(
+                trace.request_id,
+                trace.branches,
+                trace.winner_branch,
+            )
+        except BaseException as exc:
+            self._append_log(f"修改数据后台分支保存失败：{exc}")
 
     def _commit_input_text(
         self,
@@ -1950,24 +1963,16 @@ class AppController(QObject):
     ) -> None:
         proposed = str(result.final_text or "").strip()
         if not proposed and not allow_empty:
-            try:
-                self._modification_dataset.abandon_request(
-                    result.request_id,
-                    "LLM returned an empty unvalidated candidate",
-                )
-            except BaseException:
-                pass
-            self._reject_edit_request("大模型返回了空修改结果")
+            self._begin_failed_edit_review(
+                replace(result, error="大模型返回了空修改结果"),
+                snapshot,
+            )
             return
         if proposed == snapshot.text.strip():
-            try:
-                self._modification_dataset.abandon_request(
-                    result.request_id, "LLM candidate is unchanged"
-                )
-            except BaseException:
-                pass
-            self._retry_snapshot = snapshot
-            self._reject_edit_request("没有识别出可可靠执行的修改，请按住右 Alt 重说")
+            self._begin_failed_edit_review(
+                replace(result, error="大模型未找到可可靠执行的修改"),
+                snapshot,
+            )
             return
         self._retry_snapshot = None
         self._edit_review = _EditReview(
@@ -2019,6 +2024,13 @@ class AppController(QObject):
         snapshot: DesktopTextSnapshot,
     ) -> None:
         error = str(result.error or "大模型没有返回可用的修改结果").strip()
+        try:
+            self._modification_dataset.record_llm_failure(
+                result.request_id,
+                error,
+            )
+        except BaseException as exc:
+            self._append_log(f"修改数据 LLM 失败状态保存失败：{exc}")
         self._retry_snapshot = None
         self._retry_target_armed = False
         self._edit_review = _EditReview(

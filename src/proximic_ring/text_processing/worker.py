@@ -10,6 +10,7 @@ from .edit_tool import EDIT_MODE_RACE
 from .llm import OpenAICompatibleTextProcessor
 from .model import (
     INPUT_MODE_EDIT,
+    LLMTraceCollection,
     LLMSettings,
     TextProcessingRequest,
     TextProcessingResult,
@@ -29,10 +30,12 @@ class TextProcessingWorker:
         self,
         *,
         on_result: Callable[[TextProcessingResult], None],
+        on_trace: Callable[[LLMTraceCollection], None] | None = None,
         on_warmup: Callable[[str | None, float], None] | None = None,
         processor: OpenAICompatibleTextProcessor | None = None,
     ) -> None:
         self._on_result = on_result
+        self._on_trace = on_trace
         self._on_warmup = on_warmup
         self._processor = processor or OpenAICompatibleTextProcessor()
         self._queue: queue.SimpleQueue[
@@ -104,6 +107,23 @@ class TextProcessingWorker:
                 )
                 process_with_trace = getattr(self._processor, "process_with_trace", None)
                 if callable(process_with_collection_trace):
+                    trace_request_id = request.request_id
+
+                    def publish_trace(
+                        branches,
+                        winner_branch,
+                        trace_request_id=trace_request_id,
+                    ):
+                        if self._on_trace is None or self._closed.is_set():
+                            return
+                        self._on_trace(
+                            LLMTraceCollection(
+                                request_id=trace_request_id,
+                                branches=tuple(branches),
+                                winner_branch=str(winner_branch),
+                            )
+                        )
+
                     (
                         final_text,
                         model_output,
@@ -120,6 +140,7 @@ class TextProcessingWorker:
                             == INPUT_MODE_EDIT
                             else ""
                         ),
+                        on_collection_complete=publish_trace,
                     )
                 elif callable(process_with_trace):
                     final_text, model_output = process_with_trace(

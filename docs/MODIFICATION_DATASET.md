@@ -19,7 +19,8 @@ dataset/<anonymous_user_id>/<episode_id>/
   PCM16 音频；ASR 使用相同的未放大波形。
 - `asr_updates.jsonl` 按发生顺序保存 partial、final、backend、model、延迟和错误。
 - `llm_branches.jsonl` 同时保存 fragment/full 的原始返回、校验状态、完整候选、
-  分支延迟和 winner。为了获得完整训练记录，采集路径会等待两条并行分支完成。
+  分支延迟和 winner。第一个有效候选会立即交给 UI；较慢分支继续在后台运行，结束后
+  原子补写完整记录，不阻塞用户预览、确认或重说。只有两边都尚未成功时才继续等待。
 - `attempt.json` 保存目标全文、应用名、ASR 摘要、LLM 配置、候选和用户反馈事件。
 - `episode.json` 汇总重说产生的 Attempt，并在确认、取消、应用失败或中断时持久化终态。
 

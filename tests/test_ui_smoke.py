@@ -677,6 +677,45 @@ def test_qml_customer_window_loads(tmp_path):
     ]
     assert episode["final_status"] == "completed"
 
+    # A syntactically valid response that leaves the target unchanged is also
+    # a persistent LLM failure, not a transient notification.
+    desktop_target.current_text = "不能原样返回的文本。"
+    controller._apply_runtime_update("请修改这句话", True, "", 62)
+    unchanged_request = submitted[8]
+    controller._apply_text_processed(
+        TextProcessingResult(
+            request_id=unchanged_request.request_id,
+            session_id=62,
+            mode=unchanged_request.mode,
+            raw_text=unchanged_request.raw_text,
+            final_text=unchanged_request.target_text,
+            latency_s=0.2,
+            used_llm=True,
+            target_text=unchanged_request.target_text,
+        )
+    )
+    assert controller.reviewFailed is True
+    assert controller.reviewCanConfirm is False
+    assert "大模型未找到可可靠执行的修改" in controller.transcriptText
+    unchanged_attempt_path = (
+        controller._modification_dataset.user_root
+        / unchanged_request.episode_id
+        / unchanged_request.attempt_id
+        / "attempt.json"
+    )
+    unchanged_attempt = json.loads(
+        unchanged_attempt_path.read_text(encoding="utf-8")
+    )
+    assert unchanged_attempt["status"] == "failed"
+    assert unchanged_attempt["llm_error"] == "大模型未找到可可靠执行的修改"
+    controller.cancelEdit()
+    unchanged_attempt = json.loads(
+        unchanged_attempt_path.read_text(encoding="utf-8")
+    )
+    cancel_reason = unchanged_attempt["feedback"][-1]["failure_reason"]
+    assert cancel_reason["code"] == "llm_error"
+    assert cancel_reason["input_method"] == "automatic"
+
     submitted_before_oversized_capture = len(submitted)
     desktop_target.current_text = "页面内容" * (MAX_EDIT_TARGET_CHARS // 4 + 1)
     controller._apply_runtime_update("润色一下", True, "", 48)

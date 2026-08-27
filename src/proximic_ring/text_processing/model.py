@@ -114,6 +114,13 @@ class LLMBranchTrace:
 
 
 @dataclass(frozen=True)
+class LLMTraceCollection:
+    request_id: int
+    branches: tuple[LLMBranchTrace, ...]
+    winner_branch: str
+
+
+@dataclass(frozen=True)
 class TextProcessingResult:
     request_id: int
     session_id: int

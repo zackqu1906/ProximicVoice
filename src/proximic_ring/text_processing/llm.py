@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 import json
 import os
+import threading
 import time
 from typing import Any, Callable
 from urllib import error as urllib_error
@@ -118,13 +119,16 @@ class OpenAICompatibleTextProcessor:
         settings: LLMSettings,
         target_text: str = "",
         edit_mode: str = DEFAULT_EDIT_MODE,
+        *,
+        on_collection_complete: (
+            Callable[[tuple[LLMBranchTrace, ...], str], None] | None
+        ) = None,
     ) -> tuple[str, str, tuple[LLMBranchTrace, ...], str]:
-        """Return a complete trace of both parallel edit branches.
+        """Return the first valid edit and optionally finish traces in background.
 
-        The legacy ``process_with_trace`` API intentionally keeps its
-        first-valid latency semantics. Data collection uses this method and
-        waits for both already-parallel requests so neither training example
-        is silently discarded.
+        Without a callback this method remains synchronous for diagnostics.
+        The UI supplies a callback so its accepted candidate is returned
+        immediately while the slower branch completes the persisted trace.
         """
 
         normalized_mode = normalize_input_mode(mode)
@@ -161,6 +165,7 @@ class OpenAICompatibleTextProcessor:
             target=target,
             user_content=user_content,
             max_tokens=max_tokens,
+            on_collection_complete=on_collection_complete,
         )
 
     def process_with_attempts(
@@ -389,6 +394,15 @@ class OpenAICompatibleTextProcessor:
                         failed_outputs.append(output)
                 continue
 
+            if result[0] == target:
+                errors[edit_mode] = LLMResponseProcessingError(
+                    "大模型未找到可可靠执行的修改",
+                    result[1][-1] if result[1] else "",
+                    result[1],
+                )
+                failed_outputs.extend(result[1])
+                continue
+
             for other in futures:
                 if other is not future:
                     other.cancel()
@@ -422,6 +436,9 @@ class OpenAICompatibleTextProcessor:
         target: str,
         user_content: str,
         max_tokens: int,
+        on_collection_complete: (
+            Callable[[tuple[LLMBranchTrace, ...], str], None] | None
+        ) = None,
     ) -> tuple[str, str, tuple[LLMBranchTrace, ...], str]:
         race_settings = settings
         if (
@@ -448,6 +465,13 @@ class OpenAICompatibleTextProcessor:
                     edit_mode=edit_mode,
                     max_attempts=1,
                 )
+                if candidate == target:
+                    return (
+                        "",
+                        outputs,
+                        "大模型未找到可可靠执行的修改",
+                        time.perf_counter() - started,
+                    )
                 return candidate, outputs, None, time.perf_counter() - started
             except BaseException as exc:
                 outputs = tuple(getattr(exc, "model_outputs", ()) or ())
@@ -460,36 +484,68 @@ class OpenAICompatibleTextProcessor:
         winner = ""
         winner_candidate = ""
         winner_output = ""
-        with ThreadPoolExecutor(
+        executor = ThreadPoolExecutor(
             max_workers=2,
             thread_name_prefix="ProxiMicEditCollection",
-        ) as executor:
-            futures = {
-                executor.submit(run_branch, edit_mode, prompt): edit_mode
-                for edit_mode, prompt in jobs
-            }
-            for future in as_completed(futures):
-                edit_mode = futures[future]
-                branch_result = future.result()
-                completed[edit_mode] = branch_result
-                candidate, outputs, error, _latency = branch_result
-                if not winner and error is None:
-                    winner = edit_mode
-                    winner_candidate = candidate
-                    winner_output = outputs[-1] if outputs else ""
-
-        traces = tuple(
-            LLMBranchTrace(
-                branch=edit_mode,
-                raw_returns=completed[edit_mode][1],
-                validation="valid" if completed[edit_mode][2] is None else "invalid",
-                candidate_text=completed[edit_mode][0],
-                latency_s=max(0.0, completed[edit_mode][3]),
-                error=completed[edit_mode][2],
-                won=edit_mode == winner,
-            )
-            for edit_mode, _prompt in jobs
         )
+        futures = {
+            executor.submit(run_branch, edit_mode, prompt): edit_mode
+            for edit_mode, prompt in jobs
+        }
+
+        def traces_from_completed() -> tuple[LLMBranchTrace, ...]:
+            return tuple(
+                LLMBranchTrace(
+                    branch=edit_mode,
+                    raw_returns=completed[edit_mode][1],
+                    validation=(
+                        "valid" if completed[edit_mode][2] is None else "invalid"
+                    ),
+                    candidate_text=completed[edit_mode][0],
+                    latency_s=max(0.0, completed[edit_mode][3]),
+                    error=completed[edit_mode][2],
+                    won=edit_mode == winner,
+                )
+                for edit_mode, _prompt in jobs
+            )
+
+        def finish_collection_in_background() -> None:
+            try:
+                for pending in as_completed(futures):
+                    edit_mode = futures[pending]
+                    if edit_mode not in completed:
+                        completed[edit_mode] = pending.result()
+                traces = traces_from_completed()
+                callback = on_collection_complete
+                if callback is not None:
+                    try:
+                        callback(traces, winner)
+                    except BaseException:
+                        pass
+            finally:
+                executor.shutdown(wait=True, cancel_futures=False)
+
+        for future in as_completed(futures):
+            edit_mode = futures[future]
+            branch_result = future.result()
+            completed[edit_mode] = branch_result
+            candidate, outputs, error, _latency = branch_result
+            if not winner and error is None:
+                winner = edit_mode
+                winner_candidate = candidate
+                winner_output = outputs[-1] if outputs else ""
+                if on_collection_complete is not None:
+                    threading.Thread(
+                        target=finish_collection_in_background,
+                        name="ProxiMicEditTraceCollection",
+                        daemon=True,
+                    ).start()
+                    # The accepted candidate reaches the UI immediately. The
+                    # slower branch only completes the persisted trace.
+                    return winner_candidate, winner_output, (), winner
+
+        executor.shutdown(wait=True, cancel_futures=False)
+        traces = traces_from_completed()
         if winner:
             return winner_candidate, winner_output, traces, winner
 

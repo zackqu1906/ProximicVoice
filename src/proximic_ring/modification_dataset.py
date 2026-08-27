@@ -189,10 +189,12 @@ class ModificationDatasetCollector:
             attempt_path = self._attempt_dir(episode_id, attempt_id) / "attempt.json"
             attempt = self._read_json(attempt_path)
             branches = [_json_value(item) for item in getattr(result, "llm_branches", ())]
-            self._write_jsonl(
-                self._attempt_dir(episode_id, attempt_id) / "llm_branches.jsonl",
-                branches,
-            )
+            if branches:
+                self._write_jsonl(
+                    self._attempt_dir(episode_id, attempt_id) / "llm_branches.jsonl",
+                    branches,
+                )
+                attempt["llm"]["branches_collected_at"] = _utc_now()
             attempt["llm"]["winner_branch"] = str(
                 getattr(result, "winner_branch", "") or ""
             )
@@ -206,6 +208,47 @@ class ModificationDatasetCollector:
             self._write_json(attempt_path, attempt)
             if not attempt["llm_error"]:
                 self._preview_started[reference] = time.perf_counter()
+
+    def record_llm_branches(
+        self,
+        request_id: int,
+        branches,
+        winner_branch: str,
+    ) -> None:
+        """Finish the slow branch trace without changing the UI result."""
+        with self._lock:
+            reference = self._request_attempts.get(int(request_id))
+            if reference is None:
+                return
+            episode_id, attempt_id = reference
+            rows = [_json_value(item) for item in tuple(branches or ())]
+            if not rows:
+                return
+            self._write_jsonl(
+                self._attempt_dir(episode_id, attempt_id) / "llm_branches.jsonl",
+                rows,
+            )
+            attempt_path = self._attempt_dir(episode_id, attempt_id) / "attempt.json"
+            attempt = self._read_json(attempt_path)
+            attempt["llm"]["winner_branch"] = str(winner_branch or "")
+            attempt["llm"]["branches_collected_at"] = _utc_now()
+            attempt["updated_at"] = _utc_now()
+            self._write_json(attempt_path, attempt)
+
+    def record_llm_failure(self, request_id: int, error: str) -> None:
+        """Persist a semantic failure discovered after a valid LLM response."""
+        with self._lock:
+            reference = self._request_attempts.get(int(request_id))
+            if reference is None:
+                return
+            episode_id, attempt_id = reference
+            attempt_path = self._attempt_dir(episode_id, attempt_id) / "attempt.json"
+            attempt = self._read_json(attempt_path)
+            attempt["llm_error"] = str(error)
+            attempt["status"] = "failed"
+            attempt["updated_at"] = _utc_now()
+            self._preview_started.pop(reference, None)
+            self._write_json(attempt_path, attempt)
 
     def feedback(
         self,

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import json
 from types import SimpleNamespace
 import threading
+import time
 import wave
 
 import numpy as np
@@ -194,6 +196,45 @@ def test_cancel_reason_can_be_attached_after_episode_is_finalized(tmp_path):
         collector.annotate_feedback_reason(20, "cancel", "unknown")
 
 
+def test_slow_branch_trace_can_fill_attempt_after_winner_is_available(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    episode_id, attempt_id = collector.begin_attempt(
+        request_id=30,
+        session_id=3,
+        target_text="原文。",
+        application="editor.exe",
+        provider="local",
+        model="qwen.gguf",
+    )
+    completed = _result(30, 3, "正式文本。", "fragment")
+    collector.record_llm_result(30, replace(completed, llm_branches=()))
+    branch_path = (
+        tmp_path
+        / "dataset"
+        / "anonymous-1"
+        / episode_id
+        / attempt_id
+        / "llm_branches.jsonl"
+    )
+    assert branch_path.read_text(encoding="utf-8") == ""
+
+    collector.record_llm_branches(
+        30,
+        completed.llm_branches,
+        completed.winner_branch,
+    )
+    branch_rows = [
+        json.loads(line)
+        for line in branch_path.read_text(encoding="utf-8").splitlines()
+    ]
+    assert {row["branch"] for row in branch_rows} == {"fragment", "full"}
+    attempt = json.loads(
+        (branch_path.parent / "attempt.json").read_text(encoding="utf-8")
+    )
+    assert attempt["llm"]["winner_branch"] == "fragment"
+    assert "branches_collected_at" in attempt["llm"]
+
+
 def test_collection_race_waits_for_and_records_both_parallel_branches():
     barrier = threading.Barrier(2)
 
@@ -239,6 +280,110 @@ def test_collection_race_waits_for_and_records_both_parallel_branches():
     assert all(branch.validation == "valid" for branch in branches)
     assert all(branch.raw_returns for branch in branches)
     assert next(branch for branch in branches if branch.branch == "fragment").candidate_text == "片段结果。"
+
+
+def test_collection_callback_returns_winner_before_slower_branch_finishes():
+    release_full = threading.Event()
+    trace_finished = threading.Event()
+    collected = []
+
+    def urlopen(http_request, *, timeout):
+        del timeout
+        body = json.loads(http_request.data.decode("utf-8"))
+        properties = body["tools"][0]["function"]["parameters"]["properties"]
+        fragment = "original_text" in properties
+        if fragment:
+            arguments = {"original_text": "原文。", "modified_text": "快速结果。"}
+        else:
+            release_full.wait(timeout=2.0)
+            arguments = {"modified_text": "较慢的完整结果。"}
+        payload = {
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "type": "function",
+                        "function": {
+                            "name": "submit_text_edit",
+                            "arguments": arguments,
+                        },
+                    }]
+                }
+            }]
+        }
+        return _Response(json.dumps(payload).encode("utf-8"))
+
+    def on_collection_complete(branches, winner):
+        collected.append((branches, winner))
+        trace_finished.set()
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    started = time.perf_counter()
+    final_text, _raw_output, immediate_branches, winner = (
+        processor.process_with_collection_trace(
+            "改一下",
+            INPUT_MODE_EDIT,
+            LLMSettings(enabled=True, model="test", api_key_env=""),
+            "原文。",
+            EDIT_MODE_RACE,
+            on_collection_complete=on_collection_complete,
+        )
+    )
+    elapsed = time.perf_counter() - started
+
+    assert final_text == "快速结果。"
+    assert winner == "fragment"
+    assert immediate_branches == ()
+    assert elapsed < 1.0
+    assert trace_finished.is_set() is False
+
+    release_full.set()
+    assert trace_finished.wait(timeout=1.0)
+    branches, collected_winner = collected[0]
+    assert collected_winner == "fragment"
+    assert {branch.branch for branch in branches} == {"fragment", "full"}
+    assert sum(branch.won for branch in branches) == 1
+
+
+def test_unchanged_branch_cannot_beat_a_later_executable_edit():
+    def urlopen(http_request, *, timeout):
+        del timeout
+        body = json.loads(http_request.data.decode("utf-8"))
+        properties = body["tools"][0]["function"]["parameters"]["properties"]
+        if "original_text" in properties:
+            arguments = {"original_text": "原文。", "modified_text": "原文。"}
+        else:
+            arguments = {"modified_text": "真正修改后的文本。"}
+        payload = {
+            "choices": [{
+                "message": {
+                    "tool_calls": [{
+                        "type": "function",
+                        "function": {
+                            "name": "submit_text_edit",
+                            "arguments": arguments,
+                        },
+                    }]
+                }
+            }]
+        }
+        return _Response(json.dumps(payload).encode("utf-8"))
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    final_text, _raw_output, branches, winner = (
+        processor.process_with_collection_trace(
+            "请修改",
+            INPUT_MODE_EDIT,
+            LLMSettings(enabled=True, model="test", api_key_env=""),
+            "原文。",
+            EDIT_MODE_RACE,
+        )
+    )
+
+    assert final_text == "真正修改后的文本。"
+    assert winner == "full"
+    fragment = next(branch for branch in branches if branch.branch == "fragment")
+    assert fragment.validation == "invalid"
+    assert fragment.error == "大模型未找到可可靠执行的修改"
 
 
 def test_raw_audio_observer_sink_keeps_controller_waveform_unchanged():
