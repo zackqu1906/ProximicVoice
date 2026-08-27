@@ -187,6 +187,7 @@ class RecognitionRuntime:
         on_disconnected: Callable[[], None],
         on_started: Callable[[], None],
         on_push_to_talk: Callable[[bool], None] | None = None,
+        on_raw_audio: Callable[[int, object], None] | None = None,
     ) -> None:
         args = self.settings.to_namespace()
         source = RingAudioSource(
@@ -266,6 +267,7 @@ class RecognitionRuntime:
                 push_to_talk_observer=on_push_to_talk,
                 desktop_should_inject=external_window_has_focus,
                 backend_cache=self.asr_backend_cache,
+                raw_audio_observer=on_raw_audio,
             )
             if source.error is not None:
                 raise RuntimeError(str(source.error)) from source.error

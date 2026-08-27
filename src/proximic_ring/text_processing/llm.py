@@ -4,6 +4,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import replace
 import json
 import os
+import time
 from typing import Any, Callable
 from urllib import error as urllib_error
 from urllib import request as urllib_request
@@ -20,6 +21,7 @@ from .edit_tool import (
 from .local_server import LocalModelServer
 from .model import (
     INPUT_MODE_EDIT,
+    LLMBranchTrace,
     LLM_PROVIDER_LOCAL,
     LLM_PROVIDER_VOLCENGINE,
     LLMSettings,
@@ -108,6 +110,58 @@ class OpenAICompatibleTextProcessor:
             edit_mode,
         )
         return final_text, model_outputs[-1] if model_outputs else ""
+
+    def process_with_collection_trace(
+        self,
+        text: str,
+        mode: str,
+        settings: LLMSettings,
+        target_text: str = "",
+        edit_mode: str = DEFAULT_EDIT_MODE,
+    ) -> tuple[str, str, tuple[LLMBranchTrace, ...], str]:
+        """Return a complete trace of both parallel edit branches.
+
+        The legacy ``process_with_trace`` API intentionally keeps its
+        first-valid latency semantics. Data collection uses this method and
+        waits for both already-parallel requests so neither training example
+        is silently discarded.
+        """
+
+        normalized_mode = normalize_input_mode(mode)
+        if normalized_mode != INPUT_MODE_EDIT:
+            final_text, model_output = self.process_with_trace(
+                text, mode, settings, target_text, edit_mode
+            )
+            return final_text, model_output, (), ""
+        normalized_edit_mode = normalize_edit_mode(edit_mode)
+        if normalized_edit_mode != EDIT_MODE_RACE:
+            final_text, model_output = self.process_with_trace(
+                text, mode, settings, target_text, edit_mode
+            )
+            return final_text, model_output, (), ""
+
+        settings.validate()
+        raw_text = str(text or "").strip()
+        if not raw_text:
+            return "", "", (), ""
+        if not settings.enabled:
+            return raw_text, "", (), ""
+        target = validate_edit_target_text(target_text).strip()
+        user_content = (
+            "<待修改文本>\n"
+            f"{target}\n"
+            "</待修改文本>\n\n"
+            "<修改要求>\n"
+            f"{raw_text}\n"
+            "</修改要求>"
+        )
+        max_tokens = max(1024, min(8192, len(target) * 2 + 512))
+        return self._process_edit_race_with_collection(
+            settings,
+            target=target,
+            user_content=user_content,
+            max_tokens=max_tokens,
+        )
 
     def process_with_attempts(
         self,
@@ -360,6 +414,98 @@ class OpenAICompatibleTextProcessor:
             model_output,
             tuple(failed_outputs),
         )
+
+    def _process_edit_race_with_collection(
+        self,
+        settings: LLMSettings,
+        *,
+        target: str,
+        user_content: str,
+        max_tokens: int,
+    ) -> tuple[str, str, tuple[LLMBranchTrace, ...], str]:
+        race_settings = settings
+        if (
+            normalize_llm_provider(settings.provider) == LLM_PROVIDER_LOCAL
+            and settings.local_auto_start
+        ):
+            self._ensure_local_server(settings)
+            race_settings = replace(settings, local_auto_start=False)
+
+        jobs = (
+            (EDIT_MODE_FRAGMENT, EDIT_FRAGMENT_PROMPT),
+            (EDIT_MODE_FULL, EDIT_FULL_TEXT_PROMPT),
+        )
+
+        def run_branch(edit_mode: str, prompt: str):
+            started = time.perf_counter()
+            try:
+                candidate, outputs = self._process_edit_with_retry(
+                    race_settings,
+                    target=target,
+                    system_prompt=prompt,
+                    user_content=user_content,
+                    max_tokens=max_tokens,
+                    edit_mode=edit_mode,
+                    max_attempts=1,
+                )
+                return candidate, outputs, None, time.perf_counter() - started
+            except BaseException as exc:
+                outputs = tuple(getattr(exc, "model_outputs", ()) or ())
+                if not outputs:
+                    output = str(getattr(exc, "model_output", "") or "")
+                    outputs = (output,) if output else ()
+                return "", outputs, str(exc), time.perf_counter() - started
+
+        completed: dict[str, tuple[str, tuple[str, ...], str | None, float]] = {}
+        winner = ""
+        winner_candidate = ""
+        winner_output = ""
+        with ThreadPoolExecutor(
+            max_workers=2,
+            thread_name_prefix="ProxiMicEditCollection",
+        ) as executor:
+            futures = {
+                executor.submit(run_branch, edit_mode, prompt): edit_mode
+                for edit_mode, prompt in jobs
+            }
+            for future in as_completed(futures):
+                edit_mode = futures[future]
+                branch_result = future.result()
+                completed[edit_mode] = branch_result
+                candidate, outputs, error, _latency = branch_result
+                if not winner and error is None:
+                    winner = edit_mode
+                    winner_candidate = candidate
+                    winner_output = outputs[-1] if outputs else ""
+
+        traces = tuple(
+            LLMBranchTrace(
+                branch=edit_mode,
+                raw_returns=completed[edit_mode][1],
+                validation="valid" if completed[edit_mode][2] is None else "invalid",
+                candidate_text=completed[edit_mode][0],
+                latency_s=max(0.0, completed[edit_mode][3]),
+                error=completed[edit_mode][2],
+                won=edit_mode == winner,
+            )
+            for edit_mode, _prompt in jobs
+        )
+        if winner:
+            return winner_candidate, winner_output, traces, winner
+
+        details = "；".join(
+            f"{trace.branch}：{trace.error}" for trace in traces if trace.error
+        )
+        outputs = tuple(
+            output for trace in traces for output in trace.raw_returns
+        )
+        error = LLMResponseProcessingError(
+            f"两种编辑协议均失败（{details}）" if details else "两种编辑协议均失败",
+            outputs[-1] if outputs else "",
+            outputs,
+        )
+        error.branch_traces = traces
+        raise error
 
     @staticmethod
     def _edit_retry_prompt_for_mode(

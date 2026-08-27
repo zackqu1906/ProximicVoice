@@ -6,6 +6,9 @@ import sys
 
 
 def main(argv: list[str] | None = None) -> int:
+    from ..runtime_paths import configure_runtime_environment
+
+    configure_runtime_environment()
     try:
         from PySide6.QtCore import QTimer, QUrl
         from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPixmap

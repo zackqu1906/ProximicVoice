@@ -1,5 +1,9 @@
 # ProxiMic Voice
 
+桌面安装包发布在 [GitHub Releases](https://github.com/zackqu1906/ProximicVoice/releases)。
+Windows 用户下载 `.exe`，Apple Silicon macOS 用户下载 `.dmg`；首次使用本地模型时
+应用会按需下载模型文件。
+
 ProxiMic Voice 是面向 Ringo 可穿戴设备的近场语音输入与语音编辑桌面应用。
 它持续接收 Ring 麦克风音频，用 ProxiMic 两阶段模型判断“是否有人贴近设备说话”，
 只把命中的语音片段交给 ASR，并在 Windows 中完成跨应用听写、文本修改和确认写回。
@@ -487,6 +491,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Recreate
 - [桌面界面使用说明](docs/CUSTOMER_UI.md)
 - [ASR 后端与对比方法](docs/ASR_BACKENDS.md)
 - [ASR 接入架构](docs/ASR_INTEGRATION.md)
+- [用户修改数据采集](docs/MODIFICATION_DATASET.md)
+- [Windows/macOS 安装包构建](docs/PACKAGING.md)
 - [桌面文本输入设计](docs/DESKTOP_INPUT.md)
 - [Ring 接入说明](docs/RING_INTEGRATION.md)
 - [数据采集与训练](docs/DATASET_TRAINING.md)

@@ -1,0 +1,70 @@
+name: Build desktop installers
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prepare application runtime without model weights
+        shell: pwsh
+        run: ./scripts/setup.ps1 -Compute cpu -SkipLocalLLM
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
+      - name: Build Windows installer
+        shell: pwsh
+        run: ./scripts/build-windows-installer.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProximicVoice-windows-x64
+          path: dist/installer/*.exe
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build Apple Silicon app and DMG
+        env:
+          PROXIMIC_PYTHON: python3.11
+        run: ./scripts/build-macos.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ProximicVoice-macos-arm64
+          path: dist/*.dmg
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download both platform packages
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Generate SHA-256 checksums
+        run: sha256sum release-assets/* > release-assets/SHA256SUMS.txt
+      - name: Create or update GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release upload "$GITHUB_REF_NAME" release-assets/* --clobber
+          else
+            release_flags=(--verify-tag --generate-notes --title "$GITHUB_REF_NAME")
+            if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+              release_flags+=(--prerelease)
+            fi
+            gh release create "$GITHUB_REF_NAME" release-assets/* "${release_flags[@]}"
+          fi

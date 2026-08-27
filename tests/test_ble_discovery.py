@@ -129,6 +129,42 @@ def test_connect_target_exact_mac_uses_short_targeted_scan(monkeypatch):
     assert session.new_session is True
 
 
+def test_connect_target_macos_uuid_uses_targeted_scan_in_runtime_loop(monkeypatch):
+    identifier = "57A74F5D-18EA-4C3B-83B2-987ED0512456"
+    selected = _device("Ringo Mac", identifier)
+    calls = []
+
+    class FakeScanner:
+        @classmethod
+        async def find_device_by_address(cls, target, timeout):
+            calls.append((target, timeout))
+            return selected
+
+    async def unexpected_full_scan(*_args, **_kwargs):
+        raise AssertionError("an exact CoreBluetooth UUID should use targeted discovery")
+
+    monkeypatch.setattr(connection, "BleakScanner", FakeScanner)
+    monkeypatch.setattr(connection, "scan_all_devices", unexpected_full_scan)
+
+    class FakeConnection(connection.ConnectionMixin):
+        name_keyword = "Ringo"
+        timeout_s = 8.0
+
+        def __init__(self):
+            self.scanned = []
+
+        async def _connect_device(self, target, *, new_session):
+            self.connected_target = target
+            return True
+
+    session = FakeConnection()
+    connected = asyncio.run(session.connect_target(identifier))
+
+    assert connected is True
+    assert calls == [(identifier, 3.0)]
+    assert session.connected_target is selected
+
+
 def test_connect_device_uses_selected_scan_result_without_rescanning(monkeypatch):
     selected = _device("New Ringo", "ROTATING-IDENTIFIER")
 

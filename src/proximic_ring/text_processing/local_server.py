@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform
 import subprocess
 import tempfile
 import time
@@ -33,8 +34,19 @@ def default_local_llm_home() -> Path:
     override = os.environ.get(LOCAL_LLM_HOME_ENV, "").strip()
     if override:
         return Path(override).expanduser()
-    project_root = Path(__file__).resolve().parents[3]
-    return project_root / ".runtime" / "local-llm"
+    from ..runtime_paths import app_data_root
+
+    return app_data_root() / "local-llm"
+
+
+def local_llm_platform_key() -> str:
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+    if system == "windows" and machine in {"amd64", "x86_64"}:
+        return "windows-x86_64"
+    if system == "darwin" and machine in {"arm64", "aarch64"}:
+        return "macos-arm64"
+    return f"{system}-{machine}"
 
 
 def resolve_default_local_llm() -> dict[str, str | int]:
@@ -43,7 +55,11 @@ def resolve_default_local_llm() -> dict[str, str | int]:
     catalog = load_local_llm_catalog(
         installed_catalog_path if installed_catalog_path.is_file() else None
     )
-    runtime_id = str(catalog["defaultRuntime"])
+    runtime_id = str(
+        catalog.get("defaultRuntimes", {}).get(
+            local_llm_platform_key(), catalog["defaultRuntime"]
+        )
+    )
     model_id = str(catalog["defaultModel"])
     model_path_override = ""
     selection_path = home / "installation.json"

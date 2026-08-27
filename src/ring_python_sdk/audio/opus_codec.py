@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import ctypes.util
 import os
 from pathlib import Path
 import struct
@@ -30,9 +31,15 @@ class OpusUnavailableError(OpusCodecError):
 
 def _load_opuslib() -> Any:
     _prepare_windows_opus_runtime()
+    bundled_opus = _bundled_macos_opus()
+    original_find_library = ctypes.util.find_library
+    if bundled_opus is not None:
+        ctypes.util.find_library = lambda name: (
+            str(bundled_opus) if name == "opus" else original_find_library(name)
+        )
     try:
         import opuslib
-    except (ImportError, OSError) as exc:
+    except Exception as exc:
         raise OpusUnavailableError(
             "Opus decoding is unavailable. Need both: "
             "(1) native libopus — `brew install opus` (macOS) or "
@@ -40,7 +47,23 @@ def _load_opuslib() -> Any:
             "(2) Python package opuslib — from ring-python-sdk run "
             "`uv sync` (opuslib is a default dependency)."
         ) from exc
+    finally:
+        ctypes.util.find_library = original_find_library
     return opuslib
+
+
+def _bundled_macos_opus() -> Path | None:
+    if sys.platform != "darwin":
+        return None
+    configured = str(os.environ.get("PROXIMIC_OPUS_DIR", "")).strip()
+    if not configured:
+        return None
+    directory = Path(configured).expanduser()
+    for filename in ("libopus.0.dylib", "libopus.dylib"):
+        candidate = directory / filename
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
 
 
 def _prepare_windows_opus_runtime() -> None:

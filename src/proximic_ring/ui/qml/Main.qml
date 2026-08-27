@@ -877,6 +877,27 @@ ApplicationWindow {
                             : "修改模式始终使用所选在线模型；输入模式是否二次整理由上方开关决定。Key 只从环境变量读取，不会保存到应用设置。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        visible: appController.llmProvider === "local"
+                        Label {
+                            Layout.fillWidth: true
+                            text: appController.localModelInstallStatus
+                            color: appController.localModelInstalled ? "#4DD4AC" : root.textMuted
+                            font.pixelSize: 11
+                            wrapMode: Text.Wrap
+                        }
+                        Button {
+                            objectName: "installLocalModelButton"
+                            text: appController.localModelInstalled
+                                ? "已安装"
+                                : (appController.localModelInstalling ? "下载中…" : "下载本地模型")
+                            enabled: !appController.localModelInstalled && !appController.localModelInstalling
+                            onClicked: appController.installLocalModel()
+                        }
+                    }
                     Label {
                         text: "本地 llama-server.exe"
                         color: root.textMuted

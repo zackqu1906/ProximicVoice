@@ -262,6 +262,7 @@ def _build_session_controller(
     push_to_talk_observer=None,
     desktop_should_inject=None,
     backend_cache=None,
+    raw_audio_observer=None,
 ):
     selected = _selected_asr_backends(args)
     if not selected:
@@ -274,6 +275,7 @@ def _build_session_controller(
         ASRWorker,
         CompletedUtteranceSessionSink,
         ProximitySessionController,
+        RawAudioObserverSessionSink,
         DirectASRSessionController,
         SessionFanout,
         StreamingASRWorker,
@@ -349,6 +351,10 @@ def _build_session_controller(
 
     batch_workers = []
     session_sinks = []
+    if raw_audio_observer is not None:
+        # This sink sees the Controller's final cropped 16 kHz waveform before
+        # the independent +24 dB ASR wrapper is applied.
+        session_sinks.append(RawAudioObserverSessionSink(raw_audio_observer))
     asr_gain_db = float(getattr(args, "asr_gain_db", 0.0))
 
     def with_asr_input_gain(sink):

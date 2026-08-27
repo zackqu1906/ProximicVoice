@@ -98,6 +98,19 @@ class TextProcessingRequest:
     raw_text: str
     settings: LLMSettings
     target_text: str = ""
+    episode_id: str = ""
+    attempt_id: str = ""
+
+
+@dataclass(frozen=True)
+class LLMBranchTrace:
+    branch: str
+    raw_returns: tuple[str, ...]
+    validation: str
+    candidate_text: str
+    latency_s: float
+    error: str | None = None
+    won: bool = False
 
 
 @dataclass(frozen=True)
@@ -112,3 +125,7 @@ class TextProcessingResult:
     target_text: str = ""
     error: str | None = None
     model_output: str = ""
+    llm_branches: tuple[LLMBranchTrace, ...] = ()
+    winner_branch: str = ""
+    episode_id: str = ""
+    attempt_id: str = ""

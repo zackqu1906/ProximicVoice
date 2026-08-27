@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Protocol
+from typing import Callable, Protocol
 
 import numpy as np
 
@@ -45,6 +45,31 @@ class CompletedUtteranceSessionSink:
 
     def close(self) -> None:
         self.sink.close()
+
+
+class RawAudioObserverSessionSink:
+    """Publish the Controller-trimmed waveform before any ASR-only gain."""
+
+    def __init__(self, observer: Callable[[int, np.ndarray], None]) -> None:
+        self.observer = observer
+        self._session_id = 0
+
+    def start(self, initial_audio_16k: np.ndarray) -> None:
+        del initial_audio_16k
+        self._session_id += 1
+
+    def feed(self, audio_16k: np.ndarray) -> None:
+        del audio_16k
+
+    def end(self, final_audio_16k: np.ndarray) -> None:
+        audio = np.asarray(final_audio_16k, dtype=np.float32).reshape(-1).copy()
+        self.observer(self._session_id, audio)
+
+    def abort(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
 
 
 class ASRInputGainSessionSink:

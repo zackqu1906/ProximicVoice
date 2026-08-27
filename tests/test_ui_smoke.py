@@ -299,9 +299,7 @@ def test_qml_customer_window_loads(tmp_path):
     runtime_settings = controller._runtime_settings()
     assert runtime_settings.encoding == "adpcm"
     assert runtime_settings.desktop_output is False
-    assert runtime_settings.ring_device is (
-        None if sys.platform == "win32" else selected_handle
-    )
+    assert runtime_settings.ring_device is None
     assert controller.canReconnect is True
     assert started == []
     controller._apply_scan_finished([], "")

@@ -11,6 +11,7 @@ from pathlib import Path
 import subprocess
 import sys
 import threading
+import uuid
 
 from PySide6.QtCore import QObject, Property, QCoreApplication, QSettings, QTimer, Signal, Slot
 
@@ -22,6 +23,9 @@ from ..app_runtime import (
     normalize_funasr_nano_hotwords,
 )
 from ..desktop_target import DesktopTargetRef, DesktopTextSnapshot
+from ..model_packages import install_default_local_model
+from ..modification_dataset import ModificationDatasetCollector, PROMPT_VERSION
+from ..runtime_paths import app_data_root, is_frozen, resource_root
 from ..text_processing import (
     DEFAULT_ARK_API_KEY_ENV,
     DEFAULT_ARK_BASE_URL,
@@ -155,6 +159,7 @@ class AppController(QObject):
     reconnectAvailabilityChanged = Signal()
     inputModeChanged = Signal()
     textProcessingChanged = Signal()
+    localModelInstallationChanged = Signal()
 
     _runtimeStatus = Signal(str)
     _runtimeConnected = Signal()
@@ -166,6 +171,8 @@ class AppController(QObject):
     _scanFinished = Signal(object, str)
     _textProcessed = Signal(object)
     _llmWarmupFinished = Signal(str, float)
+    _localModelInstallProgress = Signal(str, int, int)
+    _localModelInstallFinished = Signal(object, str)
     _voiceActionRequested = Signal(str)
 
     def __init__(self) -> None:
@@ -251,6 +258,8 @@ class AppController(QObject):
                 os.environ.get("LOCAL_LLM_MODEL_PATH", DEFAULT_LOCAL_MODEL_PATH),
             )
         )
+        self._local_model_installing = False
+        self._local_model_install_status = ""
         try:
             saved_llm_timeout = float(
                 self._settings.value("llm/timeoutSeconds", 30.0)
@@ -286,8 +295,19 @@ class AppController(QObject):
 
         # Resolve bundled resources from the installed source tree instead of
         # depending on the terminal's current working directory.
-        project_root = Path(__file__).resolve().parents[3]
+        project_root = resource_root()
         self._project_root = project_root
+        anonymous_user_id = str(
+            self._settings.value("dataCollection/anonymousUserId", "")
+        ).strip()
+        if not anonymous_user_id:
+            anonymous_user_id = f"user_{uuid.uuid4().hex}"
+            self._settings.setValue(
+                "dataCollection/anonymousUserId", anonymous_user_id
+            )
+        self._modification_dataset = ModificationDatasetCollector(
+            app_data_root() / "dataset", anonymous_user_id
+        )
         assets = Path(__file__).resolve().parents[1] / "assets"
         default_model = assets / "ringo-near-v1.model"
         default_repo = project_root / "third_party" / "streaming-sensevoice"
@@ -404,6 +424,12 @@ class AppController(QObject):
         self._scanFinished.connect(self._apply_scan_finished)
         self._textProcessed.connect(self._apply_text_processed)
         self._llmWarmupFinished.connect(self._apply_llm_warmup_finished)
+        self._localModelInstallProgress.connect(
+            self._apply_local_model_install_progress
+        )
+        self._localModelInstallFinished.connect(
+            self._apply_local_model_install_finished
+        )
         self._voiceActionRequested.connect(self._apply_voice_action)
         self._text_processing_worker = TextProcessingWorker(
             on_result=self._textProcessed.emit,
@@ -711,7 +737,7 @@ class AppController(QObject):
 
     @Property(bool, constant=True)
     def gpuInstallerAvailable(self) -> bool:
-        if sys.platform != "win32" or not self._nvidia_gpu_name:
+        if is_frozen() or sys.platform != "win32" or not self._nvidia_gpu_name:
             return False
         if any(
             str(item["value"]).startswith("cuda:")
@@ -882,6 +908,7 @@ class AppController(QObject):
         self._set_setting(
             "_llm_local_server_path", str(value), "llm/localServerPath"
         )
+        self.localModelInstallationChanged.emit()
 
     @Property(str, notify=settingsChanged)
     def llmLocalModelPath(self) -> str:
@@ -890,6 +917,23 @@ class AppController(QObject):
     @llmLocalModelPath.setter
     def llmLocalModelPath(self, value: str) -> None:
         self._set_setting("_llm_local_model_path", str(value), "llm/localModelPath")
+        self.localModelInstallationChanged.emit()
+
+    @Property(bool, notify=localModelInstallationChanged)
+    def localModelInstalled(self) -> bool:
+        return Path(self._llm_local_server_path).expanduser().is_file() and Path(
+            self._llm_local_model_path
+        ).expanduser().is_file()
+
+    @Property(bool, notify=localModelInstallationChanged)
+    def localModelInstalling(self) -> bool:
+        return self._local_model_installing
+
+    @Property(str, notify=localModelInstallationChanged)
+    def localModelInstallStatus(self) -> str:
+        if self.localModelInstalled:
+            return "本地模型已安装，可离线使用"
+        return self._local_model_install_status or "需要下载约 2.5 GB（仅首次）"
 
     @Property(float, notify=settingsChanged)
     def llmTimeoutSeconds(self) -> float:
@@ -1083,6 +1127,10 @@ class AppController(QObject):
             self._set_status("配置有误", str(exc), "error")
             self._append_log(f"配置错误：{exc}")
             return
+        try:
+            self._modification_dataset.reset_runtime()
+        except BaseException as exc:
+            self._append_log(f"修改数据采集初始化失败：{exc}")
 
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
@@ -1113,6 +1161,7 @@ class AppController(QObject):
                     on_disconnected=self._runtimeDisconnected.emit,
                     on_started=self._runtimeStarted.emit,
                     on_push_to_talk=self._pushToTalkChanged.emit,
+                    on_raw_audio=self._record_raw_attempt_audio,
                 )
             except BaseException as exc:
                 error = str(exc)
@@ -1125,6 +1174,12 @@ class AppController(QObject):
             daemon=True,
         )
         self._worker.start()
+
+    def _record_raw_attempt_audio(self, session_id: int, audio_16k) -> None:
+        try:
+            self._modification_dataset.record_audio(session_id, audio_16k)
+        except BaseException as exc:
+            print(f"[dataset] raw attempt audio was not saved: {exc}")
 
     @Slot()
     def startRecognition(self) -> None:
@@ -1206,6 +1261,9 @@ class AppController(QObject):
             return
         if self._llm_warmup_requested or self._quitting:
             return
+        if not self.localModelInstalled:
+            self._append_log("本地文本模型尚未安装，可在设置中按需下载")
+            return
         self._llm_warmup_requested = True
         self._append_log("正在后台加载并预热本地文本模型…")
         self._text_processing_worker.warmup(self._voice_llm_settings())
@@ -1219,6 +1277,61 @@ class AppController(QObject):
         self._append_log(
             f"本地文本模型已加载，输入/修改提示词预热完成（{latency_s:.2f}s）"
         )
+
+    @Slot()
+    def installLocalModel(self) -> None:
+        if self._local_model_installing or self.localModelInstalled:
+            return
+        self._local_model_installing = True
+        self._local_model_install_status = "正在准备下载…"
+        self.localModelInstallationChanged.emit()
+        self._append_log("开始下载本地文本模型；可以继续使用应用其他功能")
+
+        def progress(label: str, current: int, total: int) -> None:
+            self._localModelInstallProgress.emit(label, current, total)
+
+        def worker() -> None:
+            try:
+                result = install_default_local_model(progress=progress)
+                self._localModelInstallFinished.emit(result, "")
+            except Exception as exc:
+                self._localModelInstallFinished.emit({}, str(exc))
+
+        threading.Thread(
+            target=worker, name="local-model-installer", daemon=True
+        ).start()
+
+    @Slot(str, int, int)
+    def _apply_local_model_install_progress(
+        self, label: str, current: int, total: int
+    ) -> None:
+        if total > 0:
+            percent = max(0, min(100, int(current * 100 / total)))
+            self._local_model_install_status = f"{label}：{percent}%"
+        else:
+            self._local_model_install_status = (
+                f"{label}：{current / (1024 * 1024):.0f} MB"
+            )
+        self.localModelInstallationChanged.emit()
+
+    @Slot(object, str)
+    def _apply_local_model_install_finished(self, result: object, error: str) -> None:
+        self._local_model_installing = False
+        if error:
+            self._local_model_install_status = f"下载失败：{error}"
+            self._append_log(self._local_model_install_status)
+            self.localModelInstallationChanged.emit()
+            return
+        installed = dict(result) if isinstance(result, dict) else {}
+        self._llm_local_server_path = str(installed.get("server_path", ""))
+        self._llm_local_model_path = str(installed.get("model_path", ""))
+        self._settings.setValue("llm/localServerPath", self._llm_local_server_path)
+        self._settings.setValue("llm/localModelPath", self._llm_local_model_path)
+        self._local_model_install_status = "本地模型已安装，可离线使用"
+        self.settingsChanged.emit()
+        self.localModelInstallationChanged.emit()
+        self._append_log("本地文本模型下载并校验完成")
+        self.warmLocalModel()
 
     @Slot()
     def requestQuit(self) -> None:
@@ -1360,6 +1473,10 @@ class AppController(QObject):
 
     # Worker event application --------------------------------------------------
     def _publish_update(self, update) -> None:
+        try:
+            self._modification_dataset.record_asr_update(update)
+        except BaseException as exc:
+            print(f"[dataset] ASR update was not saved: {exc}")
         self._runtimeUpdate.emit(
             str(update.text or ""),
             bool(update.is_final),
@@ -1609,6 +1726,28 @@ class AppController(QObject):
             settings=self._voice_llm_settings(normalized_mode),
             target_text=target_text,
         )
+        if normalized_mode == INPUT_MODE_EDIT and snapshot is not None:
+            try:
+                episode_id, attempt_id = self._modification_dataset.begin_attempt(
+                    request_id=request_id,
+                    session_id=int(session_id),
+                    target_text=target_text,
+                    application=(
+                        snapshot.target.process_name
+                        or snapshot.target.window_title
+                        or "unknown"
+                    ),
+                    provider=request.settings.provider,
+                    model=request.settings.model,
+                    prompt_version=PROMPT_VERSION,
+                )
+                request = replace(
+                    request,
+                    episode_id=episode_id,
+                    attempt_id=attempt_id,
+                )
+            except BaseException as exc:
+                self._append_log(f"修改数据 Attempt 保存失败：{exc}")
         was_processing = bool(self._pending_text_requests)
         self._pending_text_requests.add(request_id)
         self._pending_interactions[request_id] = _PendingInteraction(
@@ -1643,6 +1782,13 @@ class AppController(QObject):
             self.textProcessingChanged.emit()
         if self._quitting or self._status_kind == "stopping":
             return
+        if result.mode == INPUT_MODE_EDIT:
+            try:
+                self._modification_dataset.record_llm_result(
+                    result.request_id, result
+                )
+            except BaseException as exc:
+                self._append_log(f"修改数据 LLM 分支保存失败：{exc}")
         label = "修改" if result.mode == INPUT_MODE_EDIT else "输入"
         parsed_edit_response: object = None
         if result.model_output:
@@ -1665,6 +1811,12 @@ class AppController(QObject):
                 f"大模型{label}处理失败：{result.error}"
             )
             if result.mode == INPUT_MODE_EDIT:
+                try:
+                    self._modification_dataset.abandon_request(
+                        result.request_id, str(result.error)
+                    )
+                except BaseException as exc:
+                    self._append_log(f"修改数据终态保存失败：{exc}")
                 if context.snapshot is not None:
                     self._retry_snapshot = context.snapshot
                 self._reject_edit_request(
@@ -1689,9 +1841,21 @@ class AppController(QObject):
                 )
         if result.mode == INPUT_MODE_EDIT:
             if context.snapshot is None:
+                try:
+                    self._modification_dataset.abandon_request(
+                        result.request_id, "修改目标快照已经失效"
+                    )
+                except BaseException:
+                    pass
                 self._reject_edit_request("修改目标快照已经失效")
                 return
             if result.final_text == result.target_text:
+                try:
+                    self._modification_dataset.abandon_request(
+                        result.request_id, "LLM candidate is unchanged"
+                    )
+                except BaseException:
+                    pass
                 self._retry_snapshot = context.snapshot
                 self._reject_edit_request(
                     "大模型未找到可可靠执行的修改。请确认说话前光标位于"
@@ -1760,9 +1924,22 @@ class AppController(QObject):
     ) -> None:
         proposed = str(result.final_text or "").strip()
         if not proposed and not allow_empty:
+            try:
+                self._modification_dataset.abandon_request(
+                    result.request_id,
+                    "LLM returned an empty unvalidated candidate",
+                )
+            except BaseException:
+                pass
             self._reject_edit_request("大模型返回了空修改结果")
             return
         if proposed == snapshot.text.strip():
+            try:
+                self._modification_dataset.abandon_request(
+                    result.request_id, "LLM candidate is unchanged"
+                )
+            except BaseException:
+                pass
             self._retry_snapshot = snapshot
             self._reject_edit_request("没有识别出可可靠执行的修改，请按住右 Alt 重说")
             return
@@ -1821,10 +1998,31 @@ class AppController(QObject):
             )
         except BaseException as exc:
             self._record_history("修改 · 应用失败", detail=str(exc))
+            try:
+                self._modification_dataset.feedback(
+                    review.request_id,
+                    "apply_failed",
+                    error=str(exc),
+                    final_text=review.snapshot.text,
+                )
+            except BaseException as collection_exc:
+                self._append_log(f"修改数据反馈保存失败：{collection_exc}")
             self._finish_edit_review(
                 message=f"修改未应用：{exc}", state="error", hide_ms=4000
             )
             return
+        final_text, manually_corrected = self._read_back_edit_text(
+            review, fallback=review.proposed_text
+        )
+        try:
+            self._modification_dataset.feedback(
+                review.request_id,
+                "confirm",
+                final_text=final_text,
+                manually_corrected=manually_corrected,
+            )
+        except BaseException as exc:
+            self._append_log(f"修改数据确认反馈保存失败：{exc}")
         self._record_history(
             "修改 · 已应用",
             raw=review.instruction,
@@ -1840,6 +2038,18 @@ class AppController(QObject):
         review = self._edit_review
         if review is None:
             return
+        final_text, manually_corrected = self._read_back_edit_text(
+            review, fallback=review.snapshot.text
+        )
+        try:
+            self._modification_dataset.feedback(
+                review.request_id,
+                "cancel",
+                final_text=final_text,
+                manually_corrected=manually_corrected,
+            )
+        except BaseException as exc:
+            self._append_log(f"修改数据取消反馈保存失败：{exc}")
         self._desktop_target_adapter().release_selection(review.snapshot.target)
         self._record_history("修改 · 已取消", raw=review.instruction)
         self._finish_edit_review(
@@ -1851,6 +2061,10 @@ class AppController(QObject):
         review = self._edit_review
         if review is None:
             return
+        try:
+            self._modification_dataset.feedback(review.request_id, "retry")
+        except BaseException as exc:
+            self._append_log(f"修改数据重说反馈保存失败：{exc}")
         self._retry_snapshot = review.snapshot
         self._edit_review = None
         self._edit_preview_html = ""
@@ -1865,6 +2079,23 @@ class AppController(QObject):
         self._record_history("修改 · 等待重说", raw=review.instruction)
         if self._recognition_enabled:
             self._set_status("请重说修改要求", "下一段语音仍然修改同一个文本框", "manual")
+
+    def _read_back_edit_text(
+        self, review: _EditReview, *, fallback: str
+    ) -> tuple[str, bool]:
+        """Read the actual control text after an action or use a safe fallback."""
+        try:
+            snapshot = self._desktop_target_adapter().capture_text(
+                review.snapshot.target
+            )
+            text = snapshot.text
+            self._desktop_target_adapter().release_selection(
+                review.snapshot.target
+            )
+            return text, text != fallback
+        except BaseException as exc:
+            self._append_log(f"最终文本回读失败，采用已知文本：{exc}")
+            return fallback, False
 
     def dispatchVoiceAction(self, action: str) -> None:
         """Thread-safe entry used by keyboard hooks and future Ring gestures."""
@@ -1949,6 +2180,23 @@ class AppController(QObject):
 
     def _cancel_pending_text_processing(self) -> None:
         had_pending = bool(self._pending_text_requests)
+        for request_id in tuple(self._pending_text_requests):
+            try:
+                self._modification_dataset.abandon_request(
+                    request_id,
+                    "application stopped before text processing completed",
+                )
+            except BaseException:
+                pass
+        if self._edit_review is not None:
+            try:
+                self._modification_dataset.feedback(
+                    self._edit_review.request_id,
+                    "abandoned",
+                    final_text=self._edit_review.snapshot.text,
+                )
+            except BaseException:
+                pass
         self._pending_text_requests.clear()
         self._pending_interactions.clear()
         self._session_targets.clear()
@@ -2059,17 +2307,15 @@ class AppController(QObject):
             raise ValueError("请先扫描并选择要连接的设备")
         if self._stage1_threshold <= 0:
             raise ValueError("Stage1 threshold 必须大于 0")
-        # A BLEDevice discovered by the picker belongs to the picker's short-
-        # lived asyncio loop.  Reusing it from the separate runtime thread is
-        # not the path exercised by the working firmware receiver and can make
-        # WinRT notifications stop shortly after connecting.  On Windows pass
-        # only the stable address and resolve a fresh BLEDevice in the runtime
-        # BLE loop.  CoreBluetooth still needs its opaque scan handle on macOS.
-        connection_device = None if sys.platform == "win32" else self._selected_device
+        # BLEDevice instances belong to their discovery loop. Resolve the
+        # persisted MAC/opaque CoreBluetooth identifier again in the runtime's
+        # long-lived loop on every platform.
+        connection_device = None
         return RuntimeSettings(
             ring_name=self._device_name.strip(),
             ring_selector=self._selector.strip() or None,
             ring_device=connection_device,
+            data_dir=app_data_root() / "data",
             encoding=self._audio_encoding,
             detector_model=model,
             stage1_threshold=self._stage1_threshold,

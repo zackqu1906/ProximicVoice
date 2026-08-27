@@ -95,10 +95,33 @@ class TextProcessingWorker:
             started = time.perf_counter()
             error = None
             model_output = ""
+            llm_branches = ()
+            winner_branch = ""
             used_llm = bool(request.settings.enabled)
             try:
+                process_with_collection_trace = getattr(
+                    self._processor, "process_with_collection_trace", None
+                )
                 process_with_trace = getattr(self._processor, "process_with_trace", None)
-                if callable(process_with_trace):
+                if callable(process_with_collection_trace):
+                    (
+                        final_text,
+                        model_output,
+                        llm_branches,
+                        winner_branch,
+                    ) = process_with_collection_trace(
+                        request.raw_text,
+                        request.mode,
+                        request.settings,
+                        request.target_text,
+                        (
+                            EDIT_MODE_RACE
+                            if normalize_input_mode(request.mode)
+                            == INPUT_MODE_EDIT
+                            else ""
+                        ),
+                    )
+                elif callable(process_with_trace):
                     final_text, model_output = process_with_trace(
                         request.raw_text,
                         request.mode,
@@ -129,6 +152,7 @@ class TextProcessingWorker:
                 # unavailable.  Preserve the raw final ASR text as a fallback.
                 error = str(exc)
                 model_output = str(getattr(exc, "model_output", "") or "")
+                llm_branches = tuple(getattr(exc, "branch_traces", ()) or ())
                 final_text = request.target_text or request.raw_text
             result = TextProcessingResult(
                 request_id=request.request_id,
@@ -141,6 +165,10 @@ class TextProcessingWorker:
                 target_text=request.target_text,
                 error=error,
                 model_output=model_output,
+                llm_branches=tuple(llm_branches),
+                winner_branch=winner_branch,
+                episode_id=request.episode_id,
+                attempt_id=request.attempt_id,
             )
             try:
                 self._on_result(result)

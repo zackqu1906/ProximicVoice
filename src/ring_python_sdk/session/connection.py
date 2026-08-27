@@ -73,25 +73,26 @@ class ConnectionMixin:
     async def connect_target(self, selector: str) -> bool:
         """Switch to one ring (disconnects current). selector: index / name / address."""
         sel = selector.strip()
-        # The Windows product UI already has an exact MAC address.  Stop as
-        # soon as that advertiser is seen instead of collecting every nearby
-        # BLE device for the full general-purpose scan timeout.  Scan and
-        # connect still happen in this same asyncio/WinRT thread.
-        if not self.scanned and ":" in sel:
+        # The UI already has an exact platform identifier: a MAC on Windows or
+        # an opaque CoreBluetooth UUID on macOS. Resolve it again inside this
+        # long-lived BLE loop instead of reusing a cross-thread BLEDevice.
+        if not self.scanned and sel and not sel.isdigit():
             targeted_timeout = min(self.timeout_s, 3.0)
             print(
                 f"Scanning for selected device {sel} "
                 f"(up to {targeted_timeout:.1f}s) ..."
             )
-            target = await BleakScanner.find_device_by_address(
-                sel, timeout=targeted_timeout
-            )
-            if target is None:
-                print(f"No match for {selector!r}. Try scanning again.")
-                return False
-            self.scanned = [target]
-            print(f"Selected device found: {target.name!r} ({target.address})")
-            return await self._connect_device(target, new_session=True)
+            try:
+                target = await BleakScanner.find_device_by_address(
+                    sel, timeout=targeted_timeout
+                )
+            except Exception as exc:
+                print(f"Targeted discovery failed: {exc}; trying full scan ...")
+                target = None
+            if target is not None:
+                self.scanned = [target]
+                print(f"Selected device found: {target.name!r} ({target.address})")
+                return await self._connect_device(target, new_session=True)
 
         if not self.scanned:
             await self.scan(all_devices=True)

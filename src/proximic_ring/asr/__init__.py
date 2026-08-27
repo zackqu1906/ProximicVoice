@@ -11,6 +11,7 @@ from .factory import (
 from .session_sink import (
     ASRInputGainSessionSink,
     CompletedUtteranceSessionSink,
+    RawAudioObserverSessionSink,
     SessionFanout,
     SessionSink,
 )
@@ -27,6 +28,7 @@ __all__ = [
     "ASRResult",
     "ASRWorker",
     "CompletedUtteranceSessionSink",
+    "RawAudioObserverSessionSink",
     "DirectASRSessionController",
     "SenseVoiceASR",
     "ProximityASRController",

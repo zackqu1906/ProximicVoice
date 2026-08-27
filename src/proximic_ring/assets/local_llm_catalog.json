@@ -1,6 +1,10 @@
 {
   "schemaVersion": 1,
   "defaultRuntime": "llama-cpp-b10218-win-cpu-x64",
+  "defaultRuntimes": {
+    "windows-x86_64": "llama-cpp-b10218-win-cpu-x64",
+    "macos-arm64": "llama-cpp-b10516-macos-arm64"
+  },
   "defaultModel": "qwen3-4b-instruct-2507-q4-k-m",
   "runtimes": {
     "llama-cpp-b10218-win-cpu-x64": {
@@ -14,6 +18,18 @@
       "sha256": "678d67405b12abd8ea3541ec6f501c10c9c15ba3cd0767bf090f79eb51168a17",
       "sizeBytes": 18353134,
       "executable": "llama-server.exe"
+    },
+    "llama-cpp-b10516-macos-arm64": {
+      "displayName": "llama.cpp b10516 · macOS Apple Silicon",
+      "platform": "macos-arm64",
+      "archiveFilename": "llama-b10516-bin-macos-arm64.tar.gz",
+      "downloadUrls": [
+        "https://github.com/ggml-org/llama.cpp/releases/download/b10516/llama-b10516-bin-macos-arm64.tar.gz"
+      ],
+      "downloadUrl": "https://github.com/ggml-org/llama.cpp/releases/download/b10516/llama-b10516-bin-macos-arm64.tar.gz",
+      "sha256": "ee3324327d621026ae80c24031670e65fa62a0b23a3a027dbe2f65f240affd30",
+      "sizeBytes": 10600000,
+      "executable": "llama-server"
     }
   },
   "models": {
