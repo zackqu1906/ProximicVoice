@@ -215,6 +215,7 @@ class AppController(QObject):
         self._retry_snapshot: DesktopTextSnapshot | None = None
         self._retry_target_armed = False
         self._pending_feedback_reason: _PendingFeedbackReason | None = None
+        self._feedback_reason_visible = False
         self._log_lines: list[str] = []
         self._ptt_active = False
         self._input_mode = normalize_input_mode(
@@ -425,6 +426,12 @@ class AppController(QObject):
         self._feedback_reason_timer.setSingleShot(True)
         self._feedback_reason_timer.setInterval(10_000)
         self._feedback_reason_timer.timeout.connect(self._clear_feedback_reason)
+        self._feedback_reason_reveal_timer = QTimer(self)
+        self._feedback_reason_reveal_timer.setSingleShot(True)
+        self._feedback_reason_reveal_timer.setInterval(180)
+        self._feedback_reason_reveal_timer.timeout.connect(
+            self._reveal_feedback_reason
+        )
         self._quit_timer = QTimer(self)
         self._quit_timer.setInterval(100)
         self._quit_timer.timeout.connect(self._finish_quit)
@@ -635,6 +642,11 @@ class AppController(QObject):
 
     @Property(bool, notify=feedbackReasonChanged)
     def feedbackReasonVisible(self) -> bool:
+        return self._feedback_reason_visible
+
+    @Property(bool, notify=feedbackReasonChanged)
+    def feedbackReasonAvailable(self) -> bool:
+        """Whether a reason can bind, including the brief visual refresh gap."""
         return self._pending_feedback_reason is not None
 
     @Property(str, notify=feedbackReasonChanged)
@@ -2228,19 +2240,40 @@ class AppController(QObject):
         self._clear_feedback_reason()
 
     def _offer_feedback_reason(self, request_id: int, action: str) -> None:
+        # Always create a short, renderable gap before showing the next prompt.
+        # A retry can replace an older unmarked retry in one Qt event-loop turn;
+        # without this gap the Window never visibly closes and appears stale.
         self._pending_feedback_reason = _PendingFeedbackReason(
             request_id=int(request_id), action=str(action)
         )
+        self._feedback_reason_timer.stop()
+        self._feedback_reason_reveal_timer.stop()
+        self._feedback_reason_visible = False
+        self.feedbackReasonChanged.emit()
+        self._feedback_reason_reveal_timer.start()
+
+    @Slot()
+    def _reveal_feedback_reason(self) -> None:
+        if self._pending_feedback_reason is None:
+            return
+        self._feedback_reason_visible = True
         self._feedback_reason_timer.start()
         self.feedbackReasonChanged.emit()
 
     @Slot()
     def _clear_feedback_reason(self) -> None:
-        if self._pending_feedback_reason is None:
+        had_feedback_reason = (
+            self._pending_feedback_reason is not None
+            or self._feedback_reason_visible
+        )
+        if not had_feedback_reason:
             self._feedback_reason_timer.stop()
+            self._feedback_reason_reveal_timer.stop()
             return
         self._pending_feedback_reason = None
+        self._feedback_reason_visible = False
         self._feedback_reason_timer.stop()
+        self._feedback_reason_reveal_timer.stop()
         self.feedbackReasonChanged.emit()
 
     def _read_back_edit_text(

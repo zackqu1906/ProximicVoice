@@ -201,6 +201,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert voice_input_card is not None
     assert feedback_reason_overlay is not None
     assert controller.feedbackReasonVisible is False
+    assert controller.feedbackReasonAvailable is False
     assert controller.llmEnabled is True
     QMetaObject.invokeMethod(picker, "close")
     QTest.qWait(300)
@@ -489,9 +490,10 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.reviewPending is False
     assert controller.editPreviewHtml == ""
     assert controller.interactionState == "retry"
-    app.processEvents()
+    QTest.qWait(220)
     assert confirm_edit_button.property("visible") is False
     assert controller.feedbackReasonVisible is True
+    assert controller.feedbackReasonAvailable is True
     assert feedback_reason_overlay.property("visible") is True
     assert controller.feedbackReasonPrompt == "刚才为什么重说？"
     controller._apply_voice_action("reason_asr_error")
@@ -499,6 +501,20 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.feedbackReasonVisible is False
     assert feedback_reason_overlay.property("visible") is False
     assert "已标记本次重说原因：语音识别错误" in controller.logText
+
+    # Replacing an unanswered prompt must have a real rendered gap so two
+    # consecutive retries cannot look like one stale, continuously visible UI.
+    controller._offer_feedback_reason(900, "retry")
+    QTest.qWait(220)
+    assert controller.feedbackReasonVisible is True
+    controller._offer_feedback_reason(901, "retry")
+    assert controller.feedbackReasonAvailable is True
+    assert controller.feedbackReasonVisible is False
+    assert feedback_reason_overlay.property("visible") is False
+    QTest.qWait(220)
+    assert controller.feedbackReasonVisible is True
+    assert controller._pending_feedback_reason.request_id == 901
+    controller._clear_feedback_reason()
 
     controller._apply_runtime_update("改得简洁正式", True, "", 44)
     retry_request = submitted[2]
@@ -538,7 +554,7 @@ def test_qml_customer_window_loads(tmp_path):
         )
     )
     controller.cancelEdit()
-    app.processEvents()
+    QTest.qWait(220)
     assert controller.feedbackReasonVisible is True
     assert controller.feedbackReasonPrompt == "刚才为什么取消？"
     assert desktop_target.current_text == "正式的新文本。"
