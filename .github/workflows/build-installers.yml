@@ -11,15 +11,32 @@ jobs:
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
-      - name: Prepare application runtime without model weights
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements-windows.lock
+            requirements-packaging.txt
+      - name: Prepare lightweight packaging runtime
         shell: pwsh
-        run: ./scripts/setup.ps1 -Compute cpu -SkipLocalLLM
+        run: |
+          python -m venv .runtime/venv
+          $Python = ".\.runtime\venv\Scripts\python.exe"
+          & $Python -m pip install --upgrade pip setuptools wheel
+          & $Python -m pip install --index-url https://download.pytorch.org/whl/cpu `
+            "torch==2.11.0" "torchaudio==2.11.0"
+          & $Python -m pip install -c requirements-windows.lock `
+            ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" `
+            -r requirements-packaging.txt
+          .\scripts\install-opus-runtime.ps1
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup --yes --no-progress
       - name: Build Windows installer
         shell: pwsh
-        run: ./scripts/build-windows-installer.ps1
+        run: ./scripts/build-windows-installer.ps1 -SkipDependencyInstall
       - uses: actions/upload-artifact@v4
         with:
           name: ProximicVoice-windows-x64
