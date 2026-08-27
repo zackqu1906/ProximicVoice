@@ -105,7 +105,7 @@ macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI；Windows 专用的全局�
   - `funasr_nano`：本地 Fun-ASR-Nano-2512，支持用户热词。
   - `volcengine`：在线豆包 Seed-ASR 流式识别。
 - 实时显示 ASR partial，结束后使用 final 结果进入文本处理。
-- 默认仅对送入 ASR 的音频副本增加 24 dB，可在设置中关闭；Ring 原始录音和 ProxiMic 输入保持不变。
+- ASR 直接使用 Controller 裁剪后的原始 16 kHz 音频，不额外放大。
 - 提供“输入到光标”和“修改当前文本”两种工作模式。
 - 使用本地 Qwen3-4B-Instruct-2507 或火山方舟上的豆包/DeepSeek 处理文本。
 - 修改时向所选模型并行发送片段替换和完整文本两套 prompt，采用最先通过校验的结果。

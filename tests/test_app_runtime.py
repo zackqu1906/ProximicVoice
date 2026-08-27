@@ -21,15 +21,8 @@ def test_runtime_defaults_only_enable_windows_desktop_features():
     expected = os.name == "nt"
     assert args.desktop_output is expected
     assert args.push_to_talk is expected
-    assert args.asr_gain_db == 24.0
+    assert not hasattr(args, "asr_gain_db")
     assert args.asr_pre_roll == 1.5
-
-
-def test_runtime_can_disable_asr_input_gain_without_changing_ring_audio():
-    args = RuntimeSettings(asr_input_gain_enabled=False).to_namespace()
-
-    assert args.asr_gain_db == 0.0
-    assert args.encoding == "opus"
 
 
 def test_runtime_settings_preserve_working_detector_and_asr_values():

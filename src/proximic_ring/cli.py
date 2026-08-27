@@ -271,7 +271,6 @@ def _build_session_controller(
     from .asr import (
         ASRBackendSettings,
         ASRFanout,
-        ASRInputGainSessionSink,
         ASRWorker,
         CompletedUtteranceSessionSink,
         ProximitySessionController,
@@ -352,21 +351,9 @@ def _build_session_controller(
     batch_workers = []
     session_sinks = []
     if raw_audio_observer is not None:
-        # This sink sees the Controller's final cropped 16 kHz waveform before
-        # the independent +24 dB ASR wrapper is applied.
+        # Dataset audio and ASR both receive the Controller's final cropped
+        # 16 kHz waveform without a separate amplitude transform.
         session_sinks.append(RawAudioObserverSessionSink(raw_audio_observer))
-    asr_gain_db = float(getattr(args, "asr_gain_db", 0.0))
-
-    def with_asr_input_gain(sink):
-        if asr_gain_db == 0.0:
-            return sink
-        return ASRInputGainSessionSink(sink, gain_db=asr_gain_db)
-
-    if asr_gain_db != 0.0:
-        on_state(
-            f"[ASR] 输入增益 {asr_gain_db:+g} dB；"
-            "仅影响 ASR，Ring 原始录音与 ProxiMic 保持不变"
-        )
 
     for name in selected:
         settings = ASRBackendSettings(
@@ -400,12 +387,10 @@ def _build_session_controller(
             batch_workers.append(ASRWorker(backend, on_result=_format_asr_result))
         elif kind == "streaming":
             session_sinks.append(
-                with_asr_input_gain(
-                    StreamingASRWorker(
-                        backend,
-                        on_update=publish_streaming_update,
-                        on_state=on_state,
-                    )
+                StreamingASRWorker(
+                    backend,
+                    on_update=publish_streaming_update,
+                    on_state=on_state,
                 )
             )
         else:  # pragma: no cover - factory invariant
@@ -415,9 +400,7 @@ def _build_session_controller(
 
     if batch_workers:
         batch_sink = batch_workers[0] if len(batch_workers) == 1 else ASRFanout(batch_workers)
-        session_sinks.append(
-            with_asr_input_gain(CompletedUtteranceSessionSink(batch_sink))
-        )
+        session_sinks.append(CompletedUtteranceSessionSink(batch_sink))
 
     push_to_talk = None
     if args.push_to_talk:

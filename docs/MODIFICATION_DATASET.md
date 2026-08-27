@@ -16,7 +16,7 @@ dataset/<anonymous_user_id>/<episode_id>/
 ```
 
 - `audio_raw.wav` 是 `ProximitySessionController` 最终裁剪的单声道 16 kHz
-  PCM16 音频，在 ASR 的 +24 dB 输入增益之前旁路保存。
+  PCM16 音频；ASR 使用相同的未放大波形。
 - `asr_updates.jsonl` 按发生顺序保存 partial、final、backend、model、延迟和错误。
 - `llm_branches.jsonl` 同时保存 fragment/full 的原始返回、校验状态、完整候选、
   分支延迟和 winner。为了获得完整训练记录，采集路径会等待两条并行分支完成。

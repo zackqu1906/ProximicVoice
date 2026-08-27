@@ -723,25 +723,6 @@ ApplicationWindow {
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
                     }
-                    Switch {
-                        id: asrInputGainSwitch
-                        objectName: "asrInputGainSwitch"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: "ASR 输入增强（+24 dB）"
-                        checked: appController.asrInputGainEnabled
-                        onToggled: appController.asrInputGainEnabled = checked
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: "仅放大送入 ASR 的音频副本，不影响 Ring 原始录音和 ProxiMic 检测；重新连接后生效。"
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
                     Button {
                         id: gpuInstallButton
                         objectName: "gpuInstallButton"

@@ -108,9 +108,6 @@ class RuntimeSettings:
     streaming_sensevoice_repo: Path | None = None
     funasr_nano_repo: Path | None = None
     funasr_nano_hotwords: str = ""
-    # Applied only after ProxiMic has selected an utterance. Ring capture and
-    # detector calibration continue to use the untouched waveform.
-    asr_input_gain_enabled: bool = True
 
     asr_pre_roll_s: float = 1.5
     asr_end_rejects: int = 2
@@ -148,7 +145,6 @@ class RuntimeSettings:
             asr_device=self.asr_device,
             asr_language=self.asr_language,
             asr_option=asr_options,
-            asr_gain_db=24.0 if self.asr_input_gain_enabled else 0.0,
             sensevoice_repo=None,
             streaming_sensevoice_repo=(
                 self.streaming_sensevoice_repo

@@ -390,10 +390,6 @@ class AppController(QObject):
                 str(self._settings.value("asr/funasrNanoHotwords", ""))
             )
         )
-        self._asr_input_gain_enabled = self._bool_setting(
-            "asr/inputGain24DbEnabled",
-            True,
-        )
         self._desktop_output = (
             WINDOWS_DESKTOP_INPUT_SUPPORTED
             and self._bool_setting("input/desktopOutput", True)
@@ -781,18 +777,6 @@ class AppController(QObject):
             "_funasr_hotwords",
             normalized,
             "asr/funasrNanoHotwords",
-        )
-
-    @Property(bool, notify=settingsChanged)
-    def asrInputGainEnabled(self) -> bool:
-        return self._asr_input_gain_enabled
-
-    @asrInputGainEnabled.setter
-    def asrInputGainEnabled(self, value: bool) -> None:
-        self._set_setting(
-            "_asr_input_gain_enabled",
-            bool(value),
-            "asr/inputGain24DbEnabled",
         )
 
     @Property(bool, notify=settingsChanged)
@@ -2326,7 +2310,6 @@ class AppController(QObject):
             streaming_sensevoice_repo=repo,
             funasr_nano_repo=funasr_repo,
             funasr_nano_hotwords=self._funasr_hotwords,
-            asr_input_gain_enabled=self._asr_input_gain_enabled,
             # The UI commits either the LLM result or the raw fallback itself.
             # Feeding ASR finals into the legacy output here would inject the
             # unprocessed text once and then inject the processed text again.
