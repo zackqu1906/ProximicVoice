@@ -51,7 +51,9 @@ PROXIMIC_DATA_HOME="$SMOKE_DATA_ROOT" \
 PROXIMIC_STARTUP_PROBE=1 \
     "$APP_EXECUTABLE"
 SMOKE_LOG="$SMOKE_DATA_ROOT/logs/startup.log"
-if [[ ! -f "$SMOKE_LOG" ]] || ! grep -q "QML root window ready" "$SMOKE_LOG"; then
+if [[ ! -f "$SMOKE_LOG" ]] \
+    || ! grep -q "QML root window ready" "$SMOKE_LOG" \
+    || ! grep -q "packaged ASR imports ready" "$SMOKE_LOG"; then
     echo "macOS packaged application did not complete its startup probe." >&2
     [[ -f "$SMOKE_LOG" ]] && cat "$SMOKE_LOG" >&2
     exit 1

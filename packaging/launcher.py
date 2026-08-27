@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 import faulthandler
+import multiprocessing
 from pathlib import Path
 import platform
 import subprocess
@@ -95,5 +96,10 @@ def run() -> int:
             pass
 
 
+def _entrypoint() -> int:
+    multiprocessing.freeze_support()
+    return run()
+
+
 if __name__ == "__main__":
-    raise SystemExit(run())
+    raise SystemExit(_entrypoint())

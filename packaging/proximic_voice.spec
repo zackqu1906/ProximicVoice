@@ -13,6 +13,7 @@ streaming_root = project_root / "third_party" / "streaming-sensevoice"
 funasr_root = project_root / "third_party" / "Fun-ASR"
 
 datas = collect_data_files("proximic_ring")
+datas += collect_data_files("funasr")
 datas += [(str(streaming_root), "third_party/streaming-sensevoice")]
 datas += [
     (str(funasr_root / "model.py"), "third_party/Fun-ASR"),
@@ -37,9 +38,10 @@ elif platform.system() == "Darwin":
     binaries.append((str(opus_dylib), "opus"))
 
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
-hiddenimports += collect_submodules("streaming_sensevoice")
+hiddenimports += collect_submodules("funasr", on_error="ignore")
 hiddenimports += [
     "funasr",
+    "streaming_sensevoice",
     "transformers",
     "opuslib",
     "websocket",
@@ -59,6 +61,7 @@ a = Analysis(
     hooksconfig={},
     runtime_hooks=[],
     excludes=["tkinter", "matplotlib", "IPython", "jupyter"],
+    module_collection_mode={"funasr": "pyz+py"},
     noarchive=False,
 )
 # Qt 6 on Windows links to the OS-provided, unsuffixed ICU API. A developer's

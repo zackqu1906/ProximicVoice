@@ -177,7 +177,7 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Item { Layout.fillWidth: true }
                 Button {
-                    text: appController.scanBusy ? "实时扫描中…" : "重新开始扫描"
+                    text: appController.scanBusy ? "扫描中…" : "重新扫描"
                     enabled: !appController.scanBusy && !appController.busy
                     onClicked: appController.scanDevices()
                 }

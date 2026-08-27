@@ -309,7 +309,7 @@ class AppController(QObject):
         # becomes available after the user has selected/attempted a device in
         # this application session, never merely because the app just opened.
         self._can_reconnect = False
-        self._scan_message = "打开设备列表后会实时发现附近的蓝牙设备"
+        self._scan_message = "打开设备列表后会扫描附近的蓝牙设备"
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
 
@@ -435,11 +435,6 @@ class AppController(QObject):
         self._quit_timer = QTimer(self)
         self._quit_timer.setInterval(100)
         self._quit_timer.timeout.connect(self._finish_quit)
-        self._rescan_timer = QTimer(self)
-        self._rescan_timer.setSingleShot(True)
-        self._rescan_timer.setInterval(600)
-        self._rescan_timer.timeout.connect(self._scan_devices_once)
-
         self._runtimeStatus.connect(self._apply_runtime_status)
         self._runtimeConnected.connect(self._apply_runtime_connected)
         self._runtimeDisconnected.connect(self._apply_runtime_disconnected)
@@ -1069,19 +1064,17 @@ class AppController(QObject):
             return
         self._discovery_active = True
         self._pending_device_connection = False
-        self._rescan_timer.stop()
         self._available_devices = []
         self._device_handles = {}
-        self._scan_message = "正在实时发现附近的蓝牙设备…"
+        self._scan_message = "正在扫描附近的蓝牙设备…"
         self.devicesChanged.emit()
         self._set_status("正在扫描", "请选择列表中的设备进行连接", "starting")
-        self._append_log("开始实时发现附近的蓝牙设备（不按名称过滤）")
+        self._append_log("开始扫描附近的蓝牙设备（不按名称过滤）")
         self._scan_devices_once()
 
     @Slot()
     def stopDeviceDiscovery(self) -> None:
         self._discovery_active = False
-        self._rescan_timer.stop()
 
     @Slot()
     def _scan_devices_once(self) -> None:
@@ -1100,7 +1093,7 @@ class AppController(QObject):
         self.scanBusyChanged.emit()
         self._refresh_scan_message()
 
-        timeout_s = 3.0
+        timeout_s = 5.0
 
         def scan_main() -> None:
             rows: list[dict[str, object]] = []
@@ -1438,12 +1431,6 @@ class AppController(QObject):
             return
 
         if error:
-            if self._discovery_active:
-                self._scan_message = f"本轮扫描失败，稍后自动重试：{error}"
-                self.devicesChanged.emit()
-                self._append_log(f"蓝牙扫描本轮失败，将自动重试：{error}")
-                self._rescan_timer.start(1200)
-                return
             self._scan_message = f"扫描失败：{error}"
             self.devicesChanged.emit()
             self._set_status("扫描失败", error, "error")
@@ -1457,16 +1444,10 @@ class AppController(QObject):
             if added:
                 self._append_log(f"发现 {added} 个新设备，当前共 {count} 个")
         else:
-            self._scan_message = (
-                "正在实时发现设备，请确认设备可被发现以及系统蓝牙权限"
-                if self._discovery_active
-                else "没有发现蓝牙设备，请确认蓝牙权限后重新扫描"
-            )
+            self._scan_message = "没有发现蓝牙设备，请确认蓝牙权限后重新扫描"
             self._set_status("未发现设备", self._scan_message, "idle")
         if added or not count:
             self.devicesChanged.emit()
-        if self._discovery_active and not self._connected and not self._busy:
-            self._rescan_timer.start()
 
     def _merge_discovered_devices(self, rows: list[object]) -> int:
         """Merge scan results without moving rows already visible to the user."""
@@ -1509,8 +1490,8 @@ class AppController(QObject):
             message = f"已发现 {total} 个设备，显示 {visible} 个匹配“{query}”的设备"
         else:
             message = f"已发现 {total} 个设备"
-        if self._discovery_active:
-            message += "；列表正在实时更新"
+        if self._scan_busy:
+            message += "；正在扫描"
         self._scan_message = message
 
     # Worker event application --------------------------------------------------
