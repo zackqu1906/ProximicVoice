@@ -294,6 +294,8 @@ def test_qml_customer_window_loads(tmp_path):
         r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] 最新日志",
         controller.logText,
     )
+    assert log_area.property("text") == controller.logText
+    assert log_area.property("textFormat") == 0  # TextEdit.PlainText
     assert log_area.property("cursorPosition") == len(log_area.property("text"))
     assert llm_local_model_field is not None
     assert controller.inputMode == "dictation"

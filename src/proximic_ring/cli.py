@@ -370,7 +370,7 @@ def _build_session_controller(
         )
 
         if backend is None:
-            print(f"Loading ASR backend {name!r} ({kind}) ...")
+            on_state(f"正在加载语音模型 {name}（{kind}）…")
             if kind == "batch":
                 backend = create_asr_backend(name, settings)
             elif kind == "streaming":
@@ -380,7 +380,6 @@ def _build_session_controller(
             if backend_cache is not None:
                 backend_cache.put(name, kind, settings, backend)
         else:
-            print(f"Reusing loaded ASR backend {name!r} ({kind}) ...")
             on_state(f"正在复用已加载语音模型 {name}…")
 
         if kind == "batch":
@@ -396,7 +395,7 @@ def _build_session_controller(
         else:  # pragma: no cover - factory invariant
             raise AssertionError(kind)
 
-        print(f"ASR backend ready: {backend.backend_name}/{backend.model_name}")
+        on_state(f"语音模型已就绪：{backend.backend_name}/{backend.model_name}")
 
     if batch_workers:
         batch_sink = batch_workers[0] if len(batch_workers) == 1 else ASRFanout(batch_workers)

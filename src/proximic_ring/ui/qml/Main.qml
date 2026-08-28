@@ -581,20 +581,29 @@ ApplicationWindow {
                         TextArea {
                             id: logArea
                             objectName: "logArea"
+                            width: logScroll.availableWidth
                             readOnly: true
-                            text: appController.logText.length > 0 ? appController.logText : "尚未启动"
+                            textFormat: TextEdit.PlainText
+                            text: "尚未启动"
                             color: root.textMuted
-                            font.family: "Cascadia Mono"
+                            font.family: Qt.platform.os === "osx" ? "Menlo" : "Cascadia Mono"
                             font.pixelSize: 14
                             wrapMode: TextEdit.Wrap
                             background: Rectangle { color: "transparent" }
+
+                            function refreshLog() {
+                                var nextText = appController.logText
+                                text = nextText.length > 0 ? nextText : "尚未启动"
+                                cursorPosition = length
+                            }
+
+                            Component.onCompleted: refreshLog()
+                            Connections {
+                                target: appController
+                                function onLogChanged() { logArea.refreshLog() }
+                            }
                             onTextChanged: {
                                 cursorPosition = length
-                                Qt.callLater(function() {
-                                    var flickable = logScroll.contentItem
-                                    if (flickable)
-                                        flickable.contentY = Math.max(0, flickable.contentHeight - flickable.height)
-                                })
                             }
                         }
                     }
