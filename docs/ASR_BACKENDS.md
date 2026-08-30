@@ -122,7 +122,9 @@ It sends 16 kHz / 16-bit / mono PCM in 200 ms Seed-protocol packets, prints
 partial text while Stage2 remains active, and requests final text when ProxiMic
 ends the session. A dedicated receiver reads cloud responses continuously, so
 slow network responses cannot queue up and delay later audio or final text. Set
-the App Key before starting the program:
+the App Key in the desktop UI's separate "线上语音模型 API Key" password
+field. The UI persists it for the current operating-system user. CLI users can
+still set the compatibility environment variable before starting the program:
 
 ```powershell
 $env:VOLC_ASR_API_KEY = "your-doubao-speech-app-key"

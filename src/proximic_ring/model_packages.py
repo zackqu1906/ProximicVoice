@@ -6,9 +6,11 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tarfile
 import tempfile
+import time
 from typing import Callable
 from urllib import request
 import zipfile
@@ -21,6 +23,11 @@ from .text_processing.local_server import (
 
 
 ProgressCallback = Callable[[str, int, int], None]
+
+_DOWNLOAD_TIMEOUT_S = 60
+_DOWNLOAD_ROUNDS = 4
+_DOWNLOAD_RETRY_DELAYS_S = (1.0, 2.0, 4.0, 8.0, 10.0)
+_CONTENT_RANGE = re.compile(r"bytes\s+(\d+)-(\d+)/(\d+|\*)", re.IGNORECASE)
 
 
 def local_model_is_installed() -> bool:
@@ -40,23 +47,59 @@ def _sha256(path: Path) -> str:
 
 def _download(
     urls: list[str], destination: Path, expected_sha256: str, label: str,
-    progress: ProgressCallback | None,
+    progress: ProgressCallback | None, *, expected_size: int | None = None,
 ) -> None:
+    """Download with checksum verification and automatic cross-mirror resume.
+
+    A multi-gigabyte Hugging Face response can legitimately be interrupted by
+    a proxy, VPN, CDN edge, or transient socket timeout.  Keep one ``.part``
+    file for every mirror and retry it with a validated HTTP Range request.
+    """
+
+    if not urls:
+        raise RuntimeError(f"{label} 没有可用的下载地址")
     destination.parent.mkdir(parents=True, exist_ok=True)
     partial = destination.with_suffix(destination.suffix + ".part")
     last_error: Exception | None = None
-    for url in urls:
+    attempts = urls * _DOWNLOAD_ROUNDS
+    for attempt_index, url in enumerate(attempts, start=1):
         try:
             downloaded = partial.stat().st_size if partial.exists() else 0
+
+            if expected_size is not None and downloaded > expected_size:
+                partial.unlink(missing_ok=True)
+                downloaded = 0
+            if expected_size is not None and downloaded == expected_size:
+                actual = _sha256(partial)
+                if actual.lower() == expected_sha256.lower():
+                    os.replace(partial, destination)
+                    if progress:
+                        progress(label, expected_size, expected_size)
+                    return
+                partial.unlink(missing_ok=True)
+                downloaded = 0
+
             headers = {"User-Agent": "ProxiMic-Voice/0.6"}
             if downloaded:
                 headers["Range"] = f"bytes={downloaded}-"
-            with request.urlopen(request.Request(url, headers=headers), timeout=60) as response:
-                if downloaded and getattr(response, "status", 200) != 206:
+            with request.urlopen(
+                request.Request(url, headers=headers), timeout=_DOWNLOAD_TIMEOUT_S
+            ) as response:
+                status = int(getattr(response, "status", 200) or 200)
+                if downloaded and status == 206:
+                    content_range = str(response.headers.get("Content-Range", ""))
+                    match = _CONTENT_RANGE.fullmatch(content_range.strip())
+                    if match is None or int(match.group(1)) != downloaded:
+                        raise RuntimeError(
+                            f"服务器返回了无效的断点范围：{content_range or '缺失'}"
+                        )
+                elif downloaded and status != 206:
+                    # Some CDNs ignore Range and return a complete 200 body.
+                    # The already-open response can safely replace the part.
                     downloaded = 0
                     partial.unlink(missing_ok=True)
                 total_header = int(response.headers.get("Content-Length", "0") or 0)
-                total = downloaded + total_header
+                total = expected_size or (downloaded + total_header)
                 mode = "ab" if downloaded else "wb"
                 with partial.open(mode) as target:
                     while True:
@@ -65,8 +108,16 @@ def _download(
                             break
                         target.write(chunk)
                         downloaded += len(chunk)
+                        if expected_size is not None and downloaded > expected_size:
+                            raise RuntimeError(
+                                f"服务器返回的数据超过预期大小 {expected_size} 字节"
+                            )
                         if progress:
                             progress(label, downloaded, total)
+            if expected_size is not None and downloaded != expected_size:
+                raise RuntimeError(
+                    f"连接提前结束：已下载 {downloaded} / {expected_size} 字节"
+                )
             actual = _sha256(partial)
             if actual.lower() != expected_sha256.lower():
                 partial.unlink(missing_ok=True)
@@ -75,7 +126,24 @@ def _download(
             return
         except Exception as exc:
             last_error = exc
-    raise RuntimeError(f"{label} 下载失败：{last_error}") from last_error
+            if attempt_index < len(attempts):
+                downloaded = partial.stat().st_size if partial.exists() else 0
+                if progress:
+                    progress(
+                        f"{label}连接中断，正在自动续传 "
+                        f"({attempt_index + 1}/{len(attempts)})",
+                        downloaded,
+                        expected_size or 0,
+                    )
+                delay_index = min(
+                    attempt_index - 1, len(_DOWNLOAD_RETRY_DELAYS_S) - 1
+                )
+                time.sleep(_DOWNLOAD_RETRY_DELAYS_S[delay_index])
+    partial_note = f"；断点已保留在 {partial}" if partial.exists() else ""
+    raise RuntimeError(
+        f"{label} 下载失败：{last_error}{partial_note}。"
+        "请检查代理/VPN、防火墙，或稍后重试。"
+    ) from last_error
 
 
 def _safe_extract(archive: Path, destination: Path) -> None:
@@ -126,6 +194,7 @@ def install_default_local_model(
         _download(
             list(model.get("downloadUrls") or [model["downloadUrl"]]),
             model_path, model["sha256"], "GGUF 模型", progress,
+            expected_size=int(model.get("sizeBytes") or 0) or None,
         )
     executable = runtime_path / runtime["executable"]
     if not executable.is_file():
@@ -133,6 +202,7 @@ def install_default_local_model(
             _download(
                 list(runtime.get("downloadUrls") or [runtime["downloadUrl"]]),
                 runtime_archive, runtime["sha256"], "llama.cpp 运行时", progress,
+                expected_size=int(runtime.get("sizeBytes") or 0) or None,
             )
         target_home.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="runtime-", dir=target_home) as tmp:

@@ -82,6 +82,16 @@ def test_funasr_backend_receives_its_repo_and_can_auto_select_local_model():
     ]
 
 
+def test_volcengine_backend_receives_api_key_from_ui_settings():
+    args = RuntimeSettings(
+        asr_backend="volcengine",
+        asr_model="seedasr-streaming",
+        asr_api_key=" speech-ui-key ",
+    ).to_namespace()
+
+    assert args.asr_option == ["volcengine.api_key=speech-ui-key"]
+
+
 def test_nano_hotwords_normalize_ui_separators_and_duplicates():
     assert normalize_funasr_nano_hotwords(
         " ProxiMic，豆包\n瑞幸,豆包；proximic "

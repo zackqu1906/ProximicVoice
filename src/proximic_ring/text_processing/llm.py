@@ -632,11 +632,16 @@ class OpenAICompatibleTextProcessor:
             "Accept": "application/json",
             "User-Agent": "ProxiMic-Voice/0.6",
         }
+        api_key = settings.api_key.strip()
         key_env = settings.api_key_env.strip()
-        if key_env:
+        if not api_key and key_env:
             api_key = os.environ.get(key_env, "").strip()
             if not api_key:
-                raise RuntimeError(f"环境变量 {key_env} 尚未设置")
+                raise RuntimeError(
+                    "尚未配置大模型 API Key；请在应用设置中填写"
+                    f"（兼容环境变量：{key_env}）"
+                )
+        if api_key:
             headers["Authorization"] = f"Bearer {api_key}"
         edit_system_prompt = system_prompt
         if edit_tool is not None:

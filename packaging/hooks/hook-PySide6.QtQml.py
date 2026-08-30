@@ -9,15 +9,12 @@ hiddenimports, binaries, datas = add_qt6_dependencies(__file__)
 qml_binaries, qml_datas = pyside6_library_info.collect_qtqml_files()
 
 _ROOTS = {
-    "PySide6/Qt/qml/QtCore",
-    "PySide6/Qt/qml/QtQml",
-    "PySide6/Qt/qml/QtQml/Models",
-    "PySide6/Qt/qml/QtQml/WorkerScript",
-    "PySide6/Qt/qml/QtQuick",
-    "PySide6/Qt/qml/QtQuick/Controls",
-    "PySide6/Qt/qml/QtQuick/Layouts",
-    "PySide6/Qt/qml/QtQuick/Templates",
-    "PySide6/Qt/qml/QtQuick/Window",
+    # PyInstaller's destination layout for current PySide6 releases is
+    # ``PySide6/qml`` (the source installation also uses that layout).
+    # Using ``PySide6/Qt/qml`` silently filters every QML module out.
+    "PySide6/qml/QtCore",
+    "PySide6/qml/QtQml",
+    "PySide6/qml/QtQuick",
 }
 
 
@@ -29,5 +26,13 @@ def _used_qml_module(item) -> bool:
     )
 
 
-binaries += [item for item in qml_binaries if _used_qml_module(item)]
-datas += [item for item in qml_datas if _used_qml_module(item)]
+selected_qml_binaries = [item for item in qml_binaries if _used_qml_module(item)]
+selected_qml_datas = [item for item in qml_datas if _used_qml_module(item)]
+if not selected_qml_binaries or not selected_qml_datas:
+    raise RuntimeError(
+        "PySide6 QML collection produced no QtQuick runtime files; "
+        "check the PyInstaller destination layout."
+    )
+
+binaries += selected_qml_binaries
+datas += selected_qml_datas

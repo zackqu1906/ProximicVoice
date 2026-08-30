@@ -69,6 +69,7 @@ def test_ring_source_thread_uses_sdk_live_callback(monkeypatch, tmp_path):
 
         def __init__(self, **kwargs):
             self.kwargs = kwargs
+            assert kwargs["battery_poll_enabled"] is False
             self.mic_active = False
             self.mic = None
 
@@ -150,6 +151,7 @@ def test_stream_monitor_keeps_connected_session_alive_until_audio_resumes(
 
         def __init__(self, **kwargs):
             assert kwargs["auto_reconnect"] is False
+            assert kwargs["battery_poll_enabled"] is False
             self.client = FakeClient()
             self.mic_active = False
             self.mic = None
@@ -243,6 +245,7 @@ def test_stream_monitor_restarts_mic_once_for_early_startup_stall(
     class FakeSession:
         def __init__(self, **kwargs):
             assert kwargs["auto_reconnect"] is False
+            assert kwargs["battery_poll_enabled"] is False
             self.client = FakeClient()
             self.mic_active = False
             self.mic = None

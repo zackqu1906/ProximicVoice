@@ -727,11 +727,42 @@ ApplicationWindow {
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
                         text: appController.asrBackend === "volcengine"
-                              ? "火山引擎是云端识别，不使用本机 CPU 或 GPU。"
+                              ? "火山引擎是云端识别，不使用本机 CPU 或 GPU；Key 会保存在当前用户的应用设置中。"
                               : appController.gpuStatusText
                         color: root.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
+                    }
+                    Label {
+                        text: "线上语音模型 API Key"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.leftMargin: 20
+                        visible: appController.asrBackend === "volcengine"
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        spacing: 8
+                        visible: appController.asrBackend === "volcengine"
+
+                        TextField {
+                            id: asrApiKeyField
+                            objectName: "asrApiKeyField"
+                            Layout.fillWidth: true
+                            text: appController.asrApiKey
+                            placeholderText: "填写豆包语音 App Key"
+                            echoMode: showAsrApiKeyButton.checked
+                                      ? TextInput.Normal : TextInput.Password
+                            onEditingFinished: appController.asrApiKey = text
+                        }
+                        ToolButton {
+                            id: showAsrApiKeyButton
+                            objectName: "showAsrApiKeyButton"
+                            checkable: true
+                            text: checked ? "隐藏" : "显示"
+                        }
                     }
                     Button {
                         id: gpuInstallButton
@@ -865,7 +896,7 @@ ApplicationWindow {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         text: appController.llmProvider === "local"
                             ? "修改模式始终使用本地 GGUF；输入模式是否二次整理由上方开关决定。首次处理时自动启动，全程离线。"
-                            : "修改模式始终使用所选在线模型；输入模式是否二次整理由上方开关决定。Key 只从环境变量读取，不会保存到应用设置。"
+                            : "修改模式始终使用所选在线模型；输入模式是否二次整理由上方开关决定。Key 会保存在当前用户的应用设置中，可随时修改或清除。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
                     RowLayout {
@@ -975,20 +1006,35 @@ ApplicationWindow {
                         visible: appController.llmProvider !== "local"
                     }
                     Label {
-                        text: "API Key 环境变量名"
+                        text: "线上大模型 API Key"
                         color: root.textMuted
                         font.pixelSize: 12
                         Layout.leftMargin: 20
                         visible: appController.llmProvider !== "local"
                     }
-                    TextField {
-                        id: llmApiKeyEnvField
-                        objectName: "llmApiKeyEnvField"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.llmApiKeyEnv
-                        placeholderText: "ARK_API_KEY"
-                        onEditingFinished: appController.llmApiKeyEnv = text
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        spacing: 8
                         visible: appController.llmProvider !== "local"
+
+                        TextField {
+                            id: llmApiKeyField
+                            objectName: "llmApiKeyField"
+                            Layout.fillWidth: true
+                            text: appController.llmApiKey
+                            placeholderText: "填写火山方舟 API Key"
+                            echoMode: showLlmApiKeyButton.checked
+                                      ? TextInput.Normal : TextInput.Password
+                            onEditingFinished: appController.llmApiKey = text
+                        }
+                        ToolButton {
+                            id: showLlmApiKeyButton
+                            objectName: "showLlmApiKeyButton"
+                            checkable: true
+                            text: checked ? "隐藏" : "显示"
+                        }
                     }
                     RowLayout {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20

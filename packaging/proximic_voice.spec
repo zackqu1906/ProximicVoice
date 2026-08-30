@@ -24,9 +24,13 @@ datas += [
 binaries = []
 if os.name == "nt":
     opus_dll = project_root / ".runtime" / "opus" / "opus.dll"
-    if not opus_dll.is_file():
-        raise SystemExit("Missing .runtime/opus/opus.dll; run scripts/setup-windows.ps1")
+    opus_license = project_root / ".runtime" / "opus" / "COPYING.libopus"
+    if not opus_dll.is_file() or not opus_license.is_file():
+        raise SystemExit(
+            "Missing .runtime/opus runtime files; run scripts/setup.ps1"
+        )
     binaries.append((str(opus_dll), "opus"))
+    datas.append((str(opus_license), "opus"))
 elif platform.system() == "Darwin":
     candidates = [
         Path("/opt/homebrew/opt/opus/lib/libopus.0.dylib"),

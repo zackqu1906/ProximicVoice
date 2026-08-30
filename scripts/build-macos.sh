@@ -46,12 +46,12 @@ fi
 SMOKE_DATA_ROOT="$PROJECT_ROOT/.build/macos-smoke-data"
 rm -rf "$SMOKE_DATA_ROOT"
 mkdir -p "$SMOKE_DATA_ROOT"
-QT_QPA_PLATFORM=offscreen \
 PROXIMIC_DATA_HOME="$SMOKE_DATA_ROOT" \
-PROXIMIC_STARTUP_PROBE=1 \
-    "$APP_EXECUTABLE"
+    "$APP_EXECUTABLE" --self-check-package
 SMOKE_LOG="$SMOKE_DATA_ROOT/logs/startup.log"
 if [[ ! -f "$SMOKE_LOG" ]] \
+    || ! grep -q "bundled Opus decoder ready" "$SMOKE_LOG" \
+    || ! grep -q "bundled QML files ready" "$SMOKE_LOG" \
     || ! grep -q "QML root window ready" "$SMOKE_LOG" \
     || ! grep -q "packaged ASR imports ready" "$SMOKE_LOG"; then
     echo "macOS packaged application did not complete its startup probe." >&2

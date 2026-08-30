@@ -138,6 +138,7 @@ class VolcengineStreamingASR:
         self,
         *,
         model: str = "seedasr-streaming",
+        api_key: str = "",
         api_key_env: str = "VOLC_ASR_API_KEY",
         resource_id: str = DEFAULT_RESOURCE_ID,
         url: str = DEFAULT_URL,
@@ -152,14 +153,17 @@ class VolcengineStreamingASR:
     ) -> None:
         if not 100 <= int(chunk_ms) <= 200:
             raise ValueError("chunk_ms must be between 100 and 200 for Volcengine streaming ASR")
-        api_key = os.environ.get(api_key_env)
-        if not api_key:
+        resolved_api_key = str(api_key).strip()
+        key_env = str(api_key_env).strip()
+        if not resolved_api_key and key_env:
+            resolved_api_key = os.environ.get(key_env, "").strip()
+        if not resolved_api_key:
             raise RuntimeError(
-                f"Environment variable {api_key_env!r} is not set. Set it to the App Key "
-                "from the new Doubao Speech console; do not pass API keys with --asr-option."
+                "尚未配置线上语音模型 API Key；请在应用设置中填写"
+                + (f"（兼容环境变量：{key_env}）" if key_env else "")
             )
         self.model_name = model
-        self.api_key = api_key
+        self.api_key = resolved_api_key
         self.resource_id = resource_id
         self.url = url
         self.request_model = request_model
@@ -500,6 +504,7 @@ def create_streaming_backend(settings: ASRBackendSettings) -> VolcengineStreamin
         # This is display/experiment metadata.  Resource ID selects the actual
         # Seed-ASR model on the native speech service.
         model=settings.model or "seedasr-streaming",
+        api_key=o.get("api_key", ""),
         api_key_env=o.get("api_key_env", "VOLC_ASR_API_KEY"),
         resource_id=o.get("resource_id", DEFAULT_RESOURCE_ID),
         url=o.get("url", DEFAULT_URL),

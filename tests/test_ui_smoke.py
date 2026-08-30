@@ -191,6 +191,7 @@ def test_qml_customer_window_loads(tmp_path):
     search_field = window.findChild(QObject, "deviceSearchField")
     audio_encoding_combo = window.findChild(QObject, "audioEncodingCombo")
     device_combo = window.findChild(QObject, "asrDeviceCombo")
+    asr_api_key_field = window.findChild(QObject, "asrApiKeyField")
     asr_hotwords_field = window.findChild(QObject, "asrHotwordsField")
     gpu_install_button = window.findChild(QObject, "gpuInstallButton")
     dictation_mode_button = window.findChild(QObject, "dictationModeButton")
@@ -203,7 +204,7 @@ def test_qml_customer_window_loads(tmp_path):
     llm_base_url_field = window.findChild(QObject, "llmBaseUrlField")
     llm_model_combo = window.findChild(QObject, "llmModelCombo")
     llm_model_field = window.findChild(QObject, "llmModelField")
-    llm_api_key_env_field = window.findChild(QObject, "llmApiKeyEnvField")
+    llm_api_key_field = window.findChild(QObject, "llmApiKeyField")
     session_history_area = window.findChild(QObject, "sessionHistoryArea")
     confirm_edit_button = window.findChild(QObject, "confirmEditButton")
     cancel_edit_button = window.findChild(QObject, "cancelEditButton")
@@ -223,6 +224,7 @@ def test_qml_customer_window_loads(tmp_path):
     controller.audioEncoding = "adpcm"
     assert controller.audioEncoding == "adpcm"
     assert device_combo is not None
+    assert asr_api_key_field is not None
     assert device_combo.property("count") == len(controller.computeDevices)
     assert asr_hotwords_field is not None
     assert gpu_install_button is not None
@@ -279,7 +281,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert llm_base_url_field is not None
     assert llm_model_combo is not None
     assert llm_model_field is not None
-    assert llm_api_key_env_field is not None
+    assert llm_api_key_field is not None
     assert session_history_area is not None
     assert session_history_area.property("readOnly") is True
     assert confirm_edit_button is not None
@@ -305,12 +307,24 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.inputMode == "edit"
     assert edit_mode_button.property("checked") is True
     assert dictation_llm_button.property("visible") is True
+    controller.llmApiKey = "ark-ui-key"
+    controller.asrApiKey = "speech-ui-key"
+    app.processEvents()
+    assert llm_api_key_field.property("text") == "ark-ui-key"
+    assert asr_api_key_field.property("text") == "speech-ui-key"
+    assert llm_api_key_field.property("echoMode") != 0
+    assert asr_api_key_field.property("echoMode") != 0
+    assert controller._settings.value("llm/apiKey") == "ark-ui-key"
+    assert controller._settings.value("asr/volcengineApiKey") == "speech-ui-key"
     controller.llmProvider = "volcengine"
+    app.processEvents()
+    assert llm_api_key_field.property("visible") is True
     voice_settings = controller._voice_llm_settings()
     assert voice_settings.provider == "volcengine"
     assert voice_settings.enabled is True
     assert voice_settings.base_url == "https://ark.cn-beijing.volces.com/api/v3"
     assert voice_settings.model == "doubao-seed-2-0-lite-260215"
+    assert voice_settings.api_key == "ark-ui-key"
     assert voice_settings.api_key_env == "ARK_API_KEY"
     assert voice_settings.local_auto_start is False
     controller.llmModel = "deepseek-v4-flash-260425"
@@ -318,6 +332,7 @@ def test_qml_customer_window_loads(tmp_path):
     controller.llmProvider = "local"
     local_settings = controller._voice_llm_settings()
     assert local_settings.provider == "local"
+    assert local_settings.api_key == ""
     assert local_settings.api_key_env == ""
     assert local_settings.local_auto_start is True
     controller.llmProvider = "volcengine"
@@ -342,6 +357,15 @@ def test_qml_customer_window_loads(tmp_path):
     app.processEvents()
     assert primary_connection_button.property("text") == "重新连接设备"
     assert secondary_connection_button.property("visible") is True
+
+    controller.asrBackend = "volcengine"
+    app.processEvents()
+    assert asr_api_key_field.property("visible") is True
+    runtime_settings = controller._runtime_settings()
+    assert runtime_settings.asr_api_key == "speech-ui-key"
+    assert runtime_settings.to_namespace().asr_option == [
+        "volcengine.api_key=speech-ui-key"
+    ]
 
     controller.asrModel = "iic/SenseVoiceSmall"
     controller.asrBackend = "funasr_nano"

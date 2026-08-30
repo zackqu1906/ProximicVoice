@@ -291,12 +291,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 本地 llama-server 使用两个并发 slot 运行竞速请求；云端会同时发出两次 API 请求，因此编辑模式
 通常会消耗两次请求的推理资源，即使较慢一路的结果最终被忽略。
 
-火山方舟 API Key 只从环境变量读取，不写入 QSettings：
-
-```powershell
-$env:ARK_API_KEY = "<your-ark-api-key>"
-.\scripts\start-ui.cmd
-```
+选择“火山方舟（在线）”后，直接在设置页的“线上大模型 API Key”密码框中填写或修改 Key。
+Key 保存到当前操作系统用户的应用设置，重启后仍然生效；清空该密码框即可删除应用保存值。
+`ARK_API_KEY` 环境变量只作为旧版部署和命令行工具的兼容兜底，桌面用户无需配置。
 
 UI 默认方舟地址为 `https://ark.cn-beijing.volces.com/api/v3`。模型 ID 可以在高级配置中修改，
 但必须是当前方舟账号已经开通的模型。
@@ -314,14 +311,9 @@ UI 默认方舟地址为 `https://ark.cn-beijing.volces.com/api/v3`。模型 ID 
 Fun-ASR-Nano 第一次使用时会下载模型权重到项目缓存；以后启动仍需要从磁盘加载到内存，
 但不会重复下载完整模型。
 
-使用在线 Seed-ASR 前设置独立的语音服务 Key：
-
-```powershell
-$env:VOLC_ASR_API_KEY = "<your-doubao-speech-app-key>"
-.\scripts\start-ui.cmd
-```
-
-`VOLC_ASR_API_KEY` 属于豆包语音识别服务，与文本大模型使用的 `ARK_API_KEY` 不是同一个 Key。
+选择在线 `volcengine` 后，直接在设置页的“线上语音模型 API Key”密码框中填写豆包语音
+App Key。它与“线上大模型 API Key”是两个独立设置，不能混用。`VOLC_ASR_API_KEY`
+环境变量仅保留为旧版部署和 CLI 的兼容兜底。
 
 ### Fun-ASR 热词
 
@@ -573,7 +565,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Recreate
 
 - `data/`、`datasets/`、训练输出、缓存和模型权重已通过 `.gitignore` 排除。
 - 不要提交录音、API Key、`.env` 或带个人信息的日志。
-- API Key 只从环境变量读取，界面只保存环境变量名称。
+- 线上大模型与线上语音模型的 Key 分开保存在当前操作系统用户的应用设置中，输入框默认
+  使用密码显示且不会写入应用日志；环境变量仅作为 CLI/旧版部署兼容兜底。
 - 本地 LLM 的文件、来源、上下文、推理模式和 SHA-256 记录在
   `src/proximic_ring/assets/local_llm_catalog.json`。
 - 第三方来源和许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。

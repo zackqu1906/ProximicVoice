@@ -10,8 +10,18 @@ ASR/推理依赖和 16 kHz Opus 解码运行时，不包含 ASR 权重及约 2.5
 - macOS：`~/Library/Application Support/ProxiMic Voice`
 - macOS 模型缓存：`~/Library/Caches/ProxiMic Voice`
 
-本地模型下载支持断点续传，并在启用前校验清单中的 SHA-256。Windows 与 macOS
-各自下载匹配平台的 llama.cpp，GGUF 模型在两个平台共用同一份版本。
+本地模型下载会在镜像和官方地址之间自动重试、从 `.part` 断点续传，并在启用前校验
+清单中的文件大小和 SHA-256。Windows 与 macOS 各自下载匹配平台的 llama.cpp，GGUF
+模型在两个平台共用同一份版本。若两个地址最终都被当前网络拦截，失败信息会保留断点；
+更换网络或启用能访问 Hugging Face 文件 CDN 的代理/VPN 后，再点一次即可继续。
+
+Windows 的 GGUF 断点默认位于：
+
+```text
+%LOCALAPPDATA%\ProxiMic Voice\local-llm\models\qwen3-4b-instruct-2507-q4-k-m\Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf.part
+```
+
+不要手工删除这个文件，除非 UI 明确报告大小或 SHA-256 校验失败。
 
 ## Windows x64
 
@@ -46,8 +56,9 @@ $env:WINDOWS_TIMESTAMP_URL = "http://timestamp.digicert.com" # 可省略
 
 产物：`dist/ProximicVoice-0.6.0-macos-arm64.dmg`。构建脚本把 Homebrew libopus
 复制进 `.app`，用户电脑不需要安装 Homebrew。生成 DMG 前，脚本会实际启动冻结后的
-可执行文件并完成 QApplication、控制器和 QML 根窗口冒烟测试；启动失败会直接终止构建，
-详细信息写入 `.build/macos-smoke-data/logs/startup.log`。
+可执行文件执行 `--self-check-package`，验证内置 libopus、全部必需 QML 模块、QApplication、
+控制器、ASR 导入和 QML 根窗口；启动失败会直接终止构建，详细信息写入
+`.build/macos-smoke-data/logs/startup.log`。
 
 要让下载后的应用在其他 Mac 上无警告打开，构建机必须配置 Developer ID：
 
@@ -84,7 +95,10 @@ git push origin v0.6.0
 在干净的 Windows 10/11 x64 和 Apple Silicon macOS 上分别验证：
 
 1. 安装/拖入 Applications 后正常启动，蓝牙权限提示文案正确。
-2. 扫描、选择 Ringo、连接、Opus 连续音频和断开后重连。
+2. 扫描、选择 Ringo、连接、Opus 连续音频至少 15 分钟、连续说 20 次，并验证单个 BLE
+   音频块丢失后后续语音仍可继续；再测试断开后重连。
 3. 首次 ASR 权重下载、重启后的缓存复用。
 4. 本地模型下载中断后续传、校验完成、llama-server 启动和修改确认。
 5. 数据、缓存和修改采集文件均落在用户目录，卸载不会误删用户模型/数据。
+6. 清空 `ARK_API_KEY`、`VOLC_ASR_API_KEY` 环境变量后，分别在设置页填写线上大模型和
+   线上语音模型 Key，重启应用确认配置仍在，并各完成一次真实请求。

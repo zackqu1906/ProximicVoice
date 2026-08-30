@@ -64,6 +64,9 @@ class LLMSettings:
     local_auto_start: bool = False
     local_context_size: int = 8192
     local_reasoning: str = "off"
+    # UI callers can provide a key directly.  ``api_key_env`` remains as a
+    # compatibility fallback for CLI users and existing deployments.
+    api_key: str = ""
 
     def validate(self) -> None:
         if not self.enabled:
@@ -75,8 +78,8 @@ class LLMSettings:
         if self.timeout_s <= 0:
             raise ValueError("大模型请求超时必须大于 0 秒")
         if normalize_llm_provider(self.provider) == LLM_PROVIDER_LOCAL:
-            if self.api_key_env.strip():
-                raise ValueError("本地模型不应配置 API Key 环境变量")
+            if self.api_key.strip() or self.api_key_env.strip():
+                raise ValueError("本地模型不应配置 API Key")
             if self.local_auto_start and not self.local_server_path.strip():
                 raise ValueError("本地模型服务程序路径不能为空")
             if self.local_auto_start and not self.local_model_path.strip():
@@ -85,9 +88,10 @@ class LLMSettings:
                 raise ValueError("本地模型上下文长度不能小于 512")
         elif (
             normalize_llm_provider(self.provider) == LLM_PROVIDER_VOLCENGINE
+            and not self.api_key.strip()
             and not self.api_key_env.strip()
         ):
-            raise ValueError("火山方舟需要配置 API Key 环境变量名")
+            raise ValueError("火山方舟需要配置 API Key")
 
 
 @dataclass(frozen=True)

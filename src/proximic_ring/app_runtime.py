@@ -117,16 +117,20 @@ class RuntimeSettings:
 
     desktop_output: bool = WINDOWS_DESKTOP_INPUT_SUPPORTED
     push_to_talk: bool = WINDOWS_DESKTOP_INPUT_SUPPORTED
+    # Passed only to the selected online ASR backend.  Environment-variable
+    # lookup inside that backend remains available for CLI compatibility.
+    asr_api_key: str = ""
 
     def to_namespace(self) -> Namespace:
         backend = self.asr_backend.strip().lower().replace("-", "_")
         model_entry = f"{backend}={self.asr_model}" if self.asr_model else None
         hotwords = normalize_funasr_nano_hotwords(self.funasr_nano_hotwords)
-        asr_options = (
-            [f"funasr_nano.hotwords={','.join(hotwords)}"]
-            if backend == "funasr_nano" and hotwords
-            else None
-        )
+        if backend == "funasr_nano" and hotwords:
+            asr_options = [f"funasr_nano.hotwords={','.join(hotwords)}"]
+        elif backend == "volcengine" and self.asr_api_key.strip():
+            asr_options = [f"volcengine.api_key={self.asr_api_key.strip()}"]
+        else:
+            asr_options = None
         return Namespace(
             command="ring",
             name=self.ring_name,

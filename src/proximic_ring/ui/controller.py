@@ -266,6 +266,7 @@ class AppController(QObject):
         self._llm_api_key_env = str(
             self._settings.value("llm/apiKeyEnv", default_key_env)
         ).strip()
+        self._llm_api_key = str(self._settings.value("llm/apiKey", "")).strip()
         self._llm_local_server_path = str(
             self._settings.value(
                 "llm/localServerPath",
@@ -368,6 +369,9 @@ class AppController(QObject):
         self._asr_backend = str(
             self._settings.value("asr/backend", "streaming_sensevoice")
         )
+        self._asr_api_key = str(
+            self._settings.value("asr/volcengineApiKey", "")
+        ).strip()
         self._asr_model = str(
             self._settings.value("asr/model", "iic/SenseVoiceSmall")
         )
@@ -767,6 +771,18 @@ class AppController(QObject):
         self._set_setting("_asr_model", str(value), "asr/model")
 
     @Property(str, notify=settingsChanged)
+    def asrApiKey(self) -> str:
+        return self._asr_api_key
+
+    @asrApiKey.setter
+    def asrApiKey(self, value: str) -> None:
+        self._set_setting(
+            "_asr_api_key",
+            str(value).strip(),
+            "asr/volcengineApiKey",
+        )
+
+    @Property(str, notify=settingsChanged)
     def asrDevice(self) -> str:
         return self._asr_device
 
@@ -884,7 +900,7 @@ class AppController(QObject):
         self._settings.setValue("llm/provider", provider)
         if provider == LLM_PROVIDER_LOCAL:
             # Keep the remote profile intact so switching back online restores
-            # the user's Ark endpoint, model ID and environment-variable name.
+            # the user's Ark endpoint, model ID, key and compatibility fallback.
             pass
         elif previous == LLM_PROVIDER_LOCAL:
             if not self._llm_base_url.strip() or self._llm_base_url == DEFAULT_LOCAL_BASE_URL:
@@ -933,6 +949,14 @@ class AppController(QObject):
     @llmApiKeyEnv.setter
     def llmApiKeyEnv(self, value: str) -> None:
         self._set_setting("_llm_api_key_env", str(value), "llm/apiKeyEnv")
+
+    @Property(str, notify=settingsChanged)
+    def llmApiKey(self) -> str:
+        return self._llm_api_key
+
+    @llmApiKey.setter
+    def llmApiKey(self, value: str) -> None:
+        self._set_setting("_llm_api_key", str(value).strip(), "llm/apiKey")
 
     @Property(str, notify=settingsChanged)
     def llmLocalServerPath(self) -> str:
@@ -2512,6 +2536,11 @@ class AppController(QObject):
             streaming_sensevoice_repo=repo,
             funasr_nano_repo=funasr_repo,
             funasr_nano_hotwords=self._funasr_hotwords,
+            asr_api_key=(
+                self._asr_api_key.strip()
+                if self._asr_backend == "volcengine"
+                else ""
+            ),
             # The UI commits either the LLM result or the raw fallback itself.
             # Feeding ASR finals into the legacy output here would inject the
             # unprocessed text once and then inject the processed text again.
@@ -2541,6 +2570,7 @@ class AppController(QObject):
             local_auto_start=local_selected,
             local_context_size=DEFAULT_LOCAL_CONTEXT_SIZE,
             local_reasoning=DEFAULT_LOCAL_REASONING,
+            api_key="" if local_selected else self._llm_api_key.strip(),
         )
 
     def _voice_llm_settings(

@@ -292,6 +292,10 @@ class ConnectionMixin:
         self._stop_battery_poll()
         if self._user_closing:
             return
+        print(
+            "Ring BLE disconnected unexpectedly: "
+            f"{self.target_name or '?'} ({self.target_address or '?'})"
+        )
         self._drop_local_streams()
         if self.auto_reconnect and self.target_address:
             self.reconnecting = True
@@ -490,8 +494,11 @@ class ConnectionMixin:
             task.cancel()
 
     async def _start_battery_poll(self) -> None:
-        """Query immediately, then every BATTERY_POLL_INTERVAL_S while connected."""
+        """If enabled, query now and every interval while connected."""
         self._stop_battery_poll()
+        if not getattr(self, "battery_poll_enabled", True):
+            print("Periodic battery polling disabled for this streaming session.")
+            return
         await self.query_battery()
 
         async def _loop() -> None:

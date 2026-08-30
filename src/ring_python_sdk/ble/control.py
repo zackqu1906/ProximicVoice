@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+import platform
 import struct
+import sys
 from typing import Any
 
 from bleak import BleakClient, BleakError, BleakScanner
@@ -144,7 +146,20 @@ async def scan_all_devices(timeout: float) -> list[DiscoveredBLEDevice]:
 
     # A continuous callback scanner retains advertisements that can be missed
     # by a one-shot discover() call, especially sparse advertisers on macOS.
-    scanner = BleakScanner(detection_callback=_on_detect)
+    scanner_options: dict[str, Any] = {"detection_callback": _on_detect}
+    # macOS 12.0-12.2 requires at least one advertised service UUID when an
+    # app is not packaged for the App Store.  Restrict only those affected
+    # releases; newer macOS versions retain the UI's all-device discovery.
+    if sys.platform == "darwin":
+        try:
+            version = tuple(
+                int(part) for part in platform.mac_ver()[0].split(".")[:2]
+            )
+        except ValueError:
+            version = ()
+        if version and (12, 0) <= version < (12, 3):
+            scanner_options["service_uuids"] = [NUS_SERVICE_UUID]
+    scanner = BleakScanner(**scanner_options)
     await scanner.start()
     try:
         await asyncio.sleep(timeout)

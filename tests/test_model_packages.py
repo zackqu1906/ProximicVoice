@@ -11,6 +11,97 @@ def _hash(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+class _FakeResponse:
+    def __init__(self, chunks, *, status=200, headers=None):
+        self._chunks = iter(chunks)
+        self.status = status
+        self.headers = headers or {}
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, _size):
+        item = next(self._chunks, b"")
+        if isinstance(item, BaseException):
+            raise item
+        return item
+
+
+def test_download_retries_and_resumes_after_socket_timeout(monkeypatch, tmp_path):
+    payload = b"abcdefgh"
+    requests = []
+    responses = iter(
+        [
+            _FakeResponse(
+                [payload[:4], TimeoutError("WinError 10060")],
+                headers={"Content-Length": str(len(payload))},
+            ),
+            _FakeResponse(
+                [payload[4:], b""],
+                status=206,
+                headers={
+                    "Content-Length": str(len(payload) - 4),
+                    "Content-Range": "bytes 4-7/8",
+                },
+            ),
+        ]
+    )
+
+    def fake_urlopen(req, timeout):
+        requests.append((req, timeout))
+        return next(responses)
+
+    monkeypatch.setattr(model_packages.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(model_packages.time, "sleep", lambda _seconds: None)
+    progress = []
+    destination = tmp_path / "model.gguf"
+
+    model_packages._download(
+        ["https://example.invalid/model.gguf"],
+        destination,
+        _hash(payload),
+        "GGUF 模型",
+        lambda *args: progress.append(args),
+        expected_size=len(payload),
+    )
+
+    assert destination.read_bytes() == payload
+    assert requests[0][0].get_header("Range") is None
+    assert requests[1][0].get_header("Range") == "bytes=4-"
+    assert any("自动续传" in row[0] for row in progress)
+
+
+def test_download_promotes_complete_verified_part_without_network(
+    monkeypatch, tmp_path
+):
+    payload = b"already complete"
+    destination = tmp_path / "model.gguf"
+    partial = destination.with_suffix(".gguf.part")
+    partial.write_bytes(payload)
+    monkeypatch.setattr(
+        model_packages.request,
+        "urlopen",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("complete part must not contact the network")
+        ),
+    )
+
+    model_packages._download(
+        ["https://example.invalid/model.gguf"],
+        destination,
+        _hash(payload),
+        "GGUF 模型",
+        None,
+        expected_size=len(payload),
+    )
+
+    assert destination.read_bytes() == payload
+    assert not partial.exists()
+
+
 def test_platform_specific_runtime_selection(monkeypatch, tmp_path):
     catalog = {
         "schemaVersion": 1,
@@ -79,7 +170,10 @@ def test_install_default_local_model_verifies_and_flattens_runtime(
     catalog_path.write_text(json.dumps(catalog), encoding="utf-8")
     monkeypatch.setattr(model_packages, "local_llm_platform_key", lambda: "windows-x86_64")
 
-    def fake_download(_urls, destination, _sha, label, _progress):
+    def fake_download(
+        _urls, destination, _sha, label, _progress, *, expected_size=None
+    ):
+        assert expected_size is None
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(
             archive_bytes if "运行时" in label else model_bytes

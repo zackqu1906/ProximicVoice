@@ -3,12 +3,37 @@
 from datetime import datetime, timezone
 import faulthandler
 import multiprocessing
+import os
 from pathlib import Path
 import platform
 import subprocess
 import sys
 import tempfile
 import traceback
+
+
+_SELF_CHECK_OPTIONS = {"--self-check-opus", "--self-check-package"}
+_BUNDLED_QML_FILES = (
+    "QtQml/qmldir",
+    "QtQuick/qmldir",
+    "QtQuick/Controls/qmldir",
+    "QtQuick/Controls/Material/qmldir",
+    "QtQuick/Layouts/qmldir",
+    "QtQuick/Window/qmldir",
+)
+
+
+def _self_check_requested() -> bool:
+    return bool(_SELF_CHECK_OPTIONS.intersection(sys.argv[1:]))
+
+
+def _verify_bundled_qml_runtime(resource_root: Path) -> None:
+    qml_root = resource_root / "PySide6" / "qml"
+    missing = [name for name in _BUNDLED_QML_FILES if not (qml_root / name).is_file()]
+    if missing:
+        raise RuntimeError(
+            "Bundled PySide6 QML runtime is incomplete: " + ", ".join(missing)
+        )
 
 
 def _open_startup_log() -> tuple[Path, object]:
@@ -71,14 +96,32 @@ def run() -> int:
     print(f"python={sys.version.split()[0]} frozen={bool(getattr(sys, 'frozen', False))}")
     print(f"executable={sys.executable}")
     try:
-        from proximic_ring.runtime_paths import configure_runtime_environment
+        from proximic_ring.runtime_paths import (
+            configure_runtime_environment,
+            is_frozen,
+            resource_root,
+        )
 
         configure_runtime_environment()
         print("[startup] runtime environment ready")
+        package_self_check = "--self-check-package" in sys.argv[1:]
+        if "--self-check-opus" in sys.argv[1:] or package_self_check:
+            from ring_python_sdk.audio.opus_codec import OrderedOpusDecoder
+
+            OrderedOpusDecoder(eager=True)
+            print("[startup] bundled Opus decoder ready")
+            if not package_self_check:
+                return 0
+        if package_self_check:
+            if is_frozen():
+                _verify_bundled_qml_runtime(resource_root())
+            os.environ["PROXIMIC_STARTUP_PROBE"] = "1"
+            os.environ["QT_QPA_PLATFORM"] = "offscreen"
+            print("[startup] bundled QML files ready")
         from proximic_ring.ui.main import main
 
         print("[startup] UI modules imported")
-        exit_code = int(main() or 0)
+        exit_code = int((main([sys.argv[0]]) if package_self_check else main()) or 0)
         print(f"[startup] Qt event loop exited with code {exit_code}")
         return exit_code
     except KeyboardInterrupt:
@@ -87,7 +130,8 @@ def run() -> int:
     except BaseException as exc:
         print("[startup] fatal error")
         traceback.print_exc(file=log_file)
-        _show_fatal_startup_error(exc, log_path)
+        if not _self_check_requested():
+            _show_fatal_startup_error(exc, log_path)
         return 1
     finally:
         try:

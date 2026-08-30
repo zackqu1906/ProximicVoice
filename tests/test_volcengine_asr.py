@@ -150,6 +150,21 @@ def test_backend_is_streaming_and_uses_new_console_key(monkeypatch):
     assert backend.model_name == "seedasr-streaming"
 
 
+def test_direct_api_key_from_ui_takes_precedence_over_environment(monkeypatch):
+    monkeypatch.setenv("TEST_VOLC_KEY", "environment-key")
+    backend = create_streaming_asr_backend(
+        "volcengine",
+        ASRBackendSettings(
+            options={
+                "api_key": "speech-ui-key",
+                "api_key_env": "TEST_VOLC_KEY",
+            }
+        ),
+    )
+
+    assert backend.api_key == "speech-ui-key"
+
+
 def test_api_key_is_required(monkeypatch):
     monkeypatch.delenv("MISSING_VOLC_KEY", raising=False)
     try:

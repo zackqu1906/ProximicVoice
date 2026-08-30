@@ -46,9 +46,10 @@ class RingAudioSource(AudioSource):
 
     BLE connection and microphone streaming are separate phases.  The customer
     UI connects and validates the selected device before loading detector/ASR
-    models, then begins forwarding live audio when those models are ready.  If
-    PCM stops, the watchdog closes the session immediately; reconnecting is
-    always an explicit user action.
+    models, then begins forwarding live audio when those models are ready.  A
+    short startup stall gets one controlled MIC restart; a later PCM stall is
+    reported without deliberately tearing down a healthy BLE link.  A physical
+    disconnect still requires an explicit user reconnect.
     """
 
     sample_rate: int = 16_000
@@ -548,6 +549,7 @@ class RingAudioSource(AudioSource):
             timeout_s=self.timeout_s,
             data_root=self.data_root,
             auto_reconnect=False,
+            battery_poll_enabled=False,
         )
 
         try:

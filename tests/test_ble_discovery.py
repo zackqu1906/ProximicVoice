@@ -191,3 +191,53 @@ def test_ring_session_does_not_auto_reconnect_by_default():
     session = RingSession(name_keyword="Ringo", timeout_s=1.0)
 
     assert session.auto_reconnect is False
+    assert session.battery_poll_enabled is True
+
+
+def test_streaming_session_can_disable_battery_control_writes(monkeypatch):
+    session = RingSession(
+        name_keyword="Ringo",
+        timeout_s=1.0,
+        battery_poll_enabled=False,
+    )
+    queries = []
+
+    async def query_once():
+        queries.append(True)
+
+    monkeypatch.setattr(session, "query_battery", query_once)
+
+    asyncio.run(session._start_battery_poll())
+
+    assert queries == []
+    assert session._battery_task is None
+
+
+def test_macos_12_uses_ring_service_filter_for_corebluetooth(monkeypatch):
+    options = {}
+
+    class FakeScanner:
+        def __init__(self, **kwargs):
+            options.update(kwargs)
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    async def no_wait(_timeout):
+        return None
+
+    monkeypatch.setattr(control, "BleakScanner", FakeScanner)
+    monkeypatch.setattr(control.asyncio, "sleep", no_wait)
+    monkeypatch.setattr(control.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        control.platform,
+        "mac_ver",
+        lambda: ("12.2.1", ("", "", ""), ""),
+    )
+
+    asyncio.run(control.scan_all_devices(0.01))
+
+    assert options["service_uuids"] == [control.NUS_SERVICE_UUID]

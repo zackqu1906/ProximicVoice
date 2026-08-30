@@ -51,7 +51,8 @@ python -m proximic_ring.ui
 - 是否启用跨应用文本注入和右 `Alt` 按住说话。
 - 文本大模型来源可选“本地 GGUF”或“火山方舟（在线）”。本地模式配置 llama-server、
   GGUF 路径；线上模式可选豆包 Seed 2.0 Lite 或 DeepSeek V4 Flash，并配置方舟 Base URL、
-  模型 ID 和保存 Key 的环境变量名。
+  模型 ID 和“线上大模型 API Key”。选择在线 `volcengine` ASR 时还会显示独立的
+  “线上语音模型 API Key”；两者都可直接填写、显示/隐藏、修改或清除。
 
 运行设备使用下拉框展示 CPU 和 PyTorch 当前可用的 NVIDIA GPU。Windows 已检测到
 NVIDIA 显卡、但环境仍是 CPU 版 PyTorch 时，可以点击“安装 NVIDIA GPU 加速”；应用
@@ -99,8 +100,9 @@ confirm、cancel、retry 以及三个失败原因动作，无需修改 ASR、大
 ASR final 始终进入独立文本处理线程。选择本地模式时，应用首帧显示后即在后台启动安装阶段
 准备的 `llama-server.exe`、加载 GGUF，并用极短请求分别预热输入和修改提示词；后续请求
 复用服务和 prompt cache，应用退出时释放由应用启动的进程，不需要 API Key。选择火山方舟
-时，应用使用方舟 `/responses` 接口，可选择豆包 Lite 或 DeepSeek V4 Flash，并从
-`ARK_API_KEY` 环境变量读取 Key；Key 不写入应用设置。听写提示词负责去除口语填充、纠错和
+时，应用使用方舟 `/responses` 接口，可选择豆包 Lite 或 DeepSeek V4 Flash，并优先使用
+设置页保存的线上大模型 Key。线上语音模型使用单独保存的豆包语音 App Key；两个密码框都
+保存到当前操作系统用户的 Qt 应用设置，环境变量只作旧版兼容兜底。听写提示词负责去除口语填充、纠错和
 断句，但不回答或执行口述内容。修改提示词接收“当前文本框全文 + 修改要求”：删除、替换和
 插入只返回短 JSON 操作计划并由 Python 执行；润色、翻译、扩写、重排和格式重组才返回全文。
 

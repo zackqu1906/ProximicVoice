@@ -18,6 +18,14 @@ try {
     & $Python -m PyInstaller --noconfirm --clean "packaging\proximic_voice.spec"
     if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
 
+    $BundledExe = Join-Path $ProjectRoot "dist\ProximicVoice\ProximicVoice.exe"
+    $PackageCheck = Start-Process -FilePath $BundledExe `
+        -ArgumentList "--self-check-package" -PassThru -Wait -WindowStyle Hidden
+    if ($PackageCheck.ExitCode -ne 0) {
+        throw "Bundled application self-check failed (exit $($PackageCheck.ExitCode)); check the startup log under LOCALAPPDATA\ProxiMic Voice\logs."
+    }
+    Write-Host "Bundled QML, Opus, and ASR self-check passed."
+
     $IsccCandidates = @(
         "$ProjectRoot\.build\tools\InnoSetup6\ISCC.exe",
         "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",

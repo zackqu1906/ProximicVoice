@@ -217,7 +217,21 @@ find '/Applications/Proximic Voice.app/Contents' -iname '*opus*.dylib' -print
 - [ ] 模型加载期间 UI 持续响应。
 - [ ] ASR 异常会显示到 UI 日志。
 - [ ] 连续识别 10 次不崩溃、不丢失后续日志。
+- [ ] 连续传输至少 15 分钟；单个 Opus 块丢失时允许该块静音，但后续块必须继续解码，
+  不能因等待缺失序号而永久停流。
+- [ ] 音频流期间不启动周期性电量查询控制写入；连接时仍能读取一次电量。
 - [ ] 识别中断开设备后，不继续向已关闭对象发送结果。
+
+若仍出现“说几句话后断开”，立即保存以下两类证据，以区分 CoreBluetooth 物理断链和
+仅 PCM 停流：
+
+```bash
+tail -n 300 "$HOME/Library/Application Support/ProxiMic Voice/logs/startup.log"
+ls -lt "$HOME/Library/Logs/DiagnosticReports" | head
+```
+
+日志中的 `Ring BLE disconnected unexpectedly` 表示底层连接确实断开；只有
+`PCM STREAM STALLED` 则表示 BLE 仍连接、音频块重组或解码没有继续推进。
 
 ## 10. UI 与 macOS 原生行为
 

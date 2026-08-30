@@ -232,6 +232,26 @@ class OrderedOpusDecoder:
         frame_seq &= 0xFFFF
         if frame_seq in self._seen or frame_seq in self._pending:
             return []
+
+        if not self._started and not self._pending and not self._known_dropped:
+            # A capture may attach after the firmware sequence has already
+            # advanced.  Decode from the first block actually observed instead
+            # of waiting forever for sequence zero.
+            self._next_seq = frame_seq
+        else:
+            forward_gap = (frame_seq - self._next_seq) & 0xFFFF
+            if forward_gap >= 0x8000:
+                # A delayed/duplicate block behind the decoder cursor cannot be
+                # applied without corrupting Opus state.
+                return []
+            # BLE notifications are ordered.  Once a later complete Opus block
+            # arrives, any skipped block has permanently lost at least one
+            # fragment.  Mark the gap so one packet loss cannot stall all later
+            # audio for the rest of the session (seen most often on macOS).
+            for offset in range(forward_gap):
+                missing = (self._next_seq + offset) & 0xFFFF
+                if missing not in self._pending:
+                    self._known_dropped.add(missing)
         self._pending[frame_seq] = payload
         return self._drain()
 

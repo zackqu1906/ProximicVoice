@@ -100,6 +100,34 @@ def test_openai_compatible_processor_uses_mode_specific_prompt(monkeypatch):
     assert "不要主动翻译" in body["messages"][0]["content"]
 
 
+def test_direct_llm_api_key_from_ui_takes_precedence_over_environment(monkeypatch):
+    monkeypatch.setenv("TEST_LLM_KEY", "environment-key")
+    captured = []
+
+    def urlopen(http_request, *, timeout):
+        captured.append(http_request)
+        return _Response(
+            json.dumps(
+                {"choices": [{"message": {"content": "整理后的文本。"}}]}
+            ).encode("utf-8")
+        )
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    result = processor.process(
+        "原始口述",
+        INPUT_MODE_DICTATION,
+        LLMSettings(
+            enabled=True,
+            model="example-model",
+            api_key_env="TEST_LLM_KEY",
+            api_key="llm-ui-key",
+        ),
+    )
+
+    assert result == "整理后的文本。"
+    assert captured[0].headers["Authorization"] == "Bearer llm-ui-key"
+
+
 def test_processor_can_use_local_endpoint_without_api_key():
     captured = []
 

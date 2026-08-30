@@ -115,6 +115,10 @@ class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, Stat
     # Product default: a dropped link stays disconnected until the user
     # explicitly reconnects. Diagnostic callers may still opt in manually.
     auto_reconnect: bool = False
+    # Long-running product audio sessions can disable periodic control writes
+    # and issue one explicit battery query before MIC ON.  This reduces
+    # contention with high-rate microphone notifications on CoreBluetooth.
+    battery_poll_enabled: bool = True
     reconnecting: bool = False
     _user_closing: bool = False
     _reconnect_task: asyncio.Task | None = field(default=None, repr=False)
