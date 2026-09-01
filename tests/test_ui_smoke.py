@@ -60,6 +60,104 @@ def test_compute_device_discovery_lists_cuda(monkeypatch):
     assert AppController._detect_nvidia_gpu_name() == ""
 
 
+def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
+    tmp_path,
+):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication, QSettings
+
+    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.text_processing import InputModeRoutingResult
+    from proximic_ring.ui.controller import AppController
+
+    _app = QCoreApplication.instance() or QCoreApplication(["routing-test"])
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    controller = AppController()
+    controller._text_processing_worker.close(wait=True)
+
+    routed = []
+    submitted = []
+
+    class FakeWorker:
+        def submit_routing(self, request):
+            routed.append(request)
+
+        def submit(self, request):
+            submitted.append(request)
+
+        def close(self, *, wait=False):
+            return None
+
+    target = DesktopTargetRef(1, 2, "测试编辑器")
+
+    class FakeDesktopTarget:
+        def __init__(self):
+            self.injected = []
+
+        def capture_reference(self):
+            return target
+
+        def capture_text(self, captured_target):
+            assert captured_target == target
+            return DesktopTextSnapshot(target, "已有文本。")
+
+        def inject(self, captured_target, text):
+            assert captured_target == target
+            self.injected.append(text)
+
+        def release_selection(self, _target):
+            return None
+
+    desktop_target = FakeDesktopTarget()
+    controller._text_processing_worker = FakeWorker()
+    controller._desktop_target = desktop_target
+    controller._desktop_output = True
+    controller.llmEnabled = False
+    controller.inputRoutingMode = "auto"
+
+    controller._apply_runtime_update("这是一段要输入的话。", True, "", 701)
+    assert len(routed) == 1
+    assert routed[0].settings.enabled is True
+    assert controller.transcriptMode == ""
+    assert "自动路由判断开始" in controller.logText
+    controller._apply_input_mode_routed(
+        InputModeRoutingResult(
+            request_id=routed[0].request_id,
+            session_id=701,
+            raw_text=routed[0].raw_text,
+            mode="dictation",
+            latency_s=0.234,
+            model_output="dictation",
+        )
+    )
+    assert controller.transcriptMode == "dictation"
+    assert desktop_target.injected == ["这是一段要输入的话。"]
+    assert "自动路由判断完成：听写（耗时 0.234s）" in controller.logText
+
+    controller._apply_runtime_update("把上一句改正式一点", True, "", 702)
+    controller._apply_input_mode_routed(
+        InputModeRoutingResult(
+            request_id=routed[1].request_id,
+            session_id=702,
+            raw_text=routed[1].raw_text,
+            mode="edit",
+            latency_s=0.125,
+            model_output="edit",
+        )
+    )
+    assert controller.transcriptMode == "edit"
+    assert len(submitted) == 1
+    assert submitted[0].mode == "edit"
+    assert submitted[0].target_text == "已有文本。"
+    assert "自动路由判断完成：编辑指令（耗时 0.125s）" in controller.logText
+    assert re.search(
+        r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] 自动路由判断完成",
+        controller.logText,
+    )
+    controller._cancel_pending_text_processing()
+
+
 def test_device_scan_keeps_one_snapshot_until_manual_rescan(tmp_path, monkeypatch):
     pytest.importorskip("PySide6")
     from PySide6.QtCore import QCoreApplication, QSettings
@@ -196,6 +294,8 @@ def test_qml_customer_window_loads(tmp_path):
     gpu_install_button = window.findChild(QObject, "gpuInstallButton")
     dictation_mode_button = window.findChild(QObject, "dictationModeButton")
     edit_mode_button = window.findChild(QObject, "editModeButton")
+    input_routing_mode_combo = window.findChild(QObject, "inputRoutingModeCombo")
+    auto_mode_badge = window.findChild(QObject, "autoModeBadge")
     dictation_llm_button = window.findChild(QQuickItem, "dictationLlmButton")
     voice_input_card = window.findChild(QQuickItem, "voiceInputCard")
     llm_local_server_field = window.findChild(QObject, "llmLocalServerField")
@@ -301,6 +401,25 @@ def test_qml_customer_window_loads(tmp_path):
     assert log_area.property("cursorPosition") == len(log_area.property("text"))
     assert llm_local_model_field is not None
     assert controller.inputMode == "dictation"
+    assert input_routing_mode_combo is not None
+    assert auto_mode_badge is not None
+    assert controller.inputRoutingMode == "manual"
+    controller.inputRoutingMode = "auto"
+    app.processEvents()
+    assert input_routing_mode_combo.property("currentIndex") == 0
+    assert dictation_mode_button.property("enabled") is False
+    assert edit_mode_button.property("enabled") is False
+    assert dictation_mode_button.property("visible") is False
+    assert edit_mode_button.property("visible") is False
+    assert auto_mode_badge.property("visible") is False
+    controller._transcript_mode = "edit"
+    controller.transcriptChanged.emit()
+    app.processEvents()
+    assert auto_mode_badge.property("visible") is True
+    controller._transcript_mode = ""
+    controller.transcriptChanged.emit()
+    controller.inputRoutingMode = "manual"
+    app.processEvents()
     # Persisted callers using the former name migrate to the edit lane.
     controller.inputMode = "instruction"
     app.processEvents()
@@ -805,10 +924,16 @@ def test_qml_customer_window_loads(tmp_path):
     controller._apply_runtime_update("把新的改成更新的", True, "", 49)
     assert submitted[-1].target_text == "新的目标文本。"
 
-    controller._apply_runtime_finished("Ring 麦克风音频已中断")
+    controller._apply_runtime_finished(
+        "Ring BLE connection was physically lost\n"
+        "[DIAG] encoding=opus, audio=12.3s\n"
+        "[DIAG] mtu=185, missing_blocks=2"
+    )
     assert controller.connected is False
     assert controller.statusTitle == "设备已断开"
     assert "自动断开" in controller.statusDetail
+    assert "[DIAG]" not in controller.statusDetail
+    assert "missing_blocks=2" in controller.logText
     assert controller.hasSelectedDevice is True
     assert controller.canReconnect is True
     controller.reconnectDevice()

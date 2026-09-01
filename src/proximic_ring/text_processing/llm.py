@@ -21,6 +21,7 @@ from .edit_tool import (
 )
 from .local_server import LocalModelServer
 from .model import (
+    INPUT_MODE_DICTATION,
     INPUT_MODE_EDIT,
     LLMBranchTrace,
     LLM_PROVIDER_LOCAL,
@@ -38,6 +39,7 @@ from .prompts import (
     EDIT_FULL_TEXT_RETRY_PROMPT,
     EDIT_PROMPT,
     EDIT_TOOL_REQUIRED_PROMPT,
+    INPUT_MODE_ROUTER_PROMPT,
 )
 
 
@@ -92,6 +94,72 @@ class OpenAICompatibleTextProcessor:
             edit_mode,
         )
         return final_text
+
+    def classify_input_mode(self, text: str, settings: LLMSettings) -> str:
+        mode, _model_output = self.classify_input_mode_with_trace(text, settings)
+        return mode
+
+    def classify_input_mode_with_trace(
+        self,
+        text: str,
+        settings: LLMSettings,
+    ) -> tuple[str, str]:
+        """Classify a completed utterance as dictation or an edit instruction."""
+
+        settings.validate()
+        raw_text = str(text or "").strip()
+        if not raw_text:
+            return INPUT_MODE_DICTATION, ""
+        if not settings.enabled:
+            raise ValueError("自动判断模式需要启用大模型")
+        if (
+            normalize_llm_provider(settings.provider) == LLM_PROVIDER_LOCAL
+            and settings.local_auto_start
+        ):
+            self._ensure_local_server(settings)
+        response = self._request_chat(
+            settings,
+            system_prompt=INPUT_MODE_ROUTER_PROMPT,
+            user_content=f"<用户语音>\n{raw_text}\n</用户语音>",
+            temperature=0.0,
+            max_tokens=32,
+            edit_tool=None,
+            disable_thinking=True,
+        )
+        model_output = self._model_output_text(response)
+        try:
+            return self._parse_input_mode_response(response), model_output
+        except ValueError as exc:
+            raise LLMResponseProcessingError(str(exc), model_output) from exc
+
+    @staticmethod
+    def _parse_input_mode_response(response: str | dict[str, Any]) -> str:
+        payload: object = response
+        if isinstance(response, str):
+            text = response.strip()
+            if text.startswith("```") and text.endswith("```"):
+                lines = text.splitlines()
+                text = "\n".join(lines[1:-1]).strip()
+            try:
+                payload = json.loads(text)
+            except json.JSONDecodeError:
+                payload = text.strip().strip('"').lower()
+        if isinstance(payload, dict):
+            payload = payload.get("mode")
+        value = str(payload or "").strip().lower()
+        aliases = {
+            "dictation": INPUT_MODE_DICTATION,
+            "听写": INPUT_MODE_DICTATION,
+            "input": INPUT_MODE_DICTATION,
+            "edit": INPUT_MODE_EDIT,
+            "instruction": INPUT_MODE_EDIT,
+            "指令": INPUT_MODE_EDIT,
+            "编辑": INPUT_MODE_EDIT,
+        }
+        mode = aliases.get(value)
+        if mode is None:
+            raise ValueError("大模型没有返回有效的听写/编辑分类 JSON")
+        return mode
 
     def process_with_trace(
         self,
@@ -582,7 +650,7 @@ class OpenAICompatibleTextProcessor:
         )
 
     def warmup(self, settings: LLMSettings) -> None:
-        """Load the local model and seed both stable prompt prefixes."""
+        """Load the local model and seed all stable prompt prefixes."""
 
         settings.validate()
         if not settings.enabled:
@@ -609,6 +677,14 @@ class OpenAICompatibleTextProcessor:
             max_tokens=1,
             edit_tool=None,
         )
+        self._request_chat(
+            settings,
+            system_prompt=INPUT_MODE_ROUTER_PROMPT,
+            user_content="<用户语音>\n测试\n</用户语音>",
+            temperature=0.0,
+            max_tokens=1,
+            edit_tool=None,
+        )
 
     def _request_chat(
         self,
@@ -619,6 +695,7 @@ class OpenAICompatibleTextProcessor:
         temperature: float,
         max_tokens: int,
         edit_tool: dict[str, Any] | None = None,
+        disable_thinking: bool = False,
     ) -> str | dict[str, Any]:
         provider = normalize_llm_provider(settings.provider)
         use_ark_responses = provider == LLM_PROVIDER_VOLCENGINE
@@ -666,9 +743,12 @@ class OpenAICompatibleTextProcessor:
                 ],
                 "max_output_tokens": int(max_tokens),
             }
-            # Doubao supports an explicit thinking switch.  Do not send this
-            # provider-specific field to DeepSeek models on the same Ark API.
-            if settings.model.strip().lower().startswith("doubao-"):
+            # Simple dictation requests already disable Doubao reasoning.
+            # Callers such as the binary mode router may explicitly disable
+            # reasoning for any Ark Responses model, including DeepSeek.
+            if disable_thinking or settings.model.strip().lower().startswith(
+                "doubao-"
+            ):
                 request_body["thinking"] = {"type": "disabled"}
             if edit_tool is not None:
                 function = edit_tool["function"]

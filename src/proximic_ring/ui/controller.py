@@ -42,6 +42,10 @@ from ..text_processing import (
     DEFAULT_LOCAL_SERVER_PATH,
     INPUT_MODE_DICTATION,
     INPUT_MODE_EDIT,
+    INPUT_ROUTING_AUTO,
+    INPUT_ROUTING_MANUAL,
+    InputModeRoutingRequest,
+    InputModeRoutingResult,
     LLM_PROVIDER_LOCAL,
     LLM_PROVIDER_OPENAI,
     LLM_PROVIDER_VOLCENGINE,
@@ -51,6 +55,7 @@ from ..text_processing import (
     TextProcessingResult,
     TextProcessingWorker,
     normalize_input_mode,
+    normalize_input_routing_mode,
     normalize_llm_provider,
     validate_edit_target_text,
 )
@@ -70,6 +75,11 @@ from ..voice_actions import (
 class _PendingInteraction:
     target: DesktopTargetRef | None = None
     snapshot: DesktopTextSnapshot | None = None
+
+
+@dataclass
+class _PendingModeRoute:
+    target: DesktopTargetRef | None = None
 
 
 @dataclass
@@ -173,6 +183,7 @@ class AppController(QObject):
     devicePickerRequested = Signal()
     reconnectAvailabilityChanged = Signal()
     inputModeChanged = Signal()
+    inputRoutingModeChanged = Signal()
     textProcessingChanged = Signal()
     localModelInstallationChanged = Signal()
     feedbackReasonChanged = Signal()
@@ -186,6 +197,7 @@ class AppController(QObject):
     _pushToTalkChanged = Signal(bool)
     _scanFinished = Signal(object, str)
     _textProcessed = Signal(object)
+    _inputModeRouted = Signal(object)
     _llmTraceCollected = Signal(object)
     _llmWarmupFinished = Signal(str, float)
     _localModelInstallProgress = Signal(str, int, int)
@@ -206,6 +218,7 @@ class AppController(QObject):
         self._status_detail = "配置设备后即可开始自动语音输入"
         self._status_kind = "idle"
         self._transcript_text = ""
+        self._transcript_mode = ""
         self._edit_preview_html = ""
         self._transcript_final = False
         self._transcript_visible = False
@@ -220,6 +233,13 @@ class AppController(QObject):
         self._ptt_active = False
         self._input_mode = normalize_input_mode(
             str(self._settings.value("input/mode", INPUT_MODE_DICTATION))
+        )
+        self._input_routing_mode = normalize_input_routing_mode(
+            str(
+                self._settings.value(
+                    "input/routingMode", INPUT_ROUTING_MANUAL
+                )
+            )
         )
         # This switch controls only optional post-processing for dictation.
         # Edit mode always needs the selected text model.
@@ -292,7 +312,10 @@ class AppController(QObject):
         self._llm_warmup_requested = False
         self._pending_text_requests: set[int] = set()
         self._pending_interactions: dict[int, _PendingInteraction] = {}
+        self._pending_mode_routes: set[int] = set()
+        self._pending_mode_route_contexts: dict[int, _PendingModeRoute] = {}
         self._session_input_modes: dict[int, str] = {}
+        self._session_routing_modes: dict[int, str] = {}
         self._session_targets: dict[int, DesktopTargetRef | None] = {}
         self._desktop_target = None
         self._worker: threading.Thread | None = None
@@ -448,6 +471,7 @@ class AppController(QObject):
         self._pushToTalkChanged.connect(self._apply_push_to_talk)
         self._scanFinished.connect(self._apply_scan_finished)
         self._textProcessed.connect(self._apply_text_processed)
+        self._inputModeRouted.connect(self._apply_input_mode_routed)
         self._llmTraceCollected.connect(self._apply_llm_trace_collected)
         self._llmWarmupFinished.connect(self._apply_llm_warmup_finished)
         self._localModelInstallProgress.connect(
@@ -459,6 +483,7 @@ class AppController(QObject):
         self._voiceActionRequested.connect(self._apply_voice_action)
         self._text_processing_worker = TextProcessingWorker(
             on_result=self._textProcessed.emit,
+            on_routing_result=self._inputModeRouted.emit,
             on_trace=self._llmTraceCollected.emit,
             on_warmup=lambda error, latency: self._llmWarmupFinished.emit(
                 error or "", latency
@@ -608,6 +633,12 @@ class AppController(QObject):
         return self._transcript_text
 
     @Property(str, notify=transcriptChanged)
+    def transcriptMode(self) -> str:
+        """Resolved mode for the utterance currently shown in the overlay."""
+
+        return self._transcript_mode
+
+    @Property(str, notify=transcriptChanged)
     def editPreviewHtml(self) -> str:
         return self._edit_preview_html
 
@@ -678,9 +709,24 @@ class AppController(QObject):
         label = "修改" if mode == INPUT_MODE_EDIT else "输入"
         self._append_log(f"输入模式已切换为：{label}")
 
+    @Property(str, notify=inputRoutingModeChanged)
+    def inputRoutingMode(self) -> str:
+        return self._input_routing_mode
+
+    @inputRoutingMode.setter
+    def inputRoutingMode(self, value: str) -> None:
+        mode = normalize_input_routing_mode(value)
+        if mode == self._input_routing_mode:
+            return
+        self._input_routing_mode = mode
+        self._settings.setValue("input/routingMode", mode)
+        self.inputRoutingModeChanged.emit()
+        label = "自动判断" if mode == INPUT_ROUTING_AUTO else "手动切换"
+        self._append_log(f"听写/指令路由已切换为：{label}")
+
     @Property(bool, notify=textProcessingChanged)
     def textProcessing(self) -> bool:
-        return bool(self._pending_text_requests)
+        return bool(self._pending_text_requests or self._pending_mode_routes)
 
     # Editable settings ---------------------------------------------------------
     @Property(str, notify=settingsChanged)
@@ -1259,6 +1305,7 @@ class AppController(QObject):
             return
         self._recognition_event.clear()
         self._session_input_modes.clear()
+        self._session_routing_modes.clear()
         self._recognition_enabled = False
         self._ptt_active = False
         self.recognitionEnabledChanged.emit()
@@ -1280,6 +1327,7 @@ class AppController(QObject):
             return
         self._cancel_pending_text_processing()
         self._session_input_modes.clear()
+        self._session_routing_modes.clear()
         self._recognition_event.clear()
         if self._recognition_enabled:
             self._recognition_enabled = False
@@ -1333,7 +1381,7 @@ class AppController(QObject):
             self._append_log(f"本地文本模型预热失败：{error}")
             return
         self._append_log(
-            f"本地文本模型已加载，输入/修改提示词预热完成（{latency_s:.2f}s）"
+            f"本地文本模型已加载，自动路由/输入/修改提示词预热完成（{latency_s:.2f}s）"
         )
 
     @Slot()
@@ -1536,31 +1584,32 @@ class AppController(QObject):
         text = str(message).strip()
         if not text:
             return
+        summary = text.splitlines()[0].strip()
         self._append_log(text)
-        if text.startswith("正在连接设备"):
-            self._set_status("正在连接设备", text, "starting")
-        elif text.startswith("正在验证 Ring"):
-            self._set_status("正在验证设备音频", text, "starting")
-        elif text.startswith("正在加载 ProxiMic"):
-            self._set_status("正在加载检测模型", text, "starting")
-        elif text.startswith("设备音频验证通过"):
-            self._set_status("设备已连接", text, "starting")
-        elif text.startswith("正在加载语音模型"):
-            self._set_status("正在加载语音模型", text, "starting")
-        elif text.startswith("正在复用已加载语音模型"):
-            self._set_status("正在复用语音模型", text, "starting")
-        elif text.startswith("正在准备实时识别"):
-            self._set_status("正在准备识别", text, "starting")
-        elif text.startswith("模型加载完成，正在确认实时音频"):
-            self._set_status("正在确认实时音频", text, "starting")
-        elif text.startswith(("STAGE2 ", "[ASR]", "[ASR TIMING]")):
+        if summary.startswith("正在连接设备"):
+            self._set_status("正在连接设备", summary, "starting")
+        elif summary.startswith("正在验证 Ring"):
+            self._set_status("正在验证设备音频", summary, "starting")
+        elif summary.startswith("正在加载 ProxiMic"):
+            self._set_status("正在加载检测模型", summary, "starting")
+        elif summary.startswith("设备音频验证通过"):
+            self._set_status("设备已连接", summary, "starting")
+        elif summary.startswith("正在加载语音模型"):
+            self._set_status("正在加载语音模型", summary, "starting")
+        elif summary.startswith("正在复用已加载语音模型"):
+            self._set_status("正在复用语音模型", summary, "starting")
+        elif summary.startswith("正在准备实时识别"):
+            self._set_status("正在准备识别", summary, "starting")
+        elif summary.startswith("模型加载完成，正在确认实时音频"):
+            self._set_status("正在确认实时音频", summary, "starting")
+        elif summary.startswith(("STAGE2 ", "[ASR]", "[ASR TIMING]")):
             # Keep detector/ASR telemetry in the log without replacing the
             # user-facing status text at every diagnostic milestone.
             return
-        elif text.startswith("设备连接已中断"):
-            self._set_status("设备连接异常", text, "error")
+        elif summary.startswith("设备连接已中断"):
+            self._set_status("设备连接异常", summary, "error")
         elif self._status_kind in {"running", "listening"}:
-            self._status_detail = text
+            self._status_detail = summary
             self.statusChanged.emit()
 
     @Slot()
@@ -1637,8 +1686,10 @@ class AppController(QObject):
         if error:
             if session_id:
                 self._session_input_modes.pop(int(session_id), None)
+                self._session_routing_modes.pop(int(session_id), None)
                 self._session_targets.pop(int(session_id), None)
             self._transcript_text = error
+            self._transcript_mode = ""
             self._transcript_final = True
             self._transcript_visible = True
             self._set_interaction_state("error")
@@ -1654,12 +1705,19 @@ class AppController(QObject):
             mode = self._session_input_modes.setdefault(
                 normalized_session_id, self._input_mode
             )
+            routing_mode = self._session_routing_modes.setdefault(
+                normalized_session_id, self._input_routing_mode
+            )
             if normalized_session_id not in self._session_targets:
                 self._session_targets[normalized_session_id] = (
                     self._capture_desktop_reference()
                 )
         else:
             mode = self._input_mode
+            routing_mode = self._input_routing_mode
+        self._transcript_mode = (
+            mode if routing_mode == INPUT_ROUTING_MANUAL else ""
+        )
         self._transcript_text = text
         self._transcript_final = is_final
         self._transcript_visible = True
@@ -1668,63 +1726,146 @@ class AppController(QObject):
         if is_final:
             if normalized_session_id:
                 self._session_input_modes.pop(normalized_session_id, None)
+                self._session_routing_modes.pop(normalized_session_id, None)
                 target = self._session_targets.pop(normalized_session_id, None)
             else:
                 target = self._capture_desktop_reference()
             self._append_log(f"识别完成：{text}")
-            if mode == INPUT_MODE_EDIT:
-                if self._edit_review is not None:
-                    self._reject_edit_request(
-                        "上一条修改仍在等待确认，请先确认、取消或选择重说"
-                    )
-                    return
-                retrying_same_target = self._retry_target_armed
-                snapshot = self._retry_snapshot if retrying_same_target else None
-                if not retrying_same_target:
-                    # A failed/noop edit must not pin all future edits to the
-                    # old field.  Only an explicit retry action may reuse it.
-                    self._retry_snapshot = None
-                if snapshot is None:
-                    if target is None:
-                        self._reject_edit_request(
-                            "没有锁定外部文本框，请先把光标放入要修改的文本框"
-                        )
-                        return
-                    try:
-                        snapshot = self._desktop_target_adapter().capture_text(target)
-                        validate_edit_target_text(snapshot.text)
-                        self._log_edit_target_snapshot(snapshot)
-                    except BaseException as exc:
-                        try:
-                            self._desktop_target_adapter().release_selection(target)
-                        except BaseException:
-                            pass
-                        self._reject_edit_request(str(exc))
-                        return
-                else:
-                    # Consume the explicit retry snapshot.  A later failure
-                    # may offer it again, but an unrelated edit will recapture.
-                    self._retry_snapshot = None
-                    self._retry_target_armed = False
-                self._submit_text_processing(
+            if routing_mode == INPUT_ROUTING_AUTO:
+                self._submit_input_mode_routing(
                     text,
                     normalized_session_id,
-                    mode,
-                    target_text=snapshot.text,
-                    target=target or snapshot.target,
-                    snapshot=snapshot,
+                    fallback_mode=mode,
+                    target=target,
                 )
             else:
-                self._submit_text_processing(
-                    text,
-                    normalized_session_id,
-                    mode,
-                    target=target,
+                self._dispatch_completed_text(
+                    text, normalized_session_id, mode, target
                 )
         else:
             self._hide_overlay_timer.stop()
             if self._recognition_enabled:
                 self._set_status("正在识别", text, "listening")
+
+    def _dispatch_completed_text(
+        self,
+        text: str,
+        session_id: int,
+        mode: str,
+        target: DesktopTargetRef | None,
+    ) -> None:
+        mode = normalize_input_mode(mode)
+        if mode != INPUT_MODE_EDIT:
+            self._submit_text_processing(text, session_id, mode, target=target)
+            return
+        if self._edit_review is not None:
+            self._reject_edit_request(
+                "上一条修改仍在等待确认，请先确认、取消或选择重说"
+            )
+            return
+        retrying_same_target = self._retry_target_armed
+        snapshot = self._retry_snapshot if retrying_same_target else None
+        if not retrying_same_target:
+            self._retry_snapshot = None
+        if snapshot is None:
+            if target is None:
+                self._reject_edit_request(
+                    "没有锁定外部文本框，请先把光标放入要修改的文本框"
+                )
+                return
+            try:
+                snapshot = self._desktop_target_adapter().capture_text(target)
+                validate_edit_target_text(snapshot.text)
+                self._log_edit_target_snapshot(snapshot)
+            except BaseException as exc:
+                try:
+                    self._desktop_target_adapter().release_selection(target)
+                except BaseException:
+                    pass
+                self._reject_edit_request(str(exc))
+                return
+        else:
+            self._retry_snapshot = None
+            self._retry_target_armed = False
+        self._submit_text_processing(
+            text,
+            session_id,
+            mode,
+            target_text=snapshot.text,
+            target=target or snapshot.target,
+            snapshot=snapshot,
+        )
+
+    def _submit_input_mode_routing(
+        self,
+        text: str,
+        session_id: int,
+        *,
+        fallback_mode: str,
+        target: DesktopTargetRef | None,
+    ) -> None:
+        self._text_request_id += 1
+        request_id = self._text_request_id
+        request = InputModeRoutingRequest(
+            request_id=request_id,
+            session_id=int(session_id),
+            raw_text=text,
+            settings=replace(self._llm_settings(), enabled=True),
+            fallback_mode=normalize_input_mode(fallback_mode),
+        )
+        was_processing = self.textProcessing
+        self._pending_mode_routes.add(request_id)
+        self._pending_mode_route_contexts[request_id] = _PendingModeRoute(target)
+        if not was_processing:
+            self.textProcessingChanged.emit()
+        self._transcript_text = f"正在自动判断听写或指令…\n{text}"
+        self._transcript_final = False
+        self._transcript_visible = True
+        self._set_interaction_state("processing")
+        self.transcriptChanged.emit()
+        self._hide_overlay_timer.stop()
+        self._append_log(
+            f"自动路由判断开始：{text}（模型：{request.settings.provider}/"
+            f"{request.settings.model}）"
+        )
+        if self._recognition_enabled:
+            self._set_status("正在判断输入类型", "大模型正在区分听写或编辑指令", "starting")
+        self._text_processing_worker.submit_routing(request)
+
+    @Slot(object)
+    def _apply_input_mode_routed(self, result: object) -> None:
+        if not isinstance(result, InputModeRoutingResult):
+            return
+        if result.request_id not in self._pending_mode_routes:
+            return
+        self._pending_mode_routes.remove(result.request_id)
+        context = self._pending_mode_route_contexts.pop(
+            result.request_id, _PendingModeRoute()
+        )
+        if not self.textProcessing:
+            self.textProcessingChanged.emit()
+        if self._quitting or self._status_kind == "stopping":
+            return
+        label = "编辑指令" if result.mode == INPUT_MODE_EDIT else "听写"
+        self._transcript_mode = result.mode
+        self.transcriptChanged.emit()
+        if result.model_output:
+            self._append_log(f"自动路由模型原始返回：{result.model_output}")
+        if result.error:
+            self._append_log(
+                f"自动路由判断失败（{result.latency_s:.3f}s）：{result.error}；"
+                f"回退为当前手动模式“{label}”"
+            )
+        else:
+            self._append_log(
+                f"自动路由判断完成：{label}（耗时 {result.latency_s:.3f}s）"
+            )
+        self._dispatch_completed_text(
+            result.raw_text,
+            result.session_id,
+            result.mode,
+            context.target,
+        )
 
     def _reject_edit_request(self, message: str) -> None:
         self._transcript_text = message
@@ -2388,7 +2529,7 @@ class AppController(QObject):
 
     def _cancel_pending_text_processing(self) -> None:
         self._clear_feedback_reason()
-        had_pending = bool(self._pending_text_requests)
+        had_pending = bool(self._pending_text_requests or self._pending_mode_routes)
         for request_id in tuple(self._pending_text_requests):
             try:
                 self._modification_dataset.abandon_request(
@@ -2408,6 +2549,9 @@ class AppController(QObject):
                 pass
         self._pending_text_requests.clear()
         self._pending_interactions.clear()
+        self._pending_mode_routes.clear()
+        self._pending_mode_route_contexts.clear()
+        self._session_routing_modes.clear()
         self._session_targets.clear()
         if had_pending:
             self.textProcessingChanged.emit()
@@ -2445,7 +2589,8 @@ class AppController(QObject):
         if error:
             title = "设备已断开" if had_connection else "连接失败"
             retry = "请点击“重新连接设备”重试。" if self._selector else "请重新选择设备。"
-            self._set_status(title, f"{error} 设备已自动断开。{retry}", "error")
+            summary = str(error).splitlines()[0].strip()
+            self._set_status(title, f"{summary} 设备已自动断开。{retry}", "error")
             self._append_log(f"{title}：{error}；设备已自动断开，等待用户手动重连")
         elif not self._quitting:
             self._set_status(
@@ -2472,6 +2617,7 @@ class AppController(QObject):
 
     def _hide_transcript(self) -> None:
         self._transcript_visible = False
+        self._transcript_mode = ""
         if self._edit_review is None and self._interaction_state not in {"retry", "processing"}:
             self._set_interaction_state("idle")
         self.transcriptChanged.emit()

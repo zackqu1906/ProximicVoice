@@ -26,6 +26,14 @@ def test_ring_pcm_callback_becomes_float32_audio():
     assert source.pcm_callbacks == 1
     assert source.samples_received == 4
 
+    diagnostics = source.diagnostic_summary()
+    assert "encoding=opus" in diagnostics
+    assert "callbacks=1" in diagnostics
+    assert "samples=4" in diagnostics
+    assert "last_frame_seq=7" in diagnostics
+    assert "rms=" in diagnostics
+    assert "capture=unavailable" in diagnostics
+
 
 def test_empty_pcm_callback_does_not_mark_ring_ready():
     source = RingAudioSource(queue_blocks=4)

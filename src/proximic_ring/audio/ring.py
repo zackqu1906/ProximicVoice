@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ctypes
+import math
 import queue
 import sys
 import threading
@@ -99,6 +100,12 @@ class RingAudioSource(AudioSource):
         self.pcm_callbacks: int = 0
         self.samples_received: int = 0
         self._last_pcm_monotonic: float | None = None
+        self._first_pcm_monotonic: float | None = None
+        self._last_frame_seq: int | None = None
+        self._sample_square_sum: float = 0.0
+        self._near_zero_samples: int = 0
+        self._clipped_samples: int = 0
+        self._pcm_abs_peak: float = 0.0
 
     def open(self) -> None:
         self.connect()
@@ -116,6 +123,12 @@ class RingAudioSource(AudioSource):
         self.pcm_callbacks = 0
         self.samples_received = 0
         self._last_pcm_monotonic = None
+        self._first_pcm_monotonic = None
+        self._last_frame_seq = None
+        self._sample_square_sum = 0.0
+        self._near_zero_samples = 0
+        self._clipped_samples = 0
+        self._pcm_abs_peak = 0.0
         self._stop.clear()
         self._connected_ready.clear()
         self._start_stream.clear()
@@ -296,7 +309,6 @@ class RingAudioSource(AudioSource):
 
     def _on_pcm(self, frame_seq: int, pcm: bytes) -> None:
         """SDK real-time callback: decoded mono PCM16LE at 16 kHz."""
-        del frame_seq  # Sequence tracking/reassembly is handled inside the SDK.
         try:
             block = decode_pcm16le(pcm)
         except BaseException as exc:
@@ -310,9 +322,18 @@ class RingAudioSource(AudioSource):
         if block.size == 0:
             return
 
+        now = time.monotonic()
         self.pcm_callbacks += 1
         self.samples_received += int(block.size)
-        self._last_pcm_monotonic = time.monotonic()
+        self._last_pcm_monotonic = now
+        if self._first_pcm_monotonic is None:
+            self._first_pcm_monotonic = now
+        self._last_frame_seq = int(frame_seq) & 0xFFFF
+        absolute = np.abs(block)
+        self._sample_square_sum += float(np.dot(block, block))
+        self._near_zero_samples += int(np.count_nonzero(absolute < (64.0 / 32768.0)))
+        self._clipped_samples += int(np.count_nonzero(absolute >= (32760.0 / 32768.0)))
+        self._pcm_abs_peak = max(self._pcm_abs_peak, float(np.max(absolute)))
         self._fresh_pcm.set()
         if self._buffer_audio.is_set():
             try:
@@ -328,6 +349,38 @@ class RingAudioSource(AudioSource):
         # The streaming phase is ready only after a usable audio frame reaches
         # the pipeline.  BLE connection readiness is tracked separately.
         self._ready.set()
+
+    def diagnostic_summary(self) -> str:
+        """Return lightweight stream/audio evidence suitable for persistent logs."""
+
+        samples = self.samples_received
+        duration_s = samples / self.sample_rate
+        rms = math.sqrt(self._sample_square_sum / samples) if samples else 0.0
+        rms_dbfs = 20.0 * math.log10(max(rms, 1e-12))
+        peak_dbfs = 20.0 * math.log10(max(self._pcm_abs_peak, 1e-12))
+        near_zero_pct = 100.0 * self._near_zero_samples / samples if samples else 0.0
+        clipped_pct = 100.0 * self._clipped_samples / samples if samples else 0.0
+        last_pcm_age_s = (
+            time.monotonic() - self._last_pcm_monotonic
+            if self._last_pcm_monotonic is not None
+            else -1.0
+        )
+        pcm_span_s = (
+            self._last_pcm_monotonic - self._first_pcm_monotonic
+            if self._last_pcm_monotonic is not None
+            and self._first_pcm_monotonic is not None
+            else 0.0
+        )
+        return (
+            f"encoding={self.encoding}, callbacks={self.pcm_callbacks}, "
+            f"samples={samples}, audio={duration_s:.3f}s, "
+            f"pcm_span={pcm_span_s:.3f}s, "
+            f"last_frame_seq={self._last_frame_seq}, "
+            f"last_pcm_age={last_pcm_age_s:.3f}s, "
+            f"rms={rms_dbfs:.1f}dBFS, peak={peak_dbfs:.1f}dBFS, "
+            f"near_zero={near_zero_pct:.2f}%, clipped={clipped_pct:.3f}%, "
+            f"capture={self.capture_path or 'unavailable'}"
+        )
 
     def _signal_error(self, exc: BaseException) -> None:
         if self._error is None:
@@ -623,7 +676,17 @@ class RingAudioSource(AudioSource):
 
                 client = getattr(session, "client", None)
                 if client is not None and not bool(getattr(client, "is_connected", False)):
-                    raise RuntimeError("Ring BLE connection was physically lost")
+                    stream_diag = self.diagnostic_summary()
+                    sdk_diag = str(
+                        getattr(session, "last_disconnect_diagnostics", "")
+                    ).strip() or self._sdk_mic_diagnostics(session)
+                    print("[DISCONNECT] STREAM DIAG: " + stream_diag)
+                    print("[DISCONNECT] SDK DIAG: " + sdk_diag)
+                    raise RuntimeError(
+                        "Ring BLE connection was physically lost\n"
+                        f"[DIAG] {stream_diag}\n"
+                        f"[DIAG] {sdk_diag}"
+                    )
 
                 if self._pause_stream_requested.is_set():
                     self._watchdog_armed.clear()
