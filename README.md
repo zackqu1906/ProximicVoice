@@ -54,14 +54,14 @@ powershell -ExecutionPolicy Bypass -File .\scripts\build-windows-installer.ps1 -
 新的安装包会覆盖 `dist\installer\` 中的同名文件。如果修改了 `pyproject.toml`、
 依赖锁文件或新增依赖，应先重新执行 `setup.ps1 -Compute cpu -SkipLocalLLM`，再构建安装包。
 
-### Apple Silicon macOS 12+：从源码生成 `.dmg`
+### Apple Silicon macOS 15+：从源码生成 `.dmg`
 
 当前只提供 Apple Silicon（M1/M2/M3/M4 等 arm64）构建，不支持 Intel Mac。
-构建机需要联网，并安装 Xcode Command Line Tools、Homebrew 和 Python 3.11：
+构建机需要联网并安装 Xcode Command Line Tools；构建脚本会在项目目录自动准备固定版本的
+Python 3.11 和 libopus，不要求 Homebrew，也不会修改系统 Python：
 
 ```bash
 xcode-select --install
-brew install python@3.11
 ```
 
 解压源码 ZIP，在“终端”进入项目根目录并执行：
@@ -77,9 +77,9 @@ bash ./scripts/build-macos.sh
 dist/ProximicVoice-0.6.0-macos-arm64.dmg
 ```
 
-双击 `.dmg`，把 **Proximic Voice.app** 拖入 **Applications**。当前 Demo 使用 ad-hoc
-签名；如果 macOS 提示无法验证开发者，请在 Finder 中按住 Control 点击应用并选择
-**打开**，或进入 **系统设置 → 隐私与安全性 → 仍要打开**。首次启动时允许蓝牙和麦克风权限。
+双击 `.dmg`，把 **Proximic Voice.app** 拖入 **Applications**。正式 Release 必须使用
+Developer ID 签名并通过 Apple 公证；开发者本地未配置证书时生成的 ad-hoc 包只适合本机
+测试。首次启动时允许蓝牙和麦克风权限。
 
 如果应用图标出现后立即退出，新版本会弹出启动错误并把完整诊断写到：
 
@@ -367,7 +367,6 @@ data/session/20260820_154312/
 macOS 使用项目内独立 Python 环境和缓存：
 
 ```bash
-brew install python@3.11
 ./scripts/setup-macos.sh
 ./scripts/start-ui.sh
 ```

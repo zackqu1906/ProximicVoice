@@ -2,6 +2,7 @@
 .venv/
 venv/
 .runtime/
+.tools/
 .cache/
 __pycache__/
 .pytest_cache/

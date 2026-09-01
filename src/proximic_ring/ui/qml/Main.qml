@@ -15,7 +15,10 @@ ApplicationWindow {
     color: "#0A0D12"
     Material.theme: Material.Dark
     Material.accent: "#7892FF"
-    font.family: "Microsoft YaHei UI"
+    readonly property string uiFontFamily: Qt.platform.os === "osx"
+                                           ? ".AppleSystemUIFont"
+                                           : "Microsoft YaHei UI"
+    font.family: uiFontFamily
 
     property color panel: "#111620"
     property color panelAlt: "#151B27"
@@ -196,6 +199,7 @@ ApplicationWindow {
         x: Math.round((parent.width - width) / 2)
         y: Math.round((parent.height - height) / 2)
         width: Math.min(500, parent.width - 48)
+        implicitHeight: 210
         modal: true
         popupType: Popup.Item
         title: "安装 NVIDIA GPU 加速"
@@ -203,7 +207,6 @@ ApplicationWindow {
         onAccepted: appController.installGpuSupport()
 
         contentItem: Label {
-            width: gpuInstallDialog.availableWidth
             text: "安装需要下载数 GB 文件。应用将退出并打开独立安装窗口；安装验证成功后会自动重新启动。是否继续？"
             color: root.textMain
             font.pixelSize: 13
@@ -1120,7 +1123,7 @@ ApplicationWindow {
                            : appController.reviewPending
                              ? "#E4D0FF"
                              : (appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB")
-                    font.family: "Microsoft YaHei UI"
+                    font.family: root.uiFontFamily
                     font.pixelSize: 17
                     wrapMode: Text.Wrap
                 }
@@ -1130,7 +1133,7 @@ ApplicationWindow {
                     visible: appController.reviewCanConfirm
                     text: "修改后："
                     color: "#AEB8C8"
-                    font.family: "Microsoft YaHei UI"
+                    font.family: root.uiFontFamily
                     font.pixelSize: 13
                 }
 
@@ -1142,7 +1145,7 @@ ApplicationWindow {
                     text: appController.editPreviewHtml
                     textFormat: Text.RichText
                     color: "#F5F7FB"
-                    font.family: "Microsoft YaHei UI"
+                    font.family: root.uiFontFamily
                     font.pixelSize: 17
                     wrapMode: Text.Wrap
                 }
@@ -1181,32 +1184,32 @@ ApplicationWindow {
                 Label {
                     text: appController.feedbackReasonPrompt
                     color: "#F5F7FB"
-                    font.family: "Microsoft YaHei UI"
+                    font.family: root.uiFontFamily
                     font.pixelSize: 15
                     font.bold: true
                 }
                 Label {
                     text: "Alt+A   语音识别错误"
                     color: "#DDE5F2"
-                    font.family: "Microsoft YaHei UI"
+                    font.family: root.uiFontFamily
                     font.pixelSize: 13
                 }
                 Label {
                     text: "Alt+L   大模型理解错误"
                     color: "#DDE5F2"
-                    font.family: "Microsoft YaHei UI"
+                    font.family: root.uiFontFamily
                     font.pixelSize: 13
                 }
                 Label {
                     text: "Alt+O   其他原因"
                     color: "#DDE5F2"
-                    font.family: "Microsoft YaHei UI"
+                    font.family: root.uiFontFamily
                     font.pixelSize: 13
                 }
                 Label {
                     text: "10 秒内不选择则不标记"
                     color: "#8F9BAD"
-                    font.family: "Microsoft YaHei UI"
+                    font.family: root.uiFontFamily
                     font.pixelSize: 11
                 }
             }

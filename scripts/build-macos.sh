@@ -8,17 +8,33 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "The macOS package must be built on Apple Silicon." >&2
     exit 1
 fi
-if ! command -v brew >/dev/null 2>&1; then
-    echo "Homebrew is required to bundle libopus." >&2
-    exit 1
+export MACOSX_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-15.0}"
+REQUIRE_SIGNED_RELEASE="${PROXIMIC_REQUIRE_SIGNED_RELEASE:-0}"
+if [[ "$REQUIRE_SIGNED_RELEASE" == "1" ]]; then
+    if [[ -z "${APPLE_SIGNING_IDENTITY:-}" || -z "${APPLE_NOTARY_PROFILE:-}" ]]; then
+        echo "A release build requires APPLE_SIGNING_IDENTITY and APPLE_NOTARY_PROFILE." >&2
+        exit 1
+    fi
 fi
-brew list opus >/dev/null 2>&1 || brew install opus
+OPUS_DYLIB="$PROJECT_ROOT/.runtime/opus/lib/libopus.0.dylib"
+if [[ ! -f "$OPUS_DYLIB" ]]; then
+    MACOSX_DEPLOYMENT_TARGET=12.0 "$PROJECT_ROOT/scripts/install-opus-macos.sh"
+fi
+export PROXIMIC_OPUS_DYLIB="$OPUS_DYLIB"
 
-PYTHON_BIN="${PROXIMIC_PYTHON:-python3.11}"
+if [[ -n "${PROXIMIC_PYTHON:-}" ]]; then
+    PYTHON_BIN="$PROXIMIC_PYTHON"
+elif command -v python3.11 >/dev/null 2>&1; then
+    PYTHON_BIN="python3.11"
+else
+    "$PROJECT_ROOT/scripts/install-python-macos.sh"
+    PYTHON_BIN="$PROJECT_ROOT/.runtime/python-bin/python3.11"
+fi
 VENV_ROOT="$PROJECT_ROOT/.build/packaging-venv"
 [[ -x "$VENV_ROOT/bin/python" ]] || "$PYTHON_BIN" -m venv "$VENV_ROOT"
 PYTHON="$VENV_ROOT/bin/python"
-"$PYTHON" -m pip install --upgrade pip setuptools wheel
+"$PYTHON" -m pip install --upgrade \
+    "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
 "$PYTHON" -m pip install -c requirements-macos.lock \
     ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" \
     -r requirements-packaging.txt
@@ -30,10 +46,12 @@ if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
         --sign "$APPLE_SIGNING_IDENTITY" "$APP"
 else
     codesign --force --deep --sign - "$APP"
+    echo "warning: generated an ad-hoc signed app; it is for local testing only." >&2
 fi
 
 codesign --verify --deep --strict --verbose=2 "$APP"
 plutil -lint "$APP/Contents/Info.plist"
+"$PYTHON" tools/verify_macos_bundle.py "$APP" --minimum-macos 15.0
 APP_EXECUTABLE="$APP/Contents/MacOS/ProximicVoice"
 if ! file "$APP_EXECUTABLE" | grep -q "arm64"; then
     echo "Packaged executable is not Apple Silicon arm64: $APP_EXECUTABLE" >&2
@@ -73,6 +91,9 @@ hdiutil create -volname "Proximic Voice" -srcfolder "$DMG_ROOT" \
 if [[ -n "${APPLE_NOTARY_PROFILE:-}" && -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
     xcrun notarytool submit "$DMG" --keychain-profile "$APPLE_NOTARY_PROFILE" --wait
     xcrun stapler staple "$DMG"
+    xcrun stapler validate "$DMG"
+elif [[ -n "${APPLE_SIGNING_IDENTITY:-}" || -n "${APPLE_NOTARY_PROFILE:-}" ]]; then
+    echo "warning: both APPLE_SIGNING_IDENTITY and APPLE_NOTARY_PROFILE are required for notarization." >&2
 fi
 
 echo "DMG: $DMG"

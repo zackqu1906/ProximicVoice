@@ -14,11 +14,13 @@ if [[ ! -d "$PROJECT_ROOT/third_party/streaming-sensevoice/streaming_sensevoice"
     exit 1
 fi
 
-PYTHON_BIN="${PROXIMIC_PYTHON:-python3.11}"
-if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-    echo "Python 3.11 is required. Install it with: brew install python@3.11" >&2
-    echo "Or set PROXIMIC_PYTHON=/path/to/python3.11" >&2
-    exit 1
+if [[ -n "${PROXIMIC_PYTHON:-}" ]]; then
+    PYTHON_BIN="$PROXIMIC_PYTHON"
+elif command -v python3.11 >/dev/null 2>&1; then
+    PYTHON_BIN="python3.11"
+else
+    "$PROJECT_ROOT/scripts/install-python-macos.sh"
+    PYTHON_BIN="$PROJECT_ROOT/.runtime/python-bin/python3.11"
 fi
 
 if ! "$PYTHON_BIN" -c 'import sys; raise SystemExit(sys.version_info[:2] != (3, 11))'; then
@@ -55,7 +57,7 @@ elif ! "$VENV_PYTHON" -c 'import sys; raise SystemExit(sys.version_info[:2] != (
 fi
 
 "$VENV_PYTHON" -m pip install --upgrade "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
-"$VENV_PYTHON" -m pip install -c "$CONSTRAINT_FILE" -e ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]"
+"$VENV_PYTHON" -m pip install -c "$CONSTRAINT_FILE" -e ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]"
 "$VENV_PYTHON" -c 'import torch, torchaudio, PySide6, bleak, cryptography, funasr, modelscope, transformers, websocket, asr_decoder, online_fbank, zhconv, pyopenjtalk, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; assert torch.version.cuda is None; print("Torch:", torch.__version__); print("Compute: cpu"); print("macOS installation self-check passed.")'
 
 echo

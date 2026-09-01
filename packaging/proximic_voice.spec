@@ -32,14 +32,24 @@ if os.name == "nt":
     binaries.append((str(opus_dll), "opus"))
     datas.append((str(opus_license), "opus"))
 elif platform.system() == "Darwin":
-    candidates = [
+    configured_opus = os.environ.get("PROXIMIC_OPUS_DYLIB", "").strip()
+    candidates = ([Path(configured_opus)] if configured_opus else []) + [
+        project_root / ".runtime" / "opus" / "lib" / "libopus.0.dylib",
+        project_root / ".runtime" / "opus" / "libopus.0.dylib",
         Path("/opt/homebrew/opt/opus/lib/libopus.0.dylib"),
         Path("/opt/homebrew/opt/opus/lib/libopus.dylib"),
     ]
     opus_dylib = next((item for item in candidates if item.is_file()), None)
     if opus_dylib is None:
-        raise SystemExit("Missing Homebrew libopus; run: brew install opus")
+        raise SystemExit("Missing libopus; run: ./scripts/install-opus-macos.sh")
     binaries.append((str(opus_dylib), "opus"))
+    opus_license = project_root / ".runtime" / "opus" / "COPYING.libopus"
+    if opus_license.is_file():
+        datas.append((str(opus_license), "opus"))
+
+notices = project_root / "THIRD_PARTY_NOTICES.md"
+if notices.is_file():
+    datas.append((str(notices), "."))
 
 hiddenimports = collect_submodules("proximic_ring.asr.backends")
 hiddenimports += collect_submodules("funasr", on_error="ignore")
@@ -109,7 +119,7 @@ if platform.system() == "Darwin":
             "CFBundleDisplayName": "Proximic Voice",
             "CFBundleShortVersionString": "0.6.0",
             "CFBundleVersion": "0.6.0",
-            "LSMinimumSystemVersion": "12.0",
+            "LSMinimumSystemVersion": "15.0",
             "NSBluetoothAlwaysUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
             "NSBluetoothPeripheralUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
             "NSMicrophoneUsageDescription": "Proximic Voice 处理来自 Ringo 的语音以完成转写。",

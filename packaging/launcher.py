@@ -28,7 +28,11 @@ def _self_check_requested() -> bool:
 
 
 def _verify_bundled_qml_runtime(resource_root: Path) -> None:
-    qml_root = resource_root / "PySide6" / "qml"
+    candidates = (
+        resource_root / "PySide6" / "Qt" / "qml",
+        resource_root / "PySide6" / "qml",
+    )
+    qml_root = next((item for item in candidates if item.is_dir()), candidates[0])
     missing = [name for name in _BUNDLED_QML_FILES if not (qml_root / name).is_file()]
     if missing:
         raise RuntimeError(

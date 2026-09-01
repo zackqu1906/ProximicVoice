@@ -48,14 +48,16 @@ $env:WINDOWS_TIMESTAMP_URL = "http://timestamp.digicert.com" # 可省略
 
 ## macOS Apple Silicon
 
-需要 Python 3.11、Homebrew 和 Xcode Command Line Tools：
+当前产物支持 Apple Silicon（arm64）和 macOS 15 及以上。构建机需要 Xcode Command
+Line Tools；脚本会把固定版本的 Python 3.11、构建工具和 libopus 安装到项目目录，不要求
+Homebrew，也不会修改系统 Python：
 
 ```bash
 ./scripts/build-macos.sh
 ```
 
-产物：`dist/ProximicVoice-0.6.0-macos-arm64.dmg`。构建脚本把 Homebrew libopus
-复制进 `.app`，用户电脑不需要安装 Homebrew。生成 DMG 前，脚本会实际启动冻结后的
+产物：`dist/ProximicVoice-0.6.0-macos-arm64.dmg`。构建脚本把自行编译的 libopus
+复制进 `.app`，用户电脑不需要安装 Python、Homebrew 或其他运行库。生成 DMG 前，脚本会实际启动冻结后的
 可执行文件执行 `--self-check-package`，验证内置 libopus、全部必需 QML 模块、QApplication、
 控制器、ASR 导入和 QML 根窗口；启动失败会直接终止构建，详细信息写入
 `.build/macos-smoke-data/logs/startup.log`。
@@ -74,8 +76,16 @@ export APPLE_NOTARY_PROFILE="proximic-notary"
 ## 自动构建
 
 `.github/workflows/build-installers.yml` 支持手工触发及 `v*` 标签构建两个平台。
-公开发布 macOS 版本时，应在 CI 中导入签名证书和 notarytool keychain profile；默认 CI
-产物仅为 ad-hoc 签名测试包。
+GitHub Actions 手工构建在没有证书时仍可生成 ad-hoc 测试包。`v*` 标签发布则会强制
+校验 Developer ID 签名和 Apple 公证配置，缺少任一 Secret 都会终止发布，避免把不能在
+新 Mac 上正常通过 Gatekeeper 的包上传到 Releases。仓库需要配置：
+
+- `APPLE_CERTIFICATE_BASE64`：Developer ID Application 的 `.p12` 文件（Base64）。
+- `APPLE_CERTIFICATE_PASSWORD`：导出 `.p12` 时设置的密码。
+- `APPLE_SIGNING_IDENTITY`：完整的 `Developer ID Application: ... (TEAMID)` 名称。
+- `APPLE_NOTARY_APPLE_ID`、`APPLE_NOTARY_TEAM_ID`、`APPLE_NOTARY_PASSWORD`：公证用
+  Apple ID、Team ID 和 app-specific password。
+- `APPLE_KEYCHAIN_PASSWORD`：可选的 CI 临时钥匙串密码。
 
 - 手工触发：构建结果保存在 Actions Artifact，适合内部验证。
 - 推送 `v*` 标签：两个平台构建成功后自动创建 GitHub Release，附带 `.exe`、`.dmg`
@@ -92,7 +102,7 @@ git push origin v0.6.0
 
 ## 发布前硬件验收
 
-在干净的 Windows 10/11 x64 和 Apple Silicon macOS 上分别验证：
+在干净的 Windows 10/11 x64 和 Apple Silicon macOS 15+ 上分别验证：
 
 1. 安装/拖入 Applications 后正常启动，蓝牙权限提示文案正确。
 2. 扫描、选择 Ringo、连接、Opus 连续音频至少 15 分钟、连续说 20 次，并验证单个 BLE

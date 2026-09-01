@@ -38,7 +38,9 @@ def app_data_root() -> Path:
 
 
 def cache_root() -> Path:
-    if not is_frozen() and not os.environ.get(DATA_HOME_ENV, "").strip():
+    if os.environ.get(DATA_HOME_ENV, "").strip():
+        return app_data_root() / "cache"
+    if not is_frozen():
         return resource_root() / ".cache"
     if sys.platform == "darwin":
         return Path.home() / "Library/Caches" / APP_DIR_NAME
@@ -62,6 +64,10 @@ def configure_runtime_environment() -> None:
         os.environ.setdefault(name, str(path))
         Path(os.environ[name]).expanduser().mkdir(parents=True, exist_ok=True)
 
-    opus_dir = resource_root() / "opus"
-    if opus_dir.is_dir():
-        os.environ.setdefault("PROXIMIC_OPUS_DIR", str(opus_dir))
+    opus_directories = [resource_root() / "opus"]
+    if not is_frozen():
+        opus_directories.append(resource_root() / ".runtime" / "opus" / "lib")
+    for opus_dir in opus_directories:
+        if opus_dir.is_dir():
+            os.environ.setdefault("PROXIMIC_OPUS_DIR", str(opus_dir))
+            break
