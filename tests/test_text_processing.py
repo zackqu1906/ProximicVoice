@@ -7,6 +7,7 @@ import pytest
 from proximic_ring.text_processing import (
     INPUT_MODE_DICTATION,
     INPUT_MODE_EDIT,
+    InputModeRoutingRequest,
     EDIT_MODE_FULL,
     EDIT_MODE_RACE,
     LLM_PROVIDER_LOCAL,
@@ -126,6 +127,104 @@ def test_direct_llm_api_key_from_ui_takes_precedence_over_environment(monkeypatc
 
     assert result == "整理后的文本。"
     assert captured[0].headers["Authorization"] == "Bearer llm-ui-key"
+
+
+@pytest.mark.parametrize(
+    ("model_content", "expected"),
+    [
+        ("dictation", INPUT_MODE_DICTATION),
+        ("edit", INPUT_MODE_EDIT),
+        ('{"mode":"edit"}', INPUT_MODE_EDIT),
+    ],
+)
+def test_processor_classifies_dictation_and_edit_instructions(
+    model_content, expected
+):
+    requests = []
+
+    def urlopen(http_request, *, timeout):
+        requests.append(json.loads(http_request.data.decode("utf-8")))
+        payload = {"choices": [{"message": {"content": model_content}}]}
+        return _Response(json.dumps(payload).encode("utf-8"))
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    mode, model_output = processor.classify_input_mode_with_trace(
+        "把上一句改得正式一点",
+        LLMSettings(enabled=True, model="router-model", api_key_env=""),
+    )
+
+    assert mode == expected
+    assert model_output == model_content
+    assert "模式路由器" in requests[0]["messages"][0]["content"]
+    assert "<用户语音>\n把上一句改得正式一点\n</用户语音>" == (
+        requests[0]["messages"][1]["content"]
+    )
+    assert "不要输出 JSON" in requests[0]["messages"][0]["content"]
+    assert requests[0]["max_tokens"] == 32
+
+
+def test_deepseek_router_disables_reasoning(monkeypatch):
+    monkeypatch.setenv("ARK_API_KEY", "test-ark-key")
+    requests = []
+
+    def urlopen(http_request, *, timeout):
+        requests.append(json.loads(http_request.data.decode("utf-8")))
+        payload = {
+            "object": "response",
+            "status": "completed",
+            "output": [
+                {
+                    "type": "message",
+                    "content": [{"type": "output_text", "text": "edit"}],
+                }
+            ],
+        }
+        return _Response(json.dumps(payload).encode("utf-8"))
+
+    processor = OpenAICompatibleTextProcessor(urlopen=urlopen)
+    mode = processor.classify_input_mode(
+        "把上一句改短一点",
+        LLMSettings(
+            enabled=True,
+            base_url="https://ark.cn-beijing.volces.com/api/v3",
+            model="deepseek-v4-flash-260425",
+            api_key_env="ARK_API_KEY",
+            provider=LLM_PROVIDER_VOLCENGINE,
+        ),
+    )
+
+    assert mode == INPUT_MODE_EDIT
+    assert requests[0]["thinking"] == {"type": "disabled"}
+    assert requests[0]["max_output_tokens"] == 32
+
+
+def test_routing_worker_returns_fallback_mode_and_latency_on_failure():
+    class FailingRouter:
+        def classify_input_mode_with_trace(self, *_args):
+            raise RuntimeError("router unavailable")
+
+    completed = threading.Event()
+    results = []
+    worker = TextProcessingWorker(
+        processor=FailingRouter(),
+        on_result=lambda _result: None,
+        on_routing_result=lambda result: (results.append(result), completed.set()),
+    )
+    worker.submit_routing(
+        InputModeRoutingRequest(
+            request_id=91,
+            session_id=8,
+            raw_text="测试",
+            settings=LLMSettings(enabled=True, model="router-model"),
+            fallback_mode=INPUT_MODE_EDIT,
+        )
+    )
+
+    assert completed.wait(1.0)
+    worker.close(wait=True)
+    assert results[0].mode == INPUT_MODE_EDIT
+    assert results[0].error == "router unavailable"
+    assert results[0].latency_s >= 0.0
 
 
 def test_processor_can_use_local_endpoint_without_api_key():
@@ -1063,7 +1162,7 @@ def test_processor_requires_configured_api_key(monkeypatch):
         )
 
 
-def test_local_warmup_loads_once_and_seeds_both_prompt_prefixes():
+def test_local_warmup_loads_once_and_seeds_all_prompt_prefixes():
     requests = []
     servers = []
 
@@ -1105,9 +1204,10 @@ def test_local_warmup_loads_once_and_seeds_both_prompt_prefixes():
     processor.warmup(settings)
 
     assert servers[0].ensure_count == 1
-    assert len(requests) == 2
+    assert len(requests) == 3
     assert all(item["max_tokens"] == 1 for item in requests)
     assert requests[0]["messages"][0]["content"] != requests[1]["messages"][0]["content"]
+    assert requests[1]["messages"][0]["content"] != requests[2]["messages"][0]["content"]
 
 
 def test_worker_falls_back_to_raw_text_when_llm_fails():

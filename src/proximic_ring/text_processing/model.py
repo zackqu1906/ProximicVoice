@@ -9,6 +9,9 @@ INPUT_MODE_EDIT = "edit"
 # lane is now the one-shot edit lane; the Agent lane will be added separately.
 INPUT_MODE_INSTRUCTION = INPUT_MODE_EDIT
 INPUT_MODES = frozenset({INPUT_MODE_DICTATION, INPUT_MODE_EDIT})
+INPUT_ROUTING_MANUAL = "manual"
+INPUT_ROUTING_AUTO = "auto"
+INPUT_ROUTING_MODES = frozenset({INPUT_ROUTING_MANUAL, INPUT_ROUTING_AUTO})
 LLM_PROVIDER_LOCAL = "local"
 LLM_PROVIDER_OPENAI = "openai"
 LLM_PROVIDER_VOLCENGINE = "volcengine"
@@ -27,6 +30,11 @@ def normalize_input_mode(value: str) -> str:
     if mode == "instruction":
         return INPUT_MODE_EDIT
     return mode if mode in INPUT_MODES else INPUT_MODE_DICTATION
+
+
+def normalize_input_routing_mode(value: str) -> str:
+    mode = str(value or "").strip().lower()
+    return mode if mode in INPUT_ROUTING_MODES else INPUT_ROUTING_MANUAL
 
 
 def normalize_llm_provider(value: str) -> str:
@@ -104,6 +112,26 @@ class TextProcessingRequest:
     target_text: str = ""
     episode_id: str = ""
     attempt_id: str = ""
+
+
+@dataclass(frozen=True)
+class InputModeRoutingRequest:
+    request_id: int
+    session_id: int
+    raw_text: str
+    settings: LLMSettings
+    fallback_mode: str = INPUT_MODE_DICTATION
+
+
+@dataclass(frozen=True)
+class InputModeRoutingResult:
+    request_id: int
+    session_id: int
+    raw_text: str
+    mode: str
+    latency_s: float
+    error: str | None = None
+    model_output: str = ""
 
 
 @dataclass(frozen=True)

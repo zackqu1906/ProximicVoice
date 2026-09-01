@@ -52,8 +52,12 @@ def configure_runtime_environment() -> None:
     cache_home = cache_root()
     for path in (data_home, cache_home):
         path.mkdir(parents=True, exist_ok=True)
+    development_layout = not is_frozen() and not os.environ.get(
+        DATA_HOME_ENV, ""
+    ).strip()
     defaults = {
-        "PROXIMIC_LLM_HOME": data_home / "local-llm",
+        "PROXIMIC_LLM_HOME": data_home
+        / (Path(".runtime") / "local-llm" if development_layout else "local-llm"),
         "MODELSCOPE_CACHE": cache_home / "modelscope",
         "HF_HOME": cache_home / "huggingface",
         "TORCH_HOME": cache_home / "torch",

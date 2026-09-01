@@ -34,9 +34,14 @@ def default_local_llm_home() -> Path:
     override = os.environ.get(LOCAL_LLM_HOME_ENV, "").strip()
     if override:
         return Path(override).expanduser()
-    from ..runtime_paths import app_data_root
+    from ..runtime_paths import DATA_HOME_ENV, app_data_root, is_frozen
 
-    return app_data_root() / "local-llm"
+    data_home = app_data_root()
+    if not is_frozen() and not os.environ.get(DATA_HOME_ENV, "").strip():
+        # Source installs place downloaded runtimes next to the development
+        # venv under .runtime.  Frozen builds use their per-user data root.
+        return data_home / ".runtime" / "local-llm"
+    return data_home / "local-llm"
 
 
 def local_llm_platform_key() -> str:

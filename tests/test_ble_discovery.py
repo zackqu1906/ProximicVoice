@@ -213,6 +213,61 @@ def test_streaming_session_can_disable_battery_control_writes(monkeypatch):
     assert session._battery_task is None
 
 
+def test_unexpected_disconnect_snapshots_mic_stats_before_cleanup(monkeypatch):
+    session = RingSession(name_keyword="Ringo", timeout_s=1.0)
+    session.target_name = "Ringo Mac"
+    session.target_address = "COREBLUETOOTH-ID"
+    session.mic_active = True
+    session.battery_pct = 72
+    session.battery_mv = 3910
+    session.device_info = SimpleNamespace(fw_version="1.2.3", hw_rev=4)
+    session.mic = SimpleNamespace(
+        output_path="/tmp/ring_audio.wav",
+        stats=SimpleNamespace(
+            packet_count=123,
+            frame_count=45,
+            dropped_packet_count=2,
+            dropped_frame_count=3,
+            flat_frame_count=4,
+        ),
+        _buffer=[b"a", b"b"],
+        _assembler=SimpleNamespace(
+            incomplete_notify_packets=5,
+            inflight_frame_count=1,
+            completed_frames=45,
+            repeated_completed_seq_packets=0,
+            last_frame_seq=44,
+            last_frag_idx=2,
+            last_frag_count=3,
+        ),
+        _frame_seq=SimpleNamespace(
+            stats=SimpleNamespace(
+                gap_events=1,
+                missing_count=2,
+                duplicate_count=0,
+                out_of_order_count=0,
+            )
+        ),
+    )
+    cleanup_saw_snapshot = []
+    monkeypatch.setattr(
+        session,
+        "_drop_local_streams",
+        lambda: cleanup_saw_snapshot.append(session.last_disconnect_diagnostics),
+    )
+
+    session._on_ble_disconnected(SimpleNamespace(mtu_size=185))
+
+    snapshot = session.last_disconnect_diagnostics
+    assert cleanup_saw_snapshot == [snapshot]
+    assert "mtu=185" in snapshot
+    assert "fw=1.2.3" in snapshot
+    assert "sdk_packets=123" in snapshot
+    assert "missing_blocks=2" in snapshot
+    assert "last_frag=2/3" in snapshot
+    assert "capture=/tmp/ring_audio.wav" in snapshot
+
+
 def test_macos_12_uses_ring_service_filter_for_corebluetooth(monkeypatch):
     options = {}
 

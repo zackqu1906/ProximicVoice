@@ -9,10 +9,24 @@ from pathlib import Path
 
 import numpy as np
 
-from proximic_ring.asr.backends.streaming_sensevoice import StreamingSenseVoiceASR
+from proximic_ring.asr.backends.streaming_sensevoice import (
+    StreamingSenseVoiceASR,
+    _macos_cpu_chunk_size,
+)
 from proximic_ring.asr.backends.funasr_nano import FunASRNanoStreamingASR
 from proximic_ring.asr.factory import asr_backend_kind, available_asr_backends
 from proximic_ring.asr.streaming import StreamingASRWorker
+
+
+def test_streaming_sensevoice_uses_less_aggressive_macos_cpu_partials(monkeypatch):
+    from proximic_ring.asr.backends import streaming_sensevoice
+
+    monkeypatch.setattr(streaming_sensevoice.sys, "platform", "darwin")
+    assert _macos_cpu_chunk_size("cpu") == 8
+    assert _macos_cpu_chunk_size("cuda:0") == 4
+
+    monkeypatch.setattr(streaming_sensevoice.sys, "platform", "win32")
+    assert _macos_cpu_chunk_size("cpu") == 4
 
 
 def test_streaming_sensevoice_extra_includes_torchaudio():

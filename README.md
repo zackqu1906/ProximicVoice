@@ -464,6 +464,17 @@ $env:ARK_API_KEY = "<your-ark-api-key>"
   --text "把周四改成周五"
 ```
 
+自动区分听写/编辑指令可以用单独的路由测试程序验证。它可选择本地 Qwen、豆包、DeepSeek
+或三者同时比较，并为每次请求打印开始时间、完成时间、判断结果、原始返回和耗时：
+
+```powershell
+$env:ARK_API_KEY = "<your-ark-api-key>"
+.\.runtime\venv\Scripts\python.exe .\tools\test_input_mode_router.py `
+  --provider compare `
+  --text "把上一句里的周四改成周五" `
+  --expected edit
+```
+
 独立测试工具的本地默认超时是 180 秒；桌面 UI 的请求超时可以在设置中调整，范围为 1～300 秒。
 
 ## 开发安装

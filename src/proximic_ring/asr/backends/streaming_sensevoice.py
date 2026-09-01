@@ -1,12 +1,54 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from pathlib import Path
 
 import numpy as np
 
 from ..factory import ASRBackendSettings
+
+
+def _macos_cpu_chunk_size(device: str) -> int:
+    """Decode less often on macOS CPU so CoreBluetooth keeps scheduling time."""
+
+    normalized = str(device).strip().lower()
+    return 8 if sys.platform == "darwin" and normalized == "cpu" else 4
+
+
+def _limit_macos_cpu_inference_threads(device: str) -> None:
+    """Keep local inference from saturating every macOS logical CPU.
+
+    PyTorch inference runs away from the BLE thread, but both still compete for
+    CPU and the Python runtime.  Leaving scheduling headroom is important for
+    CoreBluetooth notification delivery during cumulative re-decodes.
+    """
+
+    if sys.platform != "darwin" or str(device).strip().lower() != "cpu":
+        return
+    try:
+        import torch
+
+        cpu_count = os.cpu_count() or 2
+        inference_threads = max(1, min(4, cpu_count - 2))
+        if int(torch.get_num_threads()) > inference_threads:
+            torch.set_num_threads(inference_threads)
+        try:
+            interop_threads = max(1, min(2, inference_threads))
+            if int(torch.get_num_interop_threads()) > interop_threads:
+                torch.set_num_interop_threads(interop_threads)
+        except RuntimeError:
+            # PyTorch allows this setting only before inter-op work starts.
+            pass
+        print(
+            "macOS SenseVoice CPU scheduling guard: "
+            f"intra={int(torch.get_num_threads())}, "
+            f"interop={int(torch.get_num_interop_threads())}, "
+            f"system_cpus={cpu_count}"
+        )
+    except (ImportError, RuntimeError, TypeError, ValueError) as exc:
+        print(f"macOS SenseVoice CPU scheduling guard unavailable: {exc}")
 
 
 class StreamingSenseVoiceASR:
@@ -40,6 +82,8 @@ class StreamingSenseVoiceASR:
         self.language = language
         self.final_redecode = bool(final_redecode)
         self.repo_path = Path(repo_path).expanduser().resolve() if repo_path else None
+
+        _limit_macos_cpu_inference_threads(device)
 
         cls = self._load_external_class(self.repo_path)
         try:
@@ -168,7 +212,9 @@ def create_streaming_backend(settings: ASRBackendSettings) -> StreamingSenseVoic
         device=settings.device,
         language=language,
         textnorm=_bool_option(o.get("textnorm"), True),
-        chunk_size=int(o.get("chunk_size", "4")),
+        chunk_size=int(
+            o.get("chunk_size", str(_macos_cpu_chunk_size(settings.device)))
+        ),
         padding=int(o.get("padding", "8")),
         beam_size=int(o.get("beam_size", "1")),
         contexts=contexts,

@@ -294,7 +294,13 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Label { text: "全局语音输入"; color: root.textMain; font.pixelSize: 17; font.bold: true }
                         Item { Layout.fillWidth: true }
-                        Label { text: "Alt+1 输入 / Alt+2 修改 / 右 Alt 说话"; color: root.textMuted; font.pixelSize: 12 }
+                        Label {
+                            text: appController.inputRoutingMode === "auto"
+                                  ? "自动判断听写/指令 / 右 Alt 说话"
+                                  : "Alt+1 输入 / Alt+2 修改 / 右 Alt 说话"
+                            color: root.textMuted
+                            font.pixelSize: 12
+                        }
                     }
 
                     RowLayout {
@@ -309,6 +315,8 @@ ApplicationWindow {
                             text: "输入到光标"
                             checkable: true
                             autoExclusive: true
+                            visible: appController.inputRoutingMode === "manual"
+                            enabled: appController.inputRoutingMode === "manual"
                             checked: appController.inputMode === "dictation"
                             onClicked: appController.inputMode = "dictation"
                             ToolTip.visible: hovered
@@ -324,7 +332,9 @@ ApplicationWindow {
                             text: "修改当前文本"
                             checkable: true
                             autoExclusive: true
-                            enabled: !appController.reviewPending
+                            visible: appController.inputRoutingMode === "manual"
+                            enabled: appController.inputRoutingMode === "manual"
+                                     && !appController.reviewPending
                             checked: appController.inputMode === "edit"
                             onClicked: appController.inputMode = "edit"
                             ToolTip.visible: hovered
@@ -338,7 +348,7 @@ ApplicationWindow {
                             text: appController.llmEnabled ? "LLM 整理：开" : "LLM 整理：关"
                             onClicked: appController.toggleDictationLlm()
                             ToolTip.visible: hovered
-                            ToolTip.text: "仅影响“输入到光标”；修改模式始终使用文本 LLM"
+                            ToolTip.text: "仅影响听写后的二次整理；自动模式的听写/指令判断始终使用所选 LLM"
                             contentItem: Label {
                                 text: parent.text
                                 color: appController.llmEnabled ? "#DCE4FF" : root.textMain
@@ -361,11 +371,13 @@ ApplicationWindow {
                     Label {
                         Layout.alignment: Qt.AlignHCenter
                         Layout.maximumWidth: 430
-                        text: appController.inputMode === "edit"
+                        text: appController.inputRoutingMode === "auto"
+                              ? "下一段语音说完后由所选 LLM 自动判断：听写会输入到光标，编辑指令会生成修改预览"
+                              : (appController.inputMode === "edit"
                               ? "把光标留在目标文本框，下一段语音是修改要求；生成预览后再确认"
                               : (appController.llmEnabled
                                  ? "下一段语音经文本 LLM 整理后，输入到当前外部文本框"
-                                 : "下一段语音直接采用 ASR 最终结果，不再经过文本 LLM")
+                                 : "下一段语音直接采用 ASR 最终结果，不再经过文本 LLM"))
                         color: root.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
@@ -883,6 +895,23 @@ ApplicationWindow {
 
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
+                    Label { text: "听写 / 指令切换"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    ComboBox {
+                        id: inputRoutingModeCombo
+                        objectName: "inputRoutingModeCombo"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        model: ["自动判断（LLM）", "手动切换"]
+                        currentIndex: appController.inputRoutingMode === "auto" ? 0 : 1
+                        onActivated: appController.inputRoutingMode = currentIndex === 0 ? "auto" : "manual"
+                    }
+                    Label {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.inputRoutingMode === "auto"
+                              ? "每段语音结束后先调用所选文本 LLM 判断听写或编辑指令；日志会记录开始时间、结束时间和判断耗时。"
+                              : "沿用上方“输入到光标 / 修改当前文本”的固定模式；Alt+1、Alt+2 以及后续手势只负责手动切换。"
+                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                    }
+
                     Label { text: "文本大模型"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
                     ComboBox {
                         id: llmProviderCombo
@@ -895,8 +924,8 @@ ApplicationWindow {
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         text: appController.llmProvider === "local"
-                            ? "修改模式始终使用本地 GGUF；输入模式是否二次整理由上方开关决定。首次处理时自动启动，全程离线。"
-                            : "修改模式始终使用所选在线模型；输入模式是否二次整理由上方开关决定。Key 会保存在当前用户的应用设置中，可随时修改或清除。"
+                            ? "自动路由和修改模式使用本地 GGUF；听写是否二次整理由上方开关决定。首次处理时自动启动，全程离线。"
+                            : "自动路由和修改模式使用所选在线模型；听写是否二次整理由上方开关决定。Key 会保存在当前用户的应用设置中。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
                     RowLayout {
@@ -1086,8 +1115,13 @@ ApplicationWindow {
     Window {
         id: transcriptOverlay
         objectName: "transcriptOverlay"
+        readonly property bool showAutoModeBadge:
+            appController.inputRoutingMode === "auto"
+            && appController.transcriptMode !== ""
+        readonly property real modeBadgeReserve: showAutoModeBadge ? 78 : 0
         width: Math.min(820, Math.max(360,
-            Math.max(overlayText.implicitWidth, editPreviewText.implicitWidth) + 58))
+            Math.max(overlayText.implicitWidth + modeBadgeReserve,
+                     editPreviewText.implicitWidth) + 58))
         height: Math.min(420, Math.max(74, overlayContent.implicitHeight + 36))
         x: Math.round((Screen.width - width) / 2)
         y: Screen.height - height - 96
@@ -1111,18 +1145,51 @@ ApplicationWindow {
                 width: parent.width - 36
                 spacing: appController.reviewPending ? 10 : 0
 
-                Label {
-                    id: overlayText
+                RowLayout {
                     width: parent.width
-                    text: appController.transcriptText
-                    color: appController.reviewFailed
-                           ? "#FF9DA5"
-                           : appController.reviewPending
-                             ? "#E4D0FF"
-                             : (appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB")
-                    font.family: "Microsoft YaHei UI"
-                    font.pixelSize: 17
-                    wrapMode: Text.Wrap
+                    spacing: transcriptOverlay.showAutoModeBadge ? 12 : 0
+
+                    Label {
+                        id: overlayText
+                        Layout.fillWidth: true
+                        text: appController.transcriptText
+                        color: appController.reviewFailed
+                               ? "#FF9DA5"
+                               : appController.reviewPending
+                                 ? "#E4D0FF"
+                                 : (appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB")
+                        font.family: "Microsoft YaHei UI"
+                        font.pixelSize: 17
+                        wrapMode: Text.Wrap
+                    }
+
+                    Rectangle {
+                        id: autoModeBadge
+                        objectName: "autoModeBadge"
+                        Layout.preferredWidth: 66
+                        Layout.preferredHeight: 30
+                        Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
+                        visible: transcriptOverlay.showAutoModeBadge
+                        radius: 15
+                        color: appController.transcriptMode === "edit"
+                               ? "#553F2A68"
+                               : "#4030705C"
+                        border.width: 1
+                        border.color: appController.transcriptMode === "edit"
+                                      ? "#AFC084FC"
+                                      : "#9A4DD4AC"
+
+                        Label {
+                            anchors.centerIn: parent
+                            text: appController.transcriptMode === "edit" ? "指令" : "听写"
+                            color: appController.transcriptMode === "edit"
+                                   ? "#E4D0FF"
+                                   : "#8BE2C5"
+                            font.family: "Microsoft YaHei UI"
+                            font.pixelSize: 13
+                            font.bold: true
+                        }
+                    }
                 }
 
                 Label {

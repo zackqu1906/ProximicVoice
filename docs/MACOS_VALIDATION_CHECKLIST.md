@@ -228,10 +228,21 @@ find '/Applications/Proximic Voice.app/Contents' -iname '*opus*.dylib' -print
 ```bash
 tail -n 300 "$HOME/Library/Application Support/ProxiMic Voice/logs/startup.log"
 ls -lt "$HOME/Library/Logs/DiagnosticReports" | head
+./.runtime/venv/bin/python tools/diagnose_macos_audio.py
 ```
 
 日志中的 `Ring BLE disconnected unexpectedly` 表示底层连接确实断开；只有
 `PCM STREAM STALLED` 则表示 BLE 仍连接、音频块重组或解码没有继续推进。
+新版诊断日志还会输出两行 `[DISCONNECT]`：第一行给出编码、收到的音频时长、最后
+PCM 间隔、RMS/峰值/静音/削波比例和 WAV 路径；第二行给出固件、MTU、MIC 包、缺失
+分片、帧序号间隙及丢块计数。必须完整保留这两行。
+
+识别结果不正确时，先运行上述诊断脚本并用输出的 `open <WAV路径>` 命令试听：
+
+- WAV 已经断续、变速、失真或缺字：先查 BLE、Opus/ADPCM 解码、固件和麦克风增益。
+- WAV 清晰完整但识别错误：再查 ASR 后端、语言、热词和语句起止裁剪。
+- 断开时间紧跟耗时很高的 `[ASR TIMING]`：查 CPU 饱和导致的 CoreBluetooth 调度饥饿。
+- WAV 在断开点整齐结束且日志明确 `physically lost`：不是 QML 日志或界面造成的断开。
 
 ## 10. UI 与 macOS 原生行为
 

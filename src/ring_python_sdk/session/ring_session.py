@@ -124,6 +124,11 @@ class RingSession(DemuxMixin, ConnectionMixin, IdentityMixin, SensorsMixin, Stat
     _reconnect_task: asyncio.Task | None = field(default=None, repr=False)
     _battery_task: asyncio.Task | None = field(default=None, repr=False)
     _was_connected: bool = False
+    # Captured synchronously by Bleak's disconnect callback before MIC
+    # processors are closed.  The product adapter reads this after
+    # ``client.is_connected`` becomes false so the useful transport evidence
+    # is not destroyed by cleanup.
+    last_disconnect_diagnostics: str = ""
     _connect_lock: asyncio.Lock = field(default_factory=asyncio.Lock, repr=False)
     battery_pct: int | None = None
     battery_mv: int | None = None

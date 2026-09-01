@@ -151,6 +151,7 @@ class ConnectionMixin:
 
             self.target_name = target.name or ""
             self.target_address = target.address
+            self.last_disconnect_diagnostics = ""
             if new_session or self.session_dir is None:
                 self.session_dir = new_session_dir(MODE_SESSION)
                 self._seg.clear()
@@ -292,13 +293,80 @@ class ConnectionMixin:
         self._stop_battery_poll()
         if self._user_closing:
             return
+        try:
+            self.last_disconnect_diagnostics = self._disconnect_diagnostics(_client)
+        except Exception as exc:
+            # A diagnostic failure must never prevent processor cleanup after
+            # a real transport loss.
+            self.last_disconnect_diagnostics = (
+                f"diagnostic_snapshot_failed={type(exc).__name__}: {exc}"
+            )
         print(
             "Ring BLE disconnected unexpectedly: "
             f"{self.target_name or '?'} ({self.target_address or '?'})"
         )
+        print("Ring BLE disconnect snapshot: " + self.last_disconnect_diagnostics)
         self._drop_local_streams()
         if self.auto_reconnect and self.target_address:
             self.reconnecting = True
+
+    def _disconnect_diagnostics(self, client: BleakClient) -> str:
+        """Snapshot transport/MIC state before disconnect cleanup destroys it."""
+
+        mic = self.mic
+        parts = [
+            f"mtu={getattr(client, 'mtu_size', '?')}",
+            f"mic_active={self.mic_active}",
+        ]
+        info = self.device_info
+        if info is not None:
+            parts.append(f"fw={info.fw_version}")
+            parts.append(f"hw={info.hw_rev}")
+        if self.battery_pct is not None:
+            parts.append(f"battery={self.battery_pct}%")
+        if self.battery_mv is not None:
+            parts.append(f"battery_mv={self.battery_mv}")
+        if mic is None:
+            parts.append("sdk_mic=none")
+            return ", ".join(parts)
+
+        stats = mic.stats
+        buffer = getattr(mic, "_buffer", None)
+        buffered_blocks = len(buffer) if hasattr(buffer, "__len__") else "?"
+        parts.extend(
+            [
+                f"sdk_packets={stats.packet_count}",
+                f"decoded_blocks={stats.frame_count}",
+                f"dropped_packets={stats.dropped_packet_count}",
+                f"dropped_frames={stats.dropped_frame_count}",
+                f"buffered_blocks={buffered_blocks}",
+            ]
+        )
+        assembler = getattr(mic, "_assembler", None)
+        if assembler is not None:
+            parts.extend(
+                [
+                    f"incomplete_notifies={assembler.incomplete_notify_packets}",
+                    f"inflight_frames={assembler.inflight_frame_count}",
+                    f"assembled_frames={assembler.completed_frames}",
+                    "repeated_completed_seq_packets="
+                    f"{assembler.repeated_completed_seq_packets}",
+                    f"last_seq={assembler.last_frame_seq}",
+                    f"last_frag={assembler.last_frag_idx}/{assembler.last_frag_count}",
+                ]
+            )
+        seq_stats = getattr(getattr(mic, "_frame_seq", None), "stats", None)
+        if seq_stats is not None:
+            parts.extend(
+                [
+                    f"seq_gaps={seq_stats.gap_events}",
+                    f"missing_blocks={seq_stats.missing_count}",
+                    f"duplicate_blocks={seq_stats.duplicate_count}",
+                    f"out_of_order_blocks={seq_stats.out_of_order_count}",
+                ]
+            )
+        parts.append(f"capture={mic.output_path}")
+        return ", ".join(parts)
 
     def _drop_local_streams(self) -> None:
         """Close processors after unexpected link loss (no BLE STOP)."""

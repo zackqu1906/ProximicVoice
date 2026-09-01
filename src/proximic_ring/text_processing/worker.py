@@ -10,6 +10,8 @@ from .edit_tool import EDIT_MODE_RACE
 from .llm import OpenAICompatibleTextProcessor
 from .model import (
     INPUT_MODE_EDIT,
+    InputModeRoutingRequest,
+    InputModeRoutingResult,
     LLMTraceCollection,
     LLMSettings,
     TextProcessingRequest,
@@ -32,14 +34,16 @@ class TextProcessingWorker:
         on_result: Callable[[TextProcessingResult], None],
         on_trace: Callable[[LLMTraceCollection], None] | None = None,
         on_warmup: Callable[[str | None, float], None] | None = None,
+        on_routing_result: Callable[[InputModeRoutingResult], None] | None = None,
         processor: OpenAICompatibleTextProcessor | None = None,
     ) -> None:
         self._on_result = on_result
         self._on_trace = on_trace
         self._on_warmup = on_warmup
+        self._on_routing_result = on_routing_result
         self._processor = processor or OpenAICompatibleTextProcessor()
         self._queue: queue.SimpleQueue[
-            TextProcessingRequest | _WarmupTask | None
+            TextProcessingRequest | InputModeRoutingRequest | _WarmupTask | None
         ] = queue.SimpleQueue()
         self._thread = threading.Thread(
             target=self._run,
@@ -58,6 +62,11 @@ class TextProcessingWorker:
         if self._closed.is_set():
             return
         self._queue.put(_WarmupTask(settings))
+
+    def submit_routing(self, request: InputModeRoutingRequest) -> None:
+        if self._closed.is_set():
+            return
+        self._queue.put(request)
 
     def close(self, *, wait: bool = False) -> None:
         if self._closed.is_set():
@@ -91,6 +100,42 @@ class TextProcessingWorker:
                             error,
                             max(0.0, time.perf_counter() - started),
                         )
+                    except BaseException:
+                        if self._closed.is_set():
+                            return
+                continue
+            if isinstance(request, InputModeRoutingRequest):
+                started = time.perf_counter()
+                error = None
+                model_output = ""
+                mode = normalize_input_mode(request.fallback_mode)
+                try:
+                    classify_with_trace = getattr(
+                        self._processor, "classify_input_mode_with_trace", None
+                    )
+                    if callable(classify_with_trace):
+                        mode, model_output = classify_with_trace(
+                            request.raw_text, request.settings
+                        )
+                    else:
+                        mode = self._processor.classify_input_mode(
+                            request.raw_text, request.settings
+                        )
+                except BaseException as exc:
+                    error = str(exc)
+                    model_output = str(getattr(exc, "model_output", "") or "")
+                result = InputModeRoutingResult(
+                    request_id=request.request_id,
+                    session_id=request.session_id,
+                    raw_text=request.raw_text,
+                    mode=normalize_input_mode(mode),
+                    latency_s=max(0.0, time.perf_counter() - started),
+                    error=error,
+                    model_output=model_output,
+                )
+                if self._on_routing_result is not None:
+                    try:
+                        self._on_routing_result(result)
                     except BaseException:
                         if self._closed.is_set():
                             return
