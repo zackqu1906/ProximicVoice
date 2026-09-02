@@ -24,9 +24,9 @@ asr-funasr-nano = ["torch>=2.11,<2.12", "funasr>=1.3.26", "transformers>=4.51.3"
 asr-whisper = ["faster-whisper>=1.1.0"]
 asr-http = ["requests>=2.31"]
 asr-volcengine = ["websocket-client>=1.8"]
-ui = ["PySide6>=6.8,<7", "comtypes>=1.4,<2; platform_system == 'Windows'"]
+ui = ["PySide6>=6.8,<7", "comtypes>=1.4,<2; platform_system == 'Windows'", "pyobjc-framework-Quartz>=12.2.2; platform_system == 'Darwin'"]
 dev = ["pytest>=8.0"]
-all = ["bleak==3.0.1; platform_system == 'Windows'", "bleak>=3.0.1; platform_system != 'Windows'", "cryptography>=45.0.0", "opuslib>=3.0.1", "sounddevice>=0.5.3", "funasr>=1.3.26", "modelscope", "huggingface_hub", "asr-decoder", "online-fbank", "transformers>=4.51.3", "torchaudio>=2.11,<2.12", "zhconv", "whisper_normalizer", "pyopenjtalk-plus", "numpy<=1.26.4", "faster-whisper>=1.1.0", "requests>=2.31", "websocket-client>=1.8", "PySide6>=6.8,<7", "comtypes>=1.4,<2; platform_system == 'Windows'", "pytest>=8.0"]
+all = ["bleak==3.0.1; platform_system == 'Windows'", "bleak>=3.0.1; platform_system != 'Windows'", "cryptography>=45.0.0", "opuslib>=3.0.1", "sounddevice>=0.5.3", "funasr>=1.3.26", "modelscope", "huggingface_hub", "asr-decoder", "online-fbank", "transformers>=4.51.3", "torchaudio>=2.11,<2.12", "zhconv", "whisper_normalizer", "pyopenjtalk-plus", "numpy<=1.26.4", "faster-whisper>=1.1.0", "requests>=2.31", "websocket-client>=1.8", "PySide6>=6.8,<7", "comtypes>=1.4,<2; platform_system == 'Windows'", "pyobjc-framework-Quartz>=12.2.2; platform_system == 'Darwin'", "pytest>=8.0"]
 
 [project.scripts]
 proximic-ring = "proximic_ring.cli:main"

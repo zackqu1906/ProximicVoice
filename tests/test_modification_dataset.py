@@ -82,7 +82,7 @@ def _result(request_id: int, session_id: int, candidate: str, winner: str):
     )
 
 
-def test_retry_attempts_share_episode_and_persist_complete_training_trace(tmp_path):
+def test_confirm_persists_one_complete_training_attempt_and_retry_is_rejected(tmp_path):
     collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
     first_audio = np.linspace(-0.25, 0.25, 1600, dtype=np.float32)
     collector.record_audio(1, first_audio)
@@ -97,7 +97,12 @@ def test_retry_attempts_share_episode_and_persist_complete_training_trace(tmp_pa
         model="qwen.gguf",
     )
     collector.record_llm_result(10, _result(10, 1, "正式文本。", "fragment"))
-    collector.feedback(10, "retry")
+    collector.feedback(
+        10,
+        "confirm",
+        final_text="用户修正后的正式文本。",
+        manually_corrected=True,
+    )
     first_attempt_path = (
         tmp_path
         / "dataset"
@@ -106,37 +111,11 @@ def test_retry_attempts_share_episode_and_persist_complete_training_trace(tmp_pa
         / first_attempt
         / "attempt.json"
     )
-    unmarked_retry = json.loads(first_attempt_path.read_text(encoding="utf-8"))
-    assert "failure_reason" not in unmarked_retry["feedback"][0]
-    assert collector.annotate_feedback_reason(
-        10, "retry", "asr_error", input_method="keyboard"
-    ) is True
-
-    collector.record_audio(2, np.zeros(800, dtype=np.float32))
-    collector.record_asr_update(_update(2, "改成公文语气", final=True))
-    same_episode, second_attempt = collector.begin_attempt(
-        request_id=11,
-        session_id=2,
-        target_text="原文。",
-        application="editor.exe",
-        provider="local",
-        model="qwen.gguf",
-    )
-    collector.record_llm_result(11, _result(11, 2, "公文文本。", "full"))
-    collector.feedback(
-        11,
-        "confirm",
-        final_text="用户修正后的公文文本。",
-        manually_corrected=True,
-    )
-
-    assert same_episode == episode_id
-    assert (first_attempt, second_attempt) == ("attempt_001", "attempt_002")
     episode_dir = tmp_path / "dataset" / "anonymous-1" / episode_id
     episode = json.loads((episode_dir / "episode.json").read_text(encoding="utf-8"))
-    assert episode["attempt_ids"] == ["attempt_001", "attempt_002"]
+    assert episode["attempt_ids"] == ["attempt_001"]
     assert episode["final_status"] == "completed"
-    assert episode["final_user_text"] == "用户修正后的公文文本。"
+    assert episode["final_user_text"] == "用户修正后的正式文本。"
     assert episode["manually_corrected"] is True
 
     first_dir = episode_dir / "attempt_001"
@@ -157,13 +136,13 @@ def test_retry_attempts_share_episode_and_persist_complete_training_trace(tmp_pa
     assert {row["branch"] for row in branch_rows} == {"fragment", "full"}
     assert all(row["candidate_text"] for row in branch_rows)
     first_meta = json.loads((first_dir / "attempt.json").read_text(encoding="utf-8"))
-    assert first_meta["feedback"][0]["action"] == "retry"
+    assert first_meta["feedback"][0]["action"] == "confirm"
     assert "preview_dwell_ms" in first_meta["feedback"][0]
-    assert first_meta["feedback"][0]["failure_reason"]["code"] == "asr_error"
-    assert first_meta["feedback"][0]["failure_reason"]["label"] == "语音识别错误"
-    assert first_meta["feedback"][0]["failure_reason"]["input_method"] == "keyboard"
-    assert "selected_at" in first_meta["feedback"][0]["failure_reason"]
     assert first_meta["llm"]["winner_branch"] == "fragment"
+    with pytest.raises(ValueError, match="unsupported feedback action"):
+        collector.feedback(10, "retry")
+    with pytest.raises(ValueError, match="unsupported feedback reason action"):
+        collector.annotate_feedback_reason(10, "retry", "asr_error")
 
 
 def test_cancel_reason_can_be_attached_after_episode_is_finalized(tmp_path):

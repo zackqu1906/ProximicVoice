@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib
 import pkgutil
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from .base import ASRBackend
 from .streaming import StreamingASRBackend
@@ -17,6 +17,9 @@ class ASRBackendSettings:
     device: str = "cuda:0"
     language: str = "auto"
     options: dict[str, str] = field(default_factory=dict)
+    status_callback: Callable[[str], None] | None = field(
+        default=None, compare=False, repr=False
+    )
 
 
 def _normalize_name(name: str) -> str:

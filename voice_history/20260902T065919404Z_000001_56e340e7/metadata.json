@@ -1,0 +1,13 @@
+{
+  "recorded_at": "2026-09-02T06:59:19.404+00:00",
+  "text": "12345。",
+  "backend": "streaming_sensevoice",
+  "model": "iic/SenseVoiceSmall",
+  "error": "",
+  "latency_ms": 2557.833,
+  "audio_duration_ms": 2020,
+  "schema_version": 1,
+  "id": "20260902T065919404Z_000001_56e340e7",
+  "session_id": 1,
+  "audio_file": "utterance.wav"
+}

@@ -2,10 +2,14 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
+
+import pytest
 
 from proximic_ring.asr.streaming import StreamingASRUpdate
 from proximic_ring.cli import build_parser
 from proximic_ring.desktop_output import DesktopTranscriptOutput
+from proximic_ring.desktop_output import MacOSUnicodeTextInjector, _macos_unicode_chunks
 
 
 class FakeInjector:
@@ -142,3 +146,57 @@ def test_win32_input_structure_has_native_size():
 
     expected = 40 if ctypes.sizeof(ctypes.c_void_p) == 8 else 28
     assert ctypes.sizeof(_INPUT) == expected
+
+
+def test_macos_unicode_chunks_preserve_surrogate_pairs():
+    chunks = _macos_unicode_chunks("中文🙂" * 12)
+
+    assert "".join(chunks) == "中文🙂" * 12
+    assert all(len(chunk.encode("utf-16-le")) // 2 <= 20 for chunk in chunks)
+
+
+def test_macos_injector_posts_unicode_only_after_accessibility_trust(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    class Quartz:
+        kCGHIDEventTap = 0
+        kCGEventFlagMaskCommand = 1
+
+        def __init__(self):
+            self.events = []
+
+        def CGEventCreateKeyboardEvent(self, _source, _key, down):
+            return {"down": down}
+
+        def CGEventKeyboardSetUnicodeString(self, event, length, text):
+            event["unicode"] = (length, text)
+
+        def CGEventSetFlags(self, event, flags):
+            event["flags"] = flags
+
+        def CGEventPost(self, tap, event):
+            self.events.append((tap, event))
+
+    class Accessibility:
+        def __init__(self):
+            self.trusted = True
+            self.prompts = []
+
+        def is_trusted(self, *, prompt=False):
+            self.prompts.append(prompt)
+            return self.trusted
+
+    quartz = Quartz()
+    accessibility = Accessibility()
+    injector = MacOSUnicodeTextInjector(quartz, accessibility)
+    injector.inject("你好🙂")
+    assert accessibility.prompts == [True]
+    assert quartz.events[0][1]["unicode"] == (4, "你好🙂")
+    assert quartz.events[1][1] == {"down": False}
+    injector.command_key(8)
+    assert quartz.events[2][1]["flags"] == 1
+    assert quartz.events[3][1]["flags"] == 1
+
+    accessibility.trusted = False
+    with pytest.raises(PermissionError, match="辅助功能权限"):
+        injector.inject("不会发送")

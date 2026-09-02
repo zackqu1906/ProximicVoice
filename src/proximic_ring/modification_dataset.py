@@ -22,7 +22,8 @@ FEEDBACK_REASON_LABELS = {
     "llm_error": "大模型理解错误",
     "other": "其他原因",
 }
-_REASONABLE_FEEDBACK_ACTIONS = {"retry", "cancel"}
+_REASONABLE_FEEDBACK_ACTIONS = {"cancel"}
+_FEEDBACK_ACTIONS = {"confirm", "cancel", "apply_failed", "abandoned"}
 
 
 def _utc_now() -> str:
@@ -259,6 +260,9 @@ class ModificationDatasetCollector:
         final_text: str | None = None,
         manually_corrected: bool = False,
     ) -> None:
+        normalized_action = str(action).strip().lower()
+        if normalized_action not in _FEEDBACK_ACTIONS:
+            raise ValueError(f"unsupported feedback action: {action}")
         with self._lock:
             reference = self._request_attempts.get(int(request_id))
             if reference is None:
@@ -271,34 +275,32 @@ class ModificationDatasetCollector:
             if preview_started is not None:
                 dwell_ms = round(max(0.0, time.perf_counter() - preview_started) * 1000, 3)
             event = {
-                "action": str(action),
+                "action": normalized_action,
                 "occurred_at": _utc_now(),
                 "preview_dwell_ms": dwell_ms,
             }
             if error:
                 event["error"] = str(error)
             attempt["feedback"].append(event)
-            attempt["status"] = str(action)
+            attempt["status"] = normalized_action
             attempt["updated_at"] = _utc_now()
             self._write_json(attempt_path, attempt)
 
-            if action == "retry":
-                return
-            if action == "confirm":
+            if normalized_action == "confirm":
                 self._finalize_episode_locked(
                     episode_id,
                     status="completed",
                     final_text=str(final_text if final_text is not None else attempt["candidate_text"]),
                     manually_corrected=bool(manually_corrected),
                 )
-            elif action == "cancel":
+            elif normalized_action == "cancel":
                 self._finalize_episode_locked(
                     episode_id,
                     status="cancelled",
                     final_text=str(final_text if final_text is not None else attempt["target_text"]),
                     manually_corrected=bool(manually_corrected),
                 )
-            elif action in {"apply_failed", "abandoned"}:
+            elif normalized_action in {"apply_failed", "abandoned"}:
                 self._finalize_episode_locked(
                     episode_id,
                     status="abandoned",
@@ -319,7 +321,7 @@ class ModificationDatasetCollector:
     ) -> bool:
         """Attach an optional reason to the matching persisted feedback event.
 
-        The retry/cancel event is written first so closing or crashing the app
+        The cancel event is written first so closing or crashing the app
         cannot lose the user's primary action.  This method performs a later
         atomic rewrite only if the user explicitly supplies a reason.
         """

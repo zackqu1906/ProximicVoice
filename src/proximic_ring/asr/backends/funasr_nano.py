@@ -4,7 +4,7 @@ import importlib.util
 import os
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import numpy as np
 
@@ -40,6 +40,7 @@ class FunASRNanoStreamingASR:
         use_itn: bool = True,
         hotwords: list[str] | None = None,
         final_redecode: bool = True,
+        status_callback: Callable[[str], None] | None = None,
     ) -> None:
         if chunk_ms <= 0:
             raise ValueError("Fun-ASR-Nano chunk_ms must be positive")
@@ -61,6 +62,14 @@ class FunASRNanoStreamingASR:
         else:
             resolved_model = str(model)
             self.model_name = str(model)
+
+        if status_callback is not None:
+            if model_path.is_dir():
+                status_callback("正在读取本地 ASR 模型参数：FunASR-Nano…")
+            else:
+                status_callback(
+                    "正在检查并下载 ASR 模型参数：FunASR-Nano（已有磁盘缓存将直接复用）…"
+                )
 
         self.device = str(device)
         self.language = self._language_prompt(language)
@@ -116,6 +125,9 @@ class FunASRNanoStreamingASR:
             except ValueError:
                 pass
         self._model.eval()
+        if status_callback is not None:
+            destination = "显存" if self.device.lower().startswith("cuda") else "内存"
+            status_callback(f"ASR 模型参数已载入{destination}：FunASR-Nano")
         self._tokenizer = self._model_kwargs.get("tokenizer")
         if self._tokenizer is None:
             raise RuntimeError("Fun-ASR-Nano did not provide a tokenizer")
@@ -302,4 +314,5 @@ def create_streaming_backend(settings: ASRBackendSettings) -> FunASRNanoStreamin
         use_itn=_bool_option(options.get("use_itn"), True),
         hotwords=hotwords,
         final_redecode=_bool_option(options.get("final_redecode"), True),
+        status_callback=settings.status_callback,
     )

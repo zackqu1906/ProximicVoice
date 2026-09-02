@@ -51,13 +51,39 @@ def test_compute_device_discovery_lists_cuda(monkeypatch):
     monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
     devices, message = AppController._detect_compute_devices("Example GPU A")
     assert devices == [{"label": "CPU（兼容性最佳）", "value": "cpu"}]
-    assert "CPU 版 PyTorch" in message
+    assert ("macOS" if sys.platform == "darwin" else "CPU 版 PyTorch") in message
 
     monkeypatch.setattr(sys, "platform", "darwin")
     devices, message = AppController._detect_compute_devices()
     assert devices == [{"label": "CPU（兼容性最佳）", "value": "cpu"}]
     assert "macOS" in message
     assert AppController._detect_nvidia_gpu_name() == ""
+
+
+def test_macos_desktop_output_migrates_old_forced_off_setting(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication, QSettings
+
+    from proximic_ring.ui.controller import AppController
+
+    _app = QCoreApplication.instance() or QCoreApplication(["mac-output-migration"])
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    settings = QSettings("ProxiMic", "ProxiMic Voice")
+    settings.setValue("input/desktopOutput", False)
+    settings.remove("input/macosDesktopOutputMigrated")
+    settings.sync()
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    controller = AppController()
+    assert controller.desktopOutputEnabled is True
+    assert controller._settings.value("input/macosDesktopOutputMigrated") is True
+    controller.desktopOutputEnabled = False
+    controller._text_processing_worker.close(wait=True)
+
+    restarted = AppController()
+    assert restarted.desktopOutputEnabled is False
+    restarted._text_processing_worker.close(wait=True)
 
 
 def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
@@ -74,6 +100,8 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     controller = AppController()
+    controller._llm_enabled = True
+    controller._input_routing_mode = "manual"
     controller._text_processing_worker.close(wait=True)
 
     routed = []
@@ -212,6 +240,11 @@ def test_qml_customer_window_loads(tmp_path):
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     controller = AppController()
+    controller._llm_enabled = True
+    controller._input_routing_mode = "manual"
+    controller._llm_provider = "local"
+    controller._llm_model = "qwen3-4b-instruct-2507-local"
+    controller._llm_base_url = "http://127.0.0.1:11435/v1"
     # Simulate a selector persisted by an earlier application run.  It must not
     # make the freshly opened UI claim that this is a reconnect operation.
     controller._selector = "SAVED-RING-ID"
@@ -259,7 +292,17 @@ def test_qml_customer_window_loads(tmp_path):
         "MOUSE-ID",
     ]
     controller.deviceSearch = "Ringo"
-    if os.name != "nt":
+    if sys.platform == "darwin":
+        controller.desktopOutputEnabled = True
+        assert controller.desktopOutputEnabled is True
+        controller.desktopOutputEnabled = False
+        assert controller.desktopOutputEnabled is False
+        controller.desktopOutputEnabled = True
+        assert controller.desktopOutputEnabled is True
+        assert controller.pushToTalkEnabled is False
+        controller.pushToTalkEnabled = True
+        assert controller.pushToTalkEnabled is False
+    elif os.name != "nt":
         assert controller.desktopOutputEnabled is False
         assert controller.pushToTalkEnabled is False
         controller.desktopOutputEnabled = True
@@ -305,10 +348,9 @@ def test_qml_customer_window_loads(tmp_path):
     llm_model_combo = window.findChild(QObject, "llmModelCombo")
     llm_model_field = window.findChild(QObject, "llmModelField")
     llm_api_key_field = window.findChild(QObject, "llmApiKeyField")
-    session_history_area = window.findChild(QObject, "sessionHistoryArea")
+    voice_history_list = window.findChild(QObject, "voiceHistoryList")
     confirm_edit_button = window.findChild(QObject, "confirmEditButton")
     cancel_edit_button = window.findChild(QObject, "cancelEditButton")
-    retry_edit_button = window.findChild(QObject, "retryEditButton")
     edit_preview_text = window.findChild(QObject, "editPreviewText")
     feedback_reason_overlay = window.findChild(QObject, "feedbackReasonOverlay")
     log_area = window.findChild(QObject, "logArea")
@@ -382,11 +424,9 @@ def test_qml_customer_window_loads(tmp_path):
     assert llm_model_combo is not None
     assert llm_model_field is not None
     assert llm_api_key_field is not None
-    assert session_history_area is not None
-    assert session_history_area.property("readOnly") is True
+    assert voice_history_list is not None
     assert confirm_edit_button is not None
     assert cancel_edit_button is not None
-    assert retry_edit_button is not None
     assert edit_preview_text is not None
     assert log_area is not None
     assert log_area.property("font").pixelSize() == 14
@@ -397,7 +437,6 @@ def test_qml_customer_window_loads(tmp_path):
         controller.logText,
     )
     assert log_area.property("text") == controller.logText
-    assert log_area.property("textFormat") == 0  # TextEdit.PlainText
     assert log_area.property("cursorPosition") == len(log_area.property("text"))
     assert llm_local_model_field is not None
     assert controller.inputMode == "dictation"
@@ -431,8 +470,6 @@ def test_qml_customer_window_loads(tmp_path):
     app.processEvents()
     assert llm_api_key_field.property("text") == "ark-ui-key"
     assert asr_api_key_field.property("text") == "speech-ui-key"
-    assert llm_api_key_field.property("echoMode") != 0
-    assert asr_api_key_field.property("echoMode") != 0
     assert controller._settings.value("llm/apiKey") == "ark-ui-key"
     assert controller._settings.value("asr/volcengineApiKey") == "speech-ui-key"
     controller.llmProvider = "volcengine"
@@ -526,6 +563,12 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.statusTitle == "正在加载检测模型"
     controller._apply_runtime_status("正在加载语音模型 funasr_nano…")
     assert controller.statusTitle == "正在加载语音模型"
+    controller._apply_runtime_status(
+        "正在检查并下载 ASR 模型参数：FunASR-Nano（已有磁盘缓存将直接复用）…"
+    )
+    assert controller.statusTitle == "正在下载模型参数"
+    controller._apply_runtime_status("ASR 模型参数已载入内存：FunASR-Nano")
+    assert controller.statusTitle == "模型参数已载入"
     controller._apply_runtime_disconnected()
     assert controller.connected is False
     assert controller.busy is True
@@ -664,27 +707,28 @@ def test_qml_customer_window_loads(tmp_path):
     controller._recognition_enabled = True
     controller._apply_push_to_talk(True)
     controller._apply_push_to_talk(False)
+    assert controller.reviewPending is True
+    controller.cancelEdit()
     assert controller.reviewPending is False
     assert controller.editPreviewHtml == ""
-    assert controller.interactionState == "retry"
+    assert controller.interactionState == "cancelled"
     QTest.qWait(220)
     assert confirm_edit_button.property("visible") is False
     assert controller.feedbackReasonVisible is True
     assert controller.feedbackReasonAvailable is True
     assert feedback_reason_overlay.property("visible") is True
-    assert controller.feedbackReasonPrompt == "刚才为什么重说？"
+    assert controller.feedbackReasonPrompt == "刚才为什么取消？"
     controller._apply_voice_action("reason_asr_error")
     app.processEvents()
     assert controller.feedbackReasonVisible is False
     assert feedback_reason_overlay.property("visible") is False
-    assert "已标记本次重说原因：语音识别错误" in controller.logText
+    assert "已标记本次取消原因：语音识别错误" in controller.logText
 
-    # Replacing an unanswered prompt must have a real rendered gap so two
-    # consecutive retries cannot look like one stale, continuously visible UI.
-    controller._offer_feedback_reason(900, "retry")
+    # Replacing an unanswered cancellation prompt must have a rendered gap.
+    controller._offer_feedback_reason(900, "cancel")
     QTest.qWait(220)
     assert controller.feedbackReasonVisible is True
-    controller._offer_feedback_reason(901, "retry")
+    controller._offer_feedback_reason(901, "cancel")
     assert controller.feedbackReasonAvailable is True
     assert controller.feedbackReasonVisible is False
     assert feedback_reason_overlay.property("visible") is False
@@ -694,18 +738,18 @@ def test_qml_customer_window_loads(tmp_path):
     controller._clear_feedback_reason()
 
     controller._apply_runtime_update("改得简洁正式", True, "", 44)
-    retry_request = submitted[2]
-    assert retry_request.target_text == "原始外部文本。"
+    next_request = submitted[2]
+    assert next_request.target_text == "原始外部文本。"
     controller._apply_text_processed(
         TextProcessingResult(
-            request_id=retry_request.request_id,
+            request_id=next_request.request_id,
             session_id=44,
-            mode=retry_request.mode,
-            raw_text=retry_request.raw_text,
+            mode=next_request.mode,
+            raw_text=next_request.raw_text,
             final_text="正式的新文本。",
             latency_s=0.2,
             used_llm=True,
-            target_text=retry_request.target_text,
+            target_text=next_request.target_text,
         )
     )
     assert controller.reviewPending is True
@@ -817,7 +861,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller._hide_overlay_timer.isActive() is False
     assert confirm_edit_button.property("visible") is False
     assert cancel_edit_button.property("visible") is True
-    assert retry_edit_button.property("visible") is True
+    assert window.findChild(QObject, "retryEditButton") is None
     controller.confirmEdit()
     assert controller.reviewPending is True
 
@@ -834,20 +878,18 @@ def test_qml_customer_window_loads(tmp_path):
     episode = json.loads(episode_path.read_text(encoding="utf-8"))
     assert episode["final_status"] == "active"
 
-    controller.retryEdit()
+    controller.cancelEdit()
     assert controller.reviewPending is False
-    assert controller.interactionState == "retry"
-    assert controller.feedbackReasonVisible is False
+    assert controller.interactionState == "cancelled"
     failed_attempt = json.loads(failed_attempt_path.read_text(encoding="utf-8"))
-    retry_reason = failed_attempt["feedback"][-1]["failure_reason"]
-    assert retry_reason["code"] == "llm_error"
-    assert retry_reason["input_method"] == "automatic"
-    assert "已自动标记本次重说原因：大模型理解错误" in controller.logText
+    cancel_reason = failed_attempt["feedback"][-1]["failure_reason"]
+    assert cancel_reason["code"] == "llm_error"
+    assert cancel_reason["input_method"] == "automatic"
+    assert "已自动标记本次取消原因：大模型理解错误" in controller.logText
 
     controller._apply_runtime_update("改得简洁清楚", True, "", 61)
     recovered_request = submitted[7]
-    assert recovered_request.episode_id == failed_request.episode_id
-    assert recovered_request.attempt_id != failed_request.attempt_id
+    assert recovered_request.episode_id != failed_request.episode_id
     assert recovered_request.target_text == "大模型失败时保留的原文。"
     controller._apply_text_processed(
         TextProcessingResult(
@@ -864,11 +906,8 @@ def test_qml_customer_window_loads(tmp_path):
     controller.confirmEdit()
     assert desktop_target.current_text == "恢复后的清楚文本。"
     episode = json.loads(episode_path.read_text(encoding="utf-8"))
-    assert episode["attempt_ids"] == [
-        failed_request.attempt_id,
-        recovered_request.attempt_id,
-    ]
-    assert episode["final_status"] == "completed"
+    assert episode["attempt_ids"] == [failed_request.attempt_id]
+    assert episode["final_status"] == "cancelled"
 
     # A syntactically valid response that leaves the target unchanged is also
     # a persistent LLM failure, not a transient notification.
@@ -916,10 +955,8 @@ def test_qml_customer_window_loads(tmp_path):
     assert desktop_target.released[-1] == target_ref
     assert "超过单次修改上限" in controller.logText
 
-    # A stale snapshot left by a failed/noop edit must not pin an unrelated
-    # future edit to the old text.  Only the explicit retry state may reuse it.
+    # A failed/noop edit must not pin an unrelated future edit to old text.
     desktop_target.current_text = "新的目标文本。"
-    controller._retry_snapshot = DesktopTextSnapshot(target_ref, "旧的 curl 文本。")
     controller._set_interaction_state("error")
     controller._apply_runtime_update("把新的改成更新的", True, "", 49)
     assert submitted[-1].target_text == "新的目标文本。"

@@ -4,7 +4,7 @@ import importlib.util
 import re
 import sys
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from ..factory import ASRBackendSettings
 
@@ -36,12 +36,14 @@ class SenseVoiceASR:
         language: str = "auto",
         use_itn: bool = True,
         repo_path: str | Path | None = None,
+        status_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.model_name = model
         self.device = device
         self.language = language
         self.use_itn = bool(use_itn)
         self.repo_path = Path(repo_path).resolve() if repo_path is not None else None
+        self._status_callback = status_callback
 
         try:
             from funasr.utils.postprocess_utils import rich_transcription_postprocess
@@ -57,8 +59,18 @@ class SenseVoiceASR:
         else:
             self._mode = "automodel"
             self._model, self._kwargs = self._load_automodel()
+        if self._status_callback is not None:
+            destination = "显存" if str(device).lower().startswith("cuda") else "内存"
+            self._status_callback(f"ASR 模型参数已载入{destination}：SenseVoiceSmall")
 
     def _load_local_model(self, repo_path: Path) -> tuple[Any, dict[str, Any]]:
+        if self._status_callback is not None:
+            if Path(self.model_name).expanduser().is_dir():
+                self._status_callback("正在读取本地 ASR 模型参数：SenseVoiceSmall…")
+            else:
+                self._status_callback(
+                    "正在检查并下载 ASR 模型参数：SenseVoiceSmall（已有磁盘缓存将直接复用）…"
+                )
         model_py = repo_path / "model.py"
         if not model_py.is_file():
             raise FileNotFoundError(f"SenseVoice model.py not found: {model_py}")
@@ -85,6 +97,10 @@ class SenseVoiceASR:
                 pass
 
     def _load_automodel(self) -> tuple[Any, dict[str, Any]]:
+        if self._status_callback is not None:
+            self._status_callback(
+                "正在检查并下载 ASR 模型参数：SenseVoiceSmall（已有磁盘缓存将直接复用）…"
+            )
         try:
             from funasr import AutoModel
         except ImportError as exc:
@@ -157,4 +173,5 @@ def create_backend(settings: ASRBackendSettings) -> SenseVoiceASR:
         language=settings.language,
         use_itn=use_itn,
         repo_path=repo_path,
+        status_callback=settings.status_callback,
     )

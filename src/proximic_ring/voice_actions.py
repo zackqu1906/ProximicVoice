@@ -1,4 +1,4 @@
-"""Global keyboard adapter for voice interaction actions on Windows.
+"""Global keyboard adapters for voice interaction actions.
 
 These action names are deliberately device-neutral.  Ring gestures can emit
 the same values later without knowing anything about QML or desktop text APIs.
@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 import threading
 from typing import Callable
 
@@ -20,7 +21,6 @@ ACTION_INPUT = "input"
 ACTION_EDIT = "edit"
 ACTION_CONFIRM = "confirm"
 ACTION_CANCEL = "cancel"
-ACTION_RETRY = "retry"
 ACTION_REASON_ASR_ERROR = "reason_asr_error"
 ACTION_REASON_LLM_ERROR = "reason_llm_error"
 ACTION_REASON_OTHER = "reason_other"
@@ -58,7 +58,6 @@ class WindowsVoiceActionHotkeys:
     _ALT_ACTIONS = {
         0x31: ACTION_INPUT,      # Alt+1
         0x32: ACTION_EDIT,       # Alt+2
-        0x52: ACTION_RETRY,      # Alt+R (optional review fallback)
     }
     _REVIEW_ACTIONS = {
         0x0D: ACTION_CONFIRM,    # Enter while a review is visible
@@ -240,3 +239,150 @@ class WindowsVoiceActionHotkeys:
         kernel32.GetCurrentThreadId.restype = wintypes.DWORD
         kernel32.GetModuleHandleW.argtypes = (wintypes.LPCWSTR,)
         kernel32.GetModuleHandleW.restype = wintypes.HMODULE
+
+
+class MacOSVoiceActionHotkeys:
+    """Consume edit confirmation keys while another macOS app has focus."""
+
+    KEY_RETURN = 36
+    KEY_ESCAPE = 53
+    KEY_KEYPAD_ENTER = 76
+
+    def __init__(
+        self,
+        on_action: Callable[[str], None],
+        *,
+        is_review_active: Callable[[], bool] | None = None,
+        on_error: Callable[[str], None] = print,
+        quartz: object | None = None,
+        core_foundation: object | None = None,
+    ) -> None:
+        if sys.platform != "darwin":
+            raise RuntimeError("macOS 全局编辑确认键仅支持 macOS")
+        if quartz is None:
+            import Quartz as quartz_module
+
+            quartz = quartz_module
+        if core_foundation is None:
+            import CoreFoundation as core_foundation_module
+
+            core_foundation = core_foundation_module
+        self._quartz = quartz
+        self._core_foundation = core_foundation
+        self._on_action = on_action
+        self._is_review_active = is_review_active or (lambda: False)
+        self._on_error = on_error
+        self._ready = threading.Event()
+        self._failed: str | None = None
+        self._tap = None
+        self._run_loop = None
+        self._source = None
+        self._callback = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name="ProxiMicMacVoiceActions",
+            daemon=True,
+        )
+        self._thread.start()
+        if not self._ready.wait(timeout=3.0):
+            raise RuntimeError("安装 macOS 全局编辑确认键超时")
+        if self._failed:
+            raise RuntimeError(self._failed)
+
+    @classmethod
+    def _action_for_key(cls, key_code: int, *, review_active: bool) -> str | None:
+        if not review_active:
+            return None
+        if int(key_code) in (cls.KEY_RETURN, cls.KEY_KEYPAD_ENTER):
+            return ACTION_CONFIRM
+        if int(key_code) == cls.KEY_ESCAPE:
+            return ACTION_CANCEL
+        return None
+
+    def _run(self) -> None:
+        quartz = self._quartz
+        cf = self._core_foundation
+        try:
+            disabled_types = {
+                int(quartz.kCGEventTapDisabledByTimeout),
+                int(quartz.kCGEventTapDisabledByUserInput),
+            }
+
+            def callback(proxy, event_type, event, refcon):
+                try:
+                    if int(event_type) in disabled_types:
+                        quartz.CGEventTapEnable(self._tap, True)
+                        return event
+                    if int(event_type) != int(quartz.kCGEventKeyDown):
+                        return event
+                    repeat_field = getattr(
+                        quartz, "kCGKeyboardEventAutorepeat", None
+                    )
+                    if repeat_field is not None and quartz.CGEventGetIntegerValueField(
+                        event, repeat_field
+                    ):
+                        return None if self._is_review_active() else event
+                    key_code = quartz.CGEventGetIntegerValueField(
+                        event, quartz.kCGKeyboardEventKeycode
+                    )
+                    action = self._action_for_key(
+                        int(key_code),
+                        review_active=self._is_review_active(),
+                    )
+                    if action is None:
+                        return event
+                    self._on_action(action)
+                    # A session event tap can consume the key, preventing
+                    # Return/Escape from also changing the external editor.
+                    return None
+                except BaseException as exc:
+                    self._on_error(
+                        f"[voice-actions] macOS 编辑确认键处理失败：{exc}"
+                    )
+                    return event
+
+            self._callback = callback
+            mask = quartz.CGEventMaskBit(quartz.kCGEventKeyDown)
+            self._tap = quartz.CGEventTapCreate(
+                quartz.kCGSessionEventTap,
+                quartz.kCGHeadInsertEventTap,
+                quartz.kCGEventTapOptionDefault,
+                mask,
+                callback,
+                None,
+            )
+            if self._tap is None:
+                raise RuntimeError(
+                    "无法安装系统按键监听，请在系统设置中允许辅助功能权限"
+                )
+            self._source = quartz.CFMachPortCreateRunLoopSource(
+                None, self._tap, 0
+            )
+            self._run_loop = cf.CFRunLoopGetCurrent()
+            cf.CFRunLoopAddSource(
+                self._run_loop, self._source, cf.kCFRunLoopCommonModes
+            )
+            quartz.CGEventTapEnable(self._tap, True)
+            self._ready.set()
+            cf.CFRunLoopRun()
+        except BaseException as exc:
+            self._failed = f"macOS global edit keys unavailable: {exc}"
+            self._ready.set()
+            self._on_error(f"[voice-actions] {self._failed}")
+        finally:
+            if self._tap is not None:
+                try:
+                    quartz.CFMachPortInvalidate(self._tap)
+                except BaseException:
+                    pass
+            self._tap = None
+            self._source = None
+            self._run_loop = None
+
+    def close(self) -> None:
+        run_loop = self._run_loop
+        if run_loop is not None:
+            self._core_foundation.CFRunLoopStop(run_loop)
+            self._core_foundation.CFRunLoopWakeUp(run_loop)
+        if threading.current_thread() is not self._thread:
+            self._thread.join(timeout=2.0)

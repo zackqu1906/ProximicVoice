@@ -1,0 +1,13 @@
+{
+  "recorded_at": "2026-09-02T07:00:31.118+00:00",
+  "text": "汽车联合咖啡。",
+  "backend": "volcengine",
+  "model": "seedasr-streaming",
+  "error": "",
+  "latency_ms": 113.582,
+  "audio_duration_ms": 4620,
+  "schema_version": 1,
+  "id": "20260902T070031118Z_000001_7a527a14",
+  "session_id": 1,
+  "audio_file": "utterance.wav"
+}

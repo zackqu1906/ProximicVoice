@@ -1,9 +1,9 @@
-"""Safe first-stage desktop output for streaming ASR on Windows.
+"""Safe first-stage desktop output for streaming ASR on Windows and macOS.
 
 Partial transcripts are previewed in a small, non-activating overlay.  Only a
 final transcript is sent to the application that currently owns keyboard
-focus.  The injector uses Windows Unicode keyboard events, so it never replaces
-the user's clipboard.
+focus. Dictation uses platform-native Unicode keyboard events without replacing
+the user's clipboard; macOS edit capture restores every clipboard payload.
 """
 
 from __future__ import annotations
@@ -11,7 +11,9 @@ from __future__ import annotations
 import ctypes
 import os
 import queue
+import sys
 import threading
+import time
 from typing import Callable, Protocol
 
 
@@ -77,6 +79,150 @@ class WindowsUnicodeTextInjector:
         if sent != len(inputs):
             error = ctypes.get_last_error()
             raise OSError(error, f"SendInput sent {sent}/{len(inputs)} keyboard events")
+
+
+def _macos_unicode_chunks(text: str, max_utf16_units: int = 20) -> list[str]:
+    """Split text without cutting a UTF-16 surrogate pair between CGEvents."""
+
+    chunks: list[str] = []
+    current: list[str] = []
+    current_units = 0
+    for character in str(text or ""):
+        units = len(character.encode("utf-16-le", errors="surrogatepass")) // 2
+        if current and current_units + units > max_utf16_units:
+            chunks.append("".join(current))
+            current = []
+            current_units = 0
+        current.append(character)
+        current_units += units
+    if current:
+        chunks.append("".join(current))
+    return chunks
+
+
+class _MacOSAccessibilityTrust:
+    """Small ctypes bridge for AX trust, including the native permission prompt."""
+
+    def __init__(self) -> None:
+        application_services = ctypes.CDLL(
+            "/System/Library/Frameworks/ApplicationServices.framework/"
+            "ApplicationServices"
+        )
+        core_foundation = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+        )
+        application_services.AXIsProcessTrusted.argtypes = ()
+        application_services.AXIsProcessTrusted.restype = ctypes.c_bool
+        application_services.AXIsProcessTrustedWithOptions.argtypes = (
+            ctypes.c_void_p,
+        )
+        application_services.AXIsProcessTrustedWithOptions.restype = ctypes.c_bool
+        core_foundation.CFDictionaryCreate.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.c_long,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        )
+        core_foundation.CFDictionaryCreate.restype = ctypes.c_void_p
+        core_foundation.CFRelease.argtypes = (ctypes.c_void_p,)
+        self._application_services = application_services
+        self._core_foundation = core_foundation
+        self._prompt_key = ctypes.c_void_p.in_dll(
+            application_services, "kAXTrustedCheckOptionPrompt"
+        ).value
+        self._true_value = ctypes.c_void_p.in_dll(
+            core_foundation, "kCFBooleanTrue"
+        ).value
+
+    def is_trusted(self, *, prompt: bool = False) -> bool:
+        if not prompt:
+            return bool(self._application_services.AXIsProcessTrusted())
+        keys = (ctypes.c_void_p * 1)(self._prompt_key)
+        values = (ctypes.c_void_p * 1)(self._true_value)
+        options = self._core_foundation.CFDictionaryCreate(
+            None, keys, values, 1, None, None
+        )
+        if not options:
+            return bool(self._application_services.AXIsProcessTrusted())
+        try:
+            return bool(
+                self._application_services.AXIsProcessTrustedWithOptions(options)
+            )
+        finally:
+            self._core_foundation.CFRelease(options)
+
+
+class MacOSUnicodeTextInjector:
+    """Insert Unicode at the focused macOS control using Quartz keyboard events."""
+
+    def __init__(
+        self,
+        quartz: object | None = None,
+        accessibility: object | None = None,
+    ) -> None:
+        if sys.platform != "darwin":
+            raise RuntimeError("macOS text injection requires macOS")
+        if quartz is None:
+            import Quartz as quartz_module
+
+            quartz = quartz_module
+        self._quartz = quartz
+        self._accessibility = accessibility or _MacOSAccessibilityTrust()
+
+    def is_trusted(self, *, prompt: bool = False) -> bool:
+        return bool(self._accessibility.is_trusted(prompt=prompt))
+
+    def require_accessibility(self) -> None:
+        if not self.is_trusted(prompt=True):
+            raise PermissionError(
+                "macOS 尚未授予辅助功能权限。请在“系统设置 → 隐私与安全性 → "
+                "辅助功能”中允许 Proximic Voice（源码运行时允许 Terminal/Python），"
+                "然后重启应用再试"
+            )
+
+    def press_key(self, key_code: int, *, flags: int = 0) -> None:
+        self.require_accessibility()
+        key_down = self._quartz.CGEventCreateKeyboardEvent(
+            None, int(key_code), True
+        )
+        key_up = self._quartz.CGEventCreateKeyboardEvent(
+            None, int(key_code), False
+        )
+        if key_down is None or key_up is None:
+            raise RuntimeError("macOS 无法创建键盘事件")
+        if flags:
+            self._quartz.CGEventSetFlags(key_down, int(flags))
+            self._quartz.CGEventSetFlags(key_up, int(flags))
+        self._quartz.CGEventPost(self._quartz.kCGHIDEventTap, key_down)
+        self._quartz.CGEventPost(self._quartz.kCGHIDEventTap, key_up)
+
+    def command_key(self, key_code: int) -> None:
+        self.press_key(
+            key_code,
+            flags=int(self._quartz.kCGEventFlagMaskCommand),
+        )
+
+    def inject(self, text: str) -> None:
+        value = str(text or "")
+        if not value:
+            return
+        self.require_accessibility()
+
+        for chunk in _macos_unicode_chunks(value):
+            utf16_units = len(chunk.encode("utf-16-le", errors="surrogatepass")) // 2
+            key_down = self._quartz.CGEventCreateKeyboardEvent(None, 0, True)
+            key_up = self._quartz.CGEventCreateKeyboardEvent(None, 0, False)
+            if key_down is None or key_up is None:
+                raise RuntimeError("macOS 无法创建键盘事件")
+            self._quartz.CGEventKeyboardSetUnicodeString(
+                key_down, utf16_units, chunk
+            )
+            self._quartz.CGEventPost(self._quartz.kCGHIDEventTap, key_down)
+            self._quartz.CGEventPost(self._quartz.kCGHIDEventTap, key_up)
+            # Let the target application's main loop consume each bounded event.
+            time.sleep(0.003)
 
 
 if os.name == "nt":

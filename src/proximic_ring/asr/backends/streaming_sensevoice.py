@@ -4,6 +4,7 @@ import importlib
 import os
 import sys
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 
@@ -76,6 +77,7 @@ class StreamingSenseVoiceASR:
         max_history: int = 0,
         repo_path: str | Path | None = None,
         final_redecode: bool = True,
+        status_callback: Callable[[str], None] | None = None,
     ) -> None:
         self.model_name = model
         self.device = device
@@ -86,6 +88,13 @@ class StreamingSenseVoiceASR:
         _limit_macos_cpu_inference_threads(device)
 
         cls = self._load_external_class(self.repo_path)
+        if status_callback is not None:
+            if Path(model).expanduser().is_dir():
+                status_callback("正在读取本地 ASR 模型参数：SenseVoiceSmall…")
+            else:
+                status_callback(
+                    "正在检查并下载 ASR 模型参数：SenseVoiceSmall（已有磁盘缓存将直接复用）…"
+                )
         try:
             self._model = cls(
                 chunk_size=int(chunk_size),
@@ -103,6 +112,9 @@ class StreamingSenseVoiceASR:
                 "The installed streaming-sensevoice API is not compatible with this adapter. "
                 "Use the current pengzhendong/streaming-sensevoice master branch or update the adapter."
             ) from exc
+        if status_callback is not None:
+            destination = "显存" if str(device).lower().startswith("cuda") else "内存"
+            status_callback(f"ASR 模型参数已载入{destination}：SenseVoiceSmall")
         self._last_text = ""
 
     @staticmethod
@@ -221,4 +233,5 @@ def create_streaming_backend(settings: ASRBackendSettings) -> StreamingSenseVoic
         max_history=int(o.get("max_history", "0")),
         repo_path=o.get("repo"),
         final_redecode=_bool_option(o.get("final_redecode"), True),
+        status_callback=settings.status_callback,
     )

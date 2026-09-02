@@ -1,0 +1,13 @@
+{
+  "recorded_at": "2026-09-02T07:09:10.222+00:00",
+  "text": "今天我要去咖啡店喝咖啡。",
+  "backend": "volcengine",
+  "model": "seedasr-streaming",
+  "error": "",
+  "latency_ms": 193.325,
+  "audio_duration_ms": 4100,
+  "schema_version": 1,
+  "id": "20260902T070910222Z_000011_9ec1a656",
+  "session_id": 11,
+  "audio_file": "utterance.wav"
+}

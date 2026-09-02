@@ -13,10 +13,22 @@ import sys
 import threading
 import uuid
 
-from PySide6.QtCore import QObject, Property, QCoreApplication, QSettings, QTimer, Signal, Slot
+from PySide6.QtCore import (
+    QObject,
+    Property,
+    QCoreApplication,
+    QSettings,
+    QTimer,
+    QUrl,
+    Signal,
+    Slot,
+)
+from PySide6.QtGui import QDesktopServices
+from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from ..asr import ASRBackendCache
 from ..app_runtime import (
+    DESKTOP_TEXT_INJECTION_SUPPORTED,
     WINDOWS_DESKTOP_INPUT_SUPPORTED,
     RecognitionRuntime,
     RuntimeSettings,
@@ -67,8 +79,8 @@ from ..voice_actions import (
     ACTION_REASON_ASR_ERROR,
     ACTION_REASON_LLM_ERROR,
     ACTION_REASON_OTHER,
-    ACTION_RETRY,
 )
+from ..voice_history import VoiceHistoryStore
 
 
 @dataclass
@@ -173,6 +185,8 @@ class AppController(QObject):
     statusChanged = Signal()
     transcriptChanged = Signal()
     sessionHistoryChanged = Signal()
+    voiceHistoryChanged = Signal()
+    playingVoiceChanged = Signal()
     interactionChanged = Signal()
     logChanged = Signal()
     settingsChanged = Signal()
@@ -187,6 +201,7 @@ class AppController(QObject):
     textProcessingChanged = Signal()
     localModelInstallationChanged = Signal()
     feedbackReasonChanged = Signal()
+    accessibilityChanged = Signal()
 
     _runtimeStatus = Signal(str)
     _runtimeConnected = Signal()
@@ -203,12 +218,14 @@ class AppController(QObject):
     _localModelInstallProgress = Signal(str, int, int)
     _localModelInstallFinished = Signal(object, str)
     _voiceActionRequested = Signal(str)
+    _voiceHistorySaved = Signal(object)
 
     def __init__(self) -> None:
         super().__init__()
         self._settings = QSettings("ProxiMic", "ProxiMic Voice")
         self._connected = False
         self._recognition_enabled = False
+        self._interaction_recognition_suspended = False
         self._busy = False
         self._scan_busy = False
         self._quitting = False
@@ -223,10 +240,11 @@ class AppController(QObject):
         self._transcript_final = False
         self._transcript_visible = False
         self._session_history_lines: list[str] = []
+        self._voice_history_entries: list[dict[str, object]] = []
+        self._playing_voice_path = ""
+        self._voice_history_closed = False
         self._interaction_state = "idle"
         self._edit_review: _EditReview | None = None
-        self._retry_snapshot: DesktopTextSnapshot | None = None
-        self._retry_target_armed = False
         self._pending_feedback_reason: _PendingFeedbackReason | None = None
         self._feedback_reason_visible = False
         self._log_lines: list[str] = []
@@ -318,6 +336,7 @@ class AppController(QObject):
         self._session_routing_modes: dict[int, str] = {}
         self._session_targets: dict[int, DesktopTargetRef | None] = {}
         self._desktop_target = None
+        self._macos_accessibility_trusted = sys.platform != "darwin"
         self._worker: threading.Thread | None = None
         self._runtime_active = False
         self._runtime_had_connection = False
@@ -352,6 +371,13 @@ class AppController(QObject):
         self._modification_dataset = ModificationDatasetCollector(
             app_data_root() / "dataset", anonymous_user_id
         )
+        self._voice_history = VoiceHistoryStore(
+            app_data_root() / "voice_history",
+            on_saved=self._voiceHistorySaved.emit,
+        )
+        self._voice_history_entries = self._voice_history.load_entries()
+        self._voice_audio_output: QAudioOutput | None = None
+        self._voice_player: QMediaPlayer | None = None
         assets = Path(__file__).resolve().parents[1] / "assets"
         default_model = assets / "ringo-near-v1.model"
         default_repo = project_root / "third_party" / "streaming-sensevoice"
@@ -437,10 +463,21 @@ class AppController(QObject):
                 str(self._settings.value("asr/funasrNanoHotwords", ""))
             )
         )
-        self._desktop_output = (
-            WINDOWS_DESKTOP_INPUT_SUPPORTED
-            and self._bool_setting("input/desktopOutput", True)
+        macos_output_migrated = self._bool_setting(
+            "input/macosDesktopOutputMigrated", False
         )
+        if sys.platform == "darwin" and not macos_output_migrated:
+            # Older macOS builds forced this setting off because no adapter
+            # existed. Enable the new native injector once, while preserving
+            # the user's choice after this migration marker is stored.
+            self._desktop_output = True
+            self._settings.setValue("input/desktopOutput", True)
+            self._settings.setValue("input/macosDesktopOutputMigrated", True)
+        else:
+            self._desktop_output = (
+                DESKTOP_TEXT_INJECTION_SUPPORTED
+                and self._bool_setting("input/desktopOutput", True)
+            )
         self._push_to_talk = (
             WINDOWS_DESKTOP_INPUT_SUPPORTED
             and self._bool_setting("input/pushToTalk", True)
@@ -481,6 +518,7 @@ class AppController(QObject):
             self._apply_local_model_install_finished
         )
         self._voiceActionRequested.connect(self._apply_voice_action)
+        self._voiceHistorySaved.connect(self._apply_voice_history_saved)
         self._text_processing_worker = TextProcessingWorker(
             on_result=self._textProcessed.emit,
             on_routing_result=self._inputModeRouted.emit,
@@ -489,6 +527,8 @@ class AppController(QObject):
                 error or "", latency
             ),
         )
+        if sys.platform == "darwin" and self._desktop_output:
+            QTimer.singleShot(1000, self._request_macos_accessibility)
 
     @staticmethod
     def _detect_compute_devices(
@@ -654,6 +694,14 @@ class AppController(QObject):
     def sessionHistoryText(self) -> str:
         return "\n\n".join(self._session_history_lines)
 
+    @Property("QVariantList", notify=voiceHistoryChanged)
+    def voiceHistoryEntries(self) -> list[dict[str, object]]:
+        return list(self._voice_history_entries)
+
+    @Property(str, notify=playingVoiceChanged)
+    def playingVoicePath(self) -> str:
+        return self._playing_voice_path
+
     @Property(str, notify=interactionChanged)
     def interactionState(self) -> str:
         return self._interaction_state
@@ -681,10 +729,7 @@ class AppController(QObject):
 
     @Property(str, notify=feedbackReasonChanged)
     def feedbackReasonPrompt(self) -> str:
-        pending = self._pending_feedback_reason
-        if pending is not None and pending.action == "cancel":
-            return "刚才为什么取消？"
-        return "刚才为什么重说？"
+        return "刚才为什么取消？"
 
     @Property(str, notify=logChanged)
     def logText(self) -> str:
@@ -898,11 +943,36 @@ class AppController(QObject):
 
     @desktopOutputEnabled.setter
     def desktopOutputEnabled(self, value: bool) -> None:
-        self._set_setting(
-            "_desktop_output",
-            bool(value) and WINDOWS_DESKTOP_INPUT_SUPPORTED,
-            "input/desktopOutput",
+        enabled = bool(value) and DESKTOP_TEXT_INJECTION_SUPPORTED
+        if enabled == self._desktop_output:
+            return
+        self._desktop_output = enabled
+        self._settings.setValue("input/desktopOutput", enabled)
+        self.settingsChanged.emit()
+        self.accessibilityChanged.emit()
+        if sys.platform == "darwin" and enabled:
+            QTimer.singleShot(0, self._request_macos_accessibility)
+
+    @Property(bool, notify=accessibilityChanged)
+    def macOSAccessibilityRequired(self) -> bool:
+        return (
+            sys.platform == "darwin"
+            and self._desktop_output
+            and not self._macos_accessibility_trusted
         )
+
+    @Slot()
+    def openMacOSAccessibilitySettings(self) -> None:
+        if sys.platform != "darwin":
+            return
+        self._request_macos_accessibility()
+        if not self._macos_accessibility_trusted:
+            QDesktopServices.openUrl(
+                QUrl(
+                    "x-apple.systempreferences:com.apple.preference.security"
+                    "?Privacy_Accessibility"
+                )
+            )
 
     @Property(bool, notify=settingsChanged)
     def pushToTalkEnabled(self) -> bool:
@@ -1235,6 +1305,8 @@ class AppController(QObject):
             self._modification_dataset.reset_runtime()
         except BaseException as exc:
             self._append_log(f"修改数据采集初始化失败：{exc}")
+        self._voice_history.reset_runtime()
+        self._interaction_recognition_suspended = False
 
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
@@ -1281,6 +1353,10 @@ class AppController(QObject):
 
     def _record_raw_attempt_audio(self, session_id: int, audio_16k) -> None:
         try:
+            self._voice_history.record_audio(session_id, audio_16k)
+        except BaseException as exc:
+            print(f"[voice-history] raw utterance audio was not queued: {exc}")
+        try:
             self._modification_dataset.record_audio(session_id, audio_16k)
         except BaseException as exc:
             print(f"[dataset] raw attempt audio was not saved: {exc}")
@@ -1289,6 +1365,7 @@ class AppController(QObject):
     def startRecognition(self) -> None:
         if not self._connected or self._busy or self._recognition_enabled:
             return
+        self._interaction_recognition_suspended = False
         self._recognition_event.set()
         self._recognition_enabled = True
         self.recognitionEnabledChanged.emit()
@@ -1299,11 +1376,31 @@ class AppController(QObject):
         self._set_status("自动监听中", detail, "running")
         self._append_log("语音识别已开启（设备保持连接）")
 
+    def _suspend_recognition_for_interaction(self) -> None:
+        """Close the runtime gate without changing the user's on/off choice."""
+        if self._recognition_enabled and self._recognition_event.is_set():
+            self._interaction_recognition_suspended = True
+            self._recognition_event.clear()
+
+    def _resume_recognition_after_interaction(self) -> None:
+        if not self._interaction_recognition_suspended:
+            return
+        self._interaction_recognition_suspended = False
+        if (
+            self._connected
+            and self._recognition_enabled
+            and not self._quitting
+            and not self._disconnect_event.is_set()
+        ):
+            self._recognition_event.set()
+            self._append_log("当前语句处理完成，已恢复下一段语音识别")
+
     @Slot()
     def pauseRecognition(self) -> None:
         if not self._connected or not self._recognition_enabled:
             return
         self._recognition_event.clear()
+        self._interaction_recognition_suspended = False
         self._session_input_modes.clear()
         self._session_routing_modes.clear()
         self._recognition_enabled = False
@@ -1329,6 +1426,7 @@ class AppController(QObject):
         self._session_input_modes.clear()
         self._session_routing_modes.clear()
         self._recognition_event.clear()
+        self._interaction_recognition_suspended = False
         if self._recognition_enabled:
             self._recognition_enabled = False
             self.recognitionEnabledChanged.emit()
@@ -1354,6 +1452,76 @@ class AppController(QObject):
             return
         self._session_history_lines.clear()
         self.sessionHistoryChanged.emit()
+
+    @Slot()
+    def clearVoiceHistory(self) -> None:
+        if self._voice_player is not None:
+            self._voice_player.stop()
+        self._playing_voice_path = ""
+        self.playingVoiceChanged.emit()
+        try:
+            self._voice_history.clear()
+        except BaseException as exc:
+            self._append_log(f"逐句语音记录清空失败：{exc}")
+            return
+        self._voice_history_entries.clear()
+        self.voiceHistoryChanged.emit()
+        self._append_log("逐句语音记录已清空")
+
+    @Slot(str)
+    def playVoiceHistory(self, audio_path: str) -> None:
+        path = Path(str(audio_path)).expanduser()
+        try:
+            resolved = path.resolve(strict=True)
+            history_root = (app_data_root() / "voice_history").resolve()
+            resolved.relative_to(history_root)
+        except (OSError, ValueError):
+            self._append_log("无法播放：语音记录文件不存在或路径无效")
+            return
+        player = self._ensure_voice_player()
+        if (
+            self._playing_voice_path == str(resolved)
+            and player.playbackState()
+            == QMediaPlayer.PlaybackState.PlayingState
+        ):
+            player.stop()
+            return
+        player.setSource(QUrl.fromLocalFile(str(resolved)))
+        self._playing_voice_path = str(resolved)
+        self.playingVoiceChanged.emit()
+        player.play()
+
+    def _ensure_voice_player(self) -> QMediaPlayer:
+        if self._voice_player is not None:
+            return self._voice_player
+        self._voice_audio_output = QAudioOutput(self)
+        self._voice_player = QMediaPlayer(self)
+        self._voice_player.setAudioOutput(self._voice_audio_output)
+        self._voice_player.playbackStateChanged.connect(
+            self._apply_voice_playback_state
+        )
+        self._voice_player.errorOccurred.connect(self._apply_voice_playback_error)
+        return self._voice_player
+
+    @Slot(object)
+    def _apply_voice_history_saved(self, entry: object) -> None:
+        if not isinstance(entry, dict):
+            return
+        self._voice_history_entries.insert(0, dict(entry))
+        del self._voice_history_entries[100:]
+        self.voiceHistoryChanged.emit()
+
+    def _apply_voice_playback_state(self, state) -> None:
+        if state == QMediaPlayer.PlaybackState.StoppedState and self._playing_voice_path:
+            self._playing_voice_path = ""
+            self.playingVoiceChanged.emit()
+
+    def _apply_voice_playback_error(self, error, error_string: str = "") -> None:
+        if error == QMediaPlayer.Error.NoError:
+            return
+        player_error = self._voice_player.errorString() if self._voice_player else ""
+        detail = str(error_string or player_error).strip()
+        self._append_log(f"语音记录播放失败：{detail or error}")
 
     @Slot()
     def clearLog(self) -> None:
@@ -1445,6 +1613,7 @@ class AppController(QObject):
         if self._quitting:
             # A second close/Ctrl+C is an explicit request not to wait for
             # graceful device cleanup any longer.
+            self._close_voice_history()
             QCoreApplication.quit()
             return
         self._quitting = True
@@ -1456,6 +1625,7 @@ class AppController(QObject):
         if self._worker is not None and self._worker.is_alive():
             self._quit_timer.start()
         else:
+            self._close_voice_history()
             QCoreApplication.quit()
 
     @Slot(bool)
@@ -1474,7 +1644,16 @@ class AppController(QObject):
             or self._quit_wait_ticks >= 50
         ):
             self._quit_timer.stop()
+            self._close_voice_history()
             QCoreApplication.quit()
+
+    def _close_voice_history(self) -> None:
+        if self._voice_history_closed:
+            return
+        self._voice_history_closed = True
+        if self._voice_player is not None:
+            self._voice_player.stop()
+        self._voice_history.close(wait=True)
 
     @Slot(object, str)
     def _apply_scan_finished(self, devices: object, error: str) -> None:
@@ -1568,6 +1747,15 @@ class AppController(QObject):
 
     # Worker event application --------------------------------------------------
     def _publish_update(self, update) -> None:
+        if bool(getattr(update, "is_final", False)):
+            # This callback runs in the recognition thread. Clear the physical
+            # gate before posting the final into Qt so another utterance cannot
+            # begin while routing, text processing, injection, or review runs.
+            self._suspend_recognition_for_interaction()
+            try:
+                self._voice_history.record_final(update)
+            except BaseException as exc:
+                print(f"[voice-history] final utterance was not queued: {exc}")
         try:
             self._modification_dataset.record_asr_update(update)
         except BaseException as exc:
@@ -1596,6 +1784,12 @@ class AppController(QObject):
             self._set_status("设备已连接", summary, "starting")
         elif summary.startswith("正在加载语音模型"):
             self._set_status("正在加载语音模型", summary, "starting")
+        elif summary.startswith("正在检查并下载 ASR 模型参数"):
+            self._set_status("正在下载模型参数", summary, "starting")
+        elif summary.startswith("正在读取本地 ASR 模型参数"):
+            self._set_status("正在读取模型参数", summary, "starting")
+        elif summary.startswith("ASR 模型参数已载入"):
+            self._set_status("模型参数已载入", summary, "starting")
         elif summary.startswith("正在复用已加载语音模型"):
             self._set_status("正在复用语音模型", summary, "starting")
         elif summary.startswith("正在准备实时识别"):
@@ -1634,6 +1828,7 @@ class AppController(QObject):
         was_recognizing = self._recognition_enabled
         self._connected = False
         self._recognition_enabled = False
+        self._interaction_recognition_suspended = False
         self._ptt_active = False
         if was_connected:
             self.connectedChanged.emit()
@@ -1678,6 +1873,8 @@ class AppController(QObject):
     ) -> None:
         if self._status_kind == "stopping":
             return
+        if is_final:
+            self._suspend_recognition_for_interaction()
         # A review is modal at the interaction layer even though its overlay
         # never steals focus.  Stray proximity activations must not replace the
         # preview or start another LLM edit before the user chooses an action.
@@ -1696,9 +1893,13 @@ class AppController(QObject):
             self.transcriptChanged.emit()
             self._hide_overlay_timer.start(3500)
             self._append_log(f"ASR 错误：{error}")
+            self._resume_recognition_after_interaction()
             return
         text = text.strip()
         if not text:
+            if is_final:
+                self._append_log("本段语音已结束，但没有识别出文字")
+                self._resume_recognition_after_interaction()
             return
         normalized_session_id = int(session_id)
         if normalized_session_id:
@@ -1760,13 +1961,10 @@ class AppController(QObject):
             return
         if self._edit_review is not None:
             self._reject_edit_request(
-                "上一条修改仍在等待确认，请先确认、取消或选择重说"
+                "上一条修改仍在等待确认，请先确认或取消"
             )
             return
-        retrying_same_target = self._retry_target_armed
-        snapshot = self._retry_snapshot if retrying_same_target else None
-        if not retrying_same_target:
-            self._retry_snapshot = None
+        snapshot = None
         if snapshot is None:
             if target is None:
                 self._reject_edit_request(
@@ -1784,9 +1982,6 @@ class AppController(QObject):
                     pass
                 self._reject_edit_request(str(exc))
                 return
-        else:
-            self._retry_snapshot = None
-            self._retry_target_armed = False
         self._submit_text_processing(
             text,
             session_id,
@@ -1878,6 +2073,7 @@ class AppController(QObject):
         self._record_history("修改 · 未执行", detail=message)
         if self._recognition_enabled:
             self._set_status("自动监听中", message, "running")
+        self._resume_recognition_after_interaction()
 
     def _submit_text_processing(
         self,
@@ -2078,6 +2274,8 @@ class AppController(QObject):
         text = result.final_text
         final_text = str(text or "").strip()
         if not final_text:
+            self._append_log("文本处理完成，但没有可注入的文字")
+            self._resume_recognition_after_interaction()
             return
         self._transcript_text = final_text
         self._transcript_final = True
@@ -2111,6 +2309,7 @@ class AppController(QObject):
         )
         if self._recognition_enabled:
             self._set_status("自动监听中", "输入完成，等待下一段语音", "running")
+        self._resume_recognition_after_interaction()
 
     def _begin_edit_review(
         self,
@@ -2132,7 +2331,6 @@ class AppController(QObject):
                 snapshot,
             )
             return
-        self._retry_snapshot = None
         self._edit_review = _EditReview(
             request_id=result.request_id,
             session_id=result.session_id,
@@ -2147,7 +2345,7 @@ class AppController(QObject):
         review_lines = [f"修改指令：{result.raw_text}"]
         if not proposed:
             review_lines.append("⚠ 确认后将清空目标文本框")
-        review_lines.append("Enter 确认  ·  Esc 取消  ·  按住右 Alt 重说")
+        review_lines.append("Enter 确认  ·  Esc 取消")
         self._transcript_text = "\n".join(review_lines)
         self._transcript_final = True
         self._transcript_visible = True
@@ -2165,7 +2363,7 @@ class AppController(QObject):
             ),
         )
         if proposed:
-            self._append_log("修改预览已生成，等待确认、取消或重说指令")
+            self._append_log("修改预览已生成，等待确认或取消")
         else:
             self._append_log("清空文本预览已生成，等待 Enter 确认或 Esc 取消")
         if self._recognition_enabled:
@@ -2189,8 +2387,6 @@ class AppController(QObject):
             )
         except BaseException as exc:
             self._append_log(f"修改数据 LLM 失败状态保存失败：{exc}")
-        self._retry_snapshot = None
-        self._retry_target_armed = False
         self._edit_review = _EditReview(
             request_id=result.request_id,
             session_id=result.session_id,
@@ -2204,7 +2400,7 @@ class AppController(QObject):
             (
                 "大模型修改失败，原文本保持不变",
                 error,
-                "Esc 取消  ·  按住右 Alt 重说",
+                "Esc 取消",
             )
         )
         self._transcript_final = True
@@ -2218,11 +2414,11 @@ class AppController(QObject):
             raw=result.raw_text,
             detail=error,
         )
-        self._append_log("大模型修改失败，等待用户重说或取消")
+        self._append_log("大模型修改失败，等待用户取消")
         if self._recognition_enabled:
             self._set_status(
                 "大模型修改失败",
-                "原文本未改变；请重说修改要求或取消",
+                "原文本未改变；请取消本次修改",
                 "error",
             )
 
@@ -2306,41 +2502,6 @@ class AppController(QObject):
             else:
                 self._offer_feedback_reason(review.request_id, "cancel")
 
-    @Slot()
-    def retryEdit(self) -> None:
-        review = self._edit_review
-        if review is None:
-            return
-        self._clear_feedback_reason()
-        feedback_saved = False
-        try:
-            self._modification_dataset.feedback(review.request_id, "retry")
-            feedback_saved = True
-        except BaseException as exc:
-            self._append_log(f"修改数据重说反馈保存失败：{exc}")
-        self._retry_snapshot = review.snapshot
-        self._retry_target_armed = True
-        self._edit_review = None
-        self._edit_preview_html = ""
-        self.inputMode = INPUT_MODE_EDIT
-        self._transcript_text = "请重新说修改要求\n原文本保持不变"
-        self._transcript_final = False
-        self._transcript_visible = True
-        self._hide_overlay_timer.stop()
-        self._set_interaction_state("retry")
-        self.transcriptChanged.emit()
-        self.interactionChanged.emit()
-        self._record_history("修改 · 等待重说", raw=review.instruction)
-        if self._recognition_enabled:
-            self._set_status("请重说修改要求", "下一段语音仍然修改同一个文本框", "manual")
-        if feedback_saved:
-            if review.failure_error:
-                self._mark_automatic_llm_failure_reason(
-                    review.request_id, "retry"
-                )
-            else:
-                self._offer_feedback_reason(review.request_id, "retry")
-
     def _mark_automatic_llm_failure_reason(
         self, request_id: int, action: str
     ) -> None:
@@ -2355,9 +2516,8 @@ class AppController(QObject):
             self._append_log(f"大模型失败原因自动保存失败：{exc}")
             return
         if saved:
-            action_label = "重说" if action == "retry" else "取消"
             self._append_log(
-                f"已自动标记本次{action_label}原因："
+                "已自动标记本次取消原因："
                 f"{FEEDBACK_REASON_LABELS['llm_error']}"
             )
 
@@ -2381,14 +2541,11 @@ class AppController(QObject):
             saved = False
         if saved:
             label = FEEDBACK_REASON_LABELS.get(normalized_reason, normalized_reason)
-            action_label = "重说" if pending.action == "retry" else "取消"
-            self._append_log(f"已标记本次{action_label}原因：{label}")
+            self._append_log(f"已标记本次取消原因：{label}")
         self._clear_feedback_reason()
 
     def _offer_feedback_reason(self, request_id: int, action: str) -> None:
         # Always create a short, renderable gap before showing the next prompt.
-        # A retry can replace an older unmarked retry in one Qt event-loop turn;
-        # without this gap the Window never visibly closes and appears stale.
         self._pending_feedback_reason = _PendingFeedbackReason(
             request_id=int(request_id), action=str(action)
         )
@@ -2454,8 +2611,6 @@ class AppController(QObject):
             self.confirmEdit()
         elif action == ACTION_CANCEL:
             self.cancelEdit()
-        elif action == ACTION_RETRY:
-            self.retryEdit()
         elif action == ACTION_REASON_ASR_ERROR:
             self.selectFeedbackReason("asr_error")
         elif action == ACTION_REASON_LLM_ERROR:
@@ -2466,8 +2621,6 @@ class AppController(QObject):
     def _finish_edit_review(self, *, message: str, state: str, hide_ms: int) -> None:
         self._edit_review = None
         self._edit_preview_html = ""
-        self._retry_snapshot = None
-        self._retry_target_armed = False
         self._transcript_text = message
         self._transcript_final = True
         self._transcript_visible = True
@@ -2478,17 +2631,46 @@ class AppController(QObject):
         self._append_log(message)
         if self._recognition_enabled:
             self._set_status("自动监听中", message, "running")
+        self._resume_recognition_after_interaction()
 
     def _desktop_target_adapter(self):
         if self._desktop_target is None:
-            from ..desktop_target import WindowsDesktopTextTarget
-            from .clipboard import QtClipboardBridge
+            if sys.platform == "darwin":
+                from ..desktop_target import MacOSDesktopTextTarget
+                from .clipboard import QtClipboardBridge
 
-            self._desktop_target = WindowsDesktopTextTarget(QtClipboardBridge())
+                self._desktop_target = MacOSDesktopTextTarget(QtClipboardBridge())
+            else:
+                from ..desktop_target import WindowsDesktopTextTarget
+                from .clipboard import QtClipboardBridge
+
+                self._desktop_target = WindowsDesktopTextTarget(QtClipboardBridge())
         return self._desktop_target
 
+    def _request_macos_accessibility(self) -> None:
+        if sys.platform != "darwin" or not self._desktop_output:
+            return
+        try:
+            trusted = self._desktop_target_adapter().request_accessibility(
+                prompt=True
+            )
+        except BaseException as exc:
+            self._append_log(f"macOS 辅助功能权限检查失败：{exc}")
+            return
+        changed = trusted != self._macos_accessibility_trusted
+        self._macos_accessibility_trusted = trusted
+        if changed:
+            self.accessibilityChanged.emit()
+        if trusted:
+            self._append_log("macOS 辅助功能权限已就绪，可听写和编辑当前文本框")
+        else:
+            self._append_log(
+                "macOS 尚未授予辅助功能权限；请在系统设置的“隐私与安全性 → "
+                "辅助功能”中允许 Proximic Voice，然后重启应用"
+            )
+
     def _capture_desktop_reference(self) -> DesktopTargetRef | None:
-        if not self._desktop_output or not WINDOWS_DESKTOP_INPUT_SUPPORTED:
+        if not self._desktop_output or not DESKTOP_TEXT_INJECTION_SUPPORTED:
             return None
         try:
             return self._desktop_target_adapter().capture_reference()
@@ -2564,8 +2746,6 @@ class AppController(QObject):
                 pass
             self._edit_review = None
             self._edit_preview_html = ""
-            self._retry_snapshot = None
-            self._retry_target_armed = False
             self._set_interaction_state("idle")
             self.interactionChanged.emit()
 
@@ -2577,6 +2757,7 @@ class AppController(QObject):
         self._runtime_active = False
         self._connected = False
         self._recognition_enabled = False
+        self._interaction_recognition_suspended = False
         self._busy = False
         self._ptt_active = False
         self._worker = None
@@ -2607,10 +2788,6 @@ class AppController(QObject):
             return
         self._ptt_active = bool(active)
         if active:
-            if self._edit_review is not None:
-                # Reusing the same hold-to-talk gesture is the simplest retry
-                # interaction and maps directly to a future Ring gesture.
-                self.retryEdit()
             self._set_status("按键监听中", "松开后恢复自动控制", "manual")
         elif self._recognition_enabled:
             self._set_status("自动监听中", "已恢复靠近检测", "running")
@@ -2618,7 +2795,7 @@ class AppController(QObject):
     def _hide_transcript(self) -> None:
         self._transcript_visible = False
         self._transcript_mode = ""
-        if self._edit_review is None and self._interaction_state not in {"retry", "processing"}:
+        if self._edit_review is None and self._interaction_state != "processing":
             self._set_interaction_state("idle")
         self.transcriptChanged.emit()
 

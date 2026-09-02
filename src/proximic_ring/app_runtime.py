@@ -13,6 +13,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import sys
 import threading
 from typing import Callable
 
@@ -31,6 +32,9 @@ if os.name == "nt":
 
 
 WINDOWS_DESKTOP_INPUT_SUPPORTED = os.name == "nt"
+DESKTOP_TEXT_INJECTION_SUPPORTED = (
+    WINDOWS_DESKTOP_INPUT_SUPPORTED or sys.platform == "darwin"
+)
 
 
 def normalize_funasr_nano_hotwords(value: str) -> tuple[str, ...]:

@@ -361,6 +361,7 @@ def _build_session_controller(
             device=args.asr_device,
             language=args.asr_language,
             options=option_map.get(name, {}),
+            status_callback=on_state,
         )
         kind = asr_backend_kind(name)
         backend = (

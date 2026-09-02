@@ -70,6 +70,7 @@ SMOKE_LOG="$SMOKE_DATA_ROOT/logs/startup.log"
 if [[ ! -f "$SMOKE_LOG" ]] \
     || ! grep -q "bundled Opus decoder ready" "$SMOKE_LOG" \
     || ! grep -q "bundled QML files ready" "$SMOKE_LOG" \
+    || ! grep -q "macOS desktop injection bridge ready" "$SMOKE_LOG" \
     || ! grep -q "QML root window ready" "$SMOKE_LOG" \
     || ! grep -q "packaged ASR imports ready" "$SMOKE_LOG"; then
     echo "macOS packaged application did not complete its startup probe." >&2

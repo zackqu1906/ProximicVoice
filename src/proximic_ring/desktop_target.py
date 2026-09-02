@@ -11,11 +11,12 @@ from __future__ import annotations
 import ctypes
 from dataclasses import dataclass
 import os
+import sys
 import time
 from typing import Protocol
 import uuid
 
-from .desktop_output import WindowsUnicodeTextInjector
+from .desktop_output import MacOSUnicodeTextInjector, WindowsUnicodeTextInjector
 from .windows_uia import UIATextControlRef, WindowsUIATextBridge
 
 
@@ -54,6 +55,140 @@ class DesktopTextTarget(Protocol):
     def inject(self, target: DesktopTargetRef, text: str) -> None: ...
     def replace(self, snapshot: DesktopTextSnapshot, text: str) -> None: ...
     def release_selection(self, target: DesktopTargetRef) -> None: ...
+
+
+class MacOSDesktopTextTarget:
+    """Read and update the locked macOS text control with native shortcuts."""
+
+    KEY_A = 0
+    KEY_C = 8
+    KEY_DELETE = 51
+    KEY_RIGHT = 124
+
+    def __init__(
+        self,
+        clipboard: ClipboardBridge,
+        *,
+        injector: MacOSUnicodeTextInjector | None = None,
+        copy_timeout_s: float = 0.8,
+        copy_attempts: int = 3,
+        focus_settle_s: float = 0.12,
+        shortcut_settle_s: float = 0.05,
+    ) -> None:
+        if sys.platform != "darwin":
+            raise RuntimeError("macOS desktop target requires macOS")
+        self._clipboard = clipboard
+        self._injector = injector or MacOSUnicodeTextInjector()
+        self._copy_timeout_s = max(0.2, float(copy_timeout_s))
+        self._copy_attempts = max(1, int(copy_attempts))
+        self._focus_settle_s = max(0.05, float(focus_settle_s))
+        self._shortcut_settle_s = max(0.02, float(shortcut_settle_s))
+
+    @staticmethod
+    def _frontmost_application() -> tuple[int, str]:
+        try:
+            from AppKit import NSWorkspace
+
+            application = NSWorkspace.sharedWorkspace().frontmostApplication()
+            if application is None:
+                return 0, "当前光标"
+            return int(application.processIdentifier()), str(
+                application.localizedName() or "当前光标"
+            )
+        except BaseException:
+            return 0, "当前光标"
+
+    def capture_reference(self) -> DesktopTargetRef:
+        process_id, name = self._frontmost_application()
+        return DesktopTargetRef(
+            window_handle=0,
+            control_handle=0,
+            window_title=name,
+            process_id=process_id,
+            process_name=name,
+        )
+
+    def request_accessibility(self, *, prompt: bool = True) -> bool:
+        return self._injector.is_trusted(prompt=prompt)
+
+    def capture_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
+        self._injector.require_accessibility()
+        clipboard_snapshot = self._clipboard.snapshot()
+        text = ""
+        try:
+            for attempt in range(self._copy_attempts):
+                self._activate(target)
+                sentinel = f"__PROXIMIC_COPY_{uuid.uuid4().hex}__"
+                self._clipboard.set_text(sentinel)
+                self._injector.command_key(self.KEY_A)
+                time.sleep(self._shortcut_settle_s)
+                self._injector.command_key(self.KEY_C)
+                deadline = time.monotonic() + self._copy_timeout_s
+                while time.monotonic() < deadline:
+                    candidate = str(self._clipboard.text() or "")
+                    if candidate and candidate != sentinel:
+                        text = candidate
+                        break
+                    time.sleep(0.01)
+                if text:
+                    break
+                if attempt + 1 < self._copy_attempts:
+                    time.sleep(0.05)
+        finally:
+            self._clipboard.restore(clipboard_snapshot)
+        if not text:
+            raise RuntimeError(
+                "多次复制后仍未读取到文本；请确认光标位于可编辑文本框且内容非空"
+            )
+        return DesktopTextSnapshot(target=target, text=text)
+
+    def inject(self, target: DesktopTargetRef, text: str) -> None:
+        self._activate(target)
+        self._injector.inject(text)
+
+    def replace(self, snapshot: DesktopTextSnapshot, text: str) -> None:
+        self._activate(snapshot.target)
+        self._injector.command_key(self.KEY_A)
+        time.sleep(self._shortcut_settle_s)
+        replacement = str(text or "")
+        if replacement:
+            self._injector.inject(replacement)
+        else:
+            self._injector.press_key(self.KEY_DELETE)
+
+    def release_selection(self, target: DesktopTargetRef) -> None:
+        try:
+            self._activate(target)
+            self._injector.press_key(self.KEY_RIGHT)
+        except BaseException:
+            return
+
+    def _activate(self, target: DesktopTargetRef) -> None:
+        if not target.process_id or target.process_id == os.getpid():
+            raise RuntimeError("请先把光标放入另一个应用的文本框，再开始听写")
+        try:
+            from AppKit import (
+                NSApplicationActivateAllWindows,
+                NSApplicationActivateIgnoringOtherApps,
+                NSRunningApplication,
+            )
+
+            application = NSRunningApplication.runningApplicationWithProcessIdentifier_(
+                int(target.process_id)
+            )
+            if application is None:
+                raise RuntimeError("原文本应用已经关闭")
+            activated = application.activateWithOptions_(
+                NSApplicationActivateAllWindows
+                | NSApplicationActivateIgnoringOtherApps
+            )
+            if not activated:
+                raise RuntimeError("无法重新激活原文本应用")
+        except RuntimeError:
+            raise
+        except BaseException as exc:
+            raise RuntimeError("无法重新激活原文本应用") from exc
+        time.sleep(self._focus_settle_s)
 
 
 if os.name == "nt":

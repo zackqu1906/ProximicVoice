@@ -6,7 +6,7 @@ Windows 用户下载 `.exe`，Apple Silicon macOS 用户下载 `.dmg`；首次�
 
 ProxiMic Voice 是面向 Ringo 可穿戴设备的近场语音输入与语音编辑桌面应用。
 它持续接收 Ring 麦克风音频，用 ProxiMic 两阶段模型判断“是否有人贴近设备说话”，
-只把命中的语音片段交给 ASR，并在 Windows 中完成跨应用听写、文本修改和确认写回。
+只把命中的语音片段交给 ASR，并在 Windows 和 macOS 中完成跨应用听写、文本修改和确认写回。
 
 项目同时保留了完整的命令行、数据采集、模型训练和多 ASR 对比能力，既可以作为桌面产品使用，
 也可以作为近场、低声和耳语识别实验平台继续开发。
@@ -93,8 +93,9 @@ Developer ID 签名并通过 Apple 公证；开发者本地未配置证书时生
 "/Applications/Proximic Voice.app/Contents/MacOS/ProximicVoice"
 ```
 
-macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI；Windows 专用的全局快捷键、跨应用
-文本读取和写回目前不在 macOS 上提供。
+macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI，并可通过辅助功能权限听写或修改当前
+文本框；编辑预览可在外部应用上方保持显示，并支持全局 `Enter` 确认、`Esc` 取消。
+右 `Alt` 按住说话和模式切换快捷键仍仅在 Windows 上提供。
 
 ## 当前可以做什么
 
@@ -152,8 +153,9 @@ Ring、ProxiMic、ASR、LLM 和桌面写入彼此解耦。更换 ASR 或 LLM 不
 
 ## 当前边界
 
-- 完整的跨应用输入、文本读取、全局快捷键和修改确认目前只支持 Windows。
-- macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI，但不支持 Windows 全局快捷键与跨应用文字注入。
+- Windows 和 macOS 均支持跨应用听写、读取当前文本、修改预览和确认写回。
+- macOS 支持编辑预览时全局 `Enter` 确认和 `Esc` 取消，但不支持 Windows 的右 `Alt`
+  按住说话、`Alt+1/Alt+2` 模式切换及反馈原因快捷键。
 - 当前没有内置降噪；Ring PCM 会直接进入 ProxiMic 和 ASR。
 - Fun-ASR 热词属于识别提示，不是强制字典。过多、过短或常见的热词可能错误吸附无关语音。
 - 当前保存的是每次 Ring 麦克风连接期间的连续 WAV，不会自动把每条 ASR 语句单独导出并标注。
@@ -215,15 +217,17 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 4. 点击“开启语音识别”。这会启动自动近场监听，不会断开或重连 Ring。
 5. 把光标放进其他应用的文本框。
 6. 使用 `Alt+1` 选择“输入到光标”，或使用 `Alt+2` 选择“修改当前文本”。
-7. 修改预览被重说或取消后，可在右侧提示出现的 10 秒内按 `Alt+A` 标记
+7. 修改预览被取消后，可在右侧提示出现的 10 秒内按 `Alt+A` 标记
    语音识别错误、`Alt+L` 标记大模型理解错误，或按 `Alt+O` 标记其他原因；不选择
    就不会给该 Attempt 添加原因标签。
 8. 输入模式可通过按钮选择是否再由文本 LLM 整理；按住右 `Alt` 说话，松开后等待处理完成。
 9. 修改模式出现确认状态后，按 `Enter` 应用或按 `Esc` 取消。
 
-如果大模型没有返回可用的编辑结果，悬浮窗会持续显示具体错误，只允许取消或重说，
-不会修改原文本。重说会继续当前 Episode，并自动把失败 Attempt 标记为
-`llm_error`；下一次成功确认后再结束整个 Episode。
+如果大模型没有返回可用的编辑结果，悬浮窗会持续显示具体错误，只允许取消，
+不会修改原文本。取消会结束本次 Attempt，并自动标记已知的 `llm_error`。
+
+每段语音结束后，主界面的“逐句语音记录”会显示最终裁剪录音和 ASR 文字，可直接播放；
+记录保存在当前用户的应用数据目录，重新打开应用后仍可查看。录音写盘在后台完成。
 
 “暂停语音识别”只暂停 ProxiMic 和 ASR，Ring 仍保持连接；“断开设备”才会释放麦克风和 BLE。
 
@@ -377,8 +381,11 @@ macOS 使用项目内独立 Python 环境和缓存：
 PROXIMIC_PYTHON=/opt/homebrew/bin/python3.11 ./scripts/setup-macos.sh
 ```
 
-首次连接 Ring 时，需要允许 Terminal 或 Python 使用蓝牙。当前 macOS 路径使用 CPU，
-支持 Ring、ProxiMic、ASR 和界面验证，但不提供 Windows 的右 Alt 全局控制、外部文本读取和注入。
+首次连接 Ring 时，需要允许 Terminal 或 Python 使用蓝牙。跨应用听写和编辑还必须在
+“系统设置 → 隐私与安全性 → 辅助功能”中允许 Terminal/Python（源码启动）或
+Proximic Voice（安装包启动），授权后重启程序。当前 macOS 路径使用 CPU，支持 Ring、
+ProxiMic、ASR、失焦后仍可见的悬浮窗、外部文本读取和注入；不提供 Windows 的右 Alt
+按住说话与模式切换快捷键。
 Windows 默认本地 LLM 包中的 `llama-server.exe` 也不能直接用于 macOS。
 
 ## 命令行与实验

@@ -57,6 +57,20 @@ def main(argv: list[str] | None = None) -> int:
             app.aboutToQuit.connect(voice_action_hotkeys.close)
         except BaseException as exc:
             print(f"[voice-actions] 全局交互快捷键不可用：{exc}", file=sys.stderr)
+    elif sys.platform == "darwin":
+        try:
+            from ..voice_actions import MacOSVoiceActionHotkeys
+
+            voice_action_hotkeys = MacOSVoiceActionHotkeys(
+                controller.dispatchVoiceAction,
+                is_review_active=lambda: controller.reviewPending,
+            )
+            app.aboutToQuit.connect(voice_action_hotkeys.close)
+        except BaseException as exc:
+            print(
+                f"[voice-actions] macOS 编辑确认键不可用：{exc}",
+                file=sys.stderr,
+            )
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("appController", controller)
     qml_errors: list[str] = []

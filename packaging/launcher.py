@@ -119,6 +119,14 @@ def run() -> int:
         if package_self_check:
             if is_frozen():
                 _verify_bundled_qml_runtime(resource_root())
+            if sys.platform == "darwin":
+                from proximic_ring.desktop_output import MacOSUnicodeTextInjector
+
+                macos_injector = MacOSUnicodeTextInjector()
+                print(
+                    "[startup] macOS desktop injection bridge ready; "
+                    f"accessibility_trusted={macos_injector.is_trusted(prompt=False)}"
+                )
             os.environ["PROXIMIC_STARTUP_PROBE"] = "1"
             os.environ["QT_QPA_PLATFORM"] = "offscreen"
             print("[startup] bundled QML files ready")

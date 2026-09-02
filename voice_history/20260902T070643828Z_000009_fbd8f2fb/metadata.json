@@ -1,0 +1,13 @@
+{
+  "recorded_at": "2026-09-02T07:06:43.828+00:00",
+  "text": "",
+  "backend": "volcengine",
+  "model": "seedasr-streaming",
+  "error": "",
+  "latency_ms": 1141.633,
+  "audio_duration_ms": 2540,
+  "schema_version": 1,
+  "id": "20260902T070643828Z_000009_fbd8f2fb",
+  "session_id": 9,
+  "audio_file": "utterance.wav"
+}

@@ -1,0 +1,13 @@
+{
+  "recorded_at": "2026-09-02T07:09:17.342+00:00",
+  "text": "但是今天晚上不想去了。",
+  "backend": "volcengine",
+  "model": "seedasr-streaming",
+  "error": "",
+  "latency_ms": 238.943,
+  "audio_duration_ms": 3580,
+  "schema_version": 1,
+  "id": "20260902T070917342Z_000012_ed90f654",
+  "session_id": 12,
+  "audio_file": "utterance.wav"
+}

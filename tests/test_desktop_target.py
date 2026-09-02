@@ -1,11 +1,88 @@
 from __future__ import annotations
 
+import os
+import sys
+
+import pytest
+
 from proximic_ring.desktop_target import (
     DesktopTargetRef,
     DesktopTextSnapshot,
+    MacOSDesktopTextTarget,
     WindowsDesktopTextTarget,
 )
 from proximic_ring.windows_uia import UIATextControlRef, WindowsUIATextBridge
+
+
+def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class Clipboard:
+        def __init__(self) -> None:
+            self.value = "用户原剪贴板"
+
+        def snapshot(self):
+            return self.value
+
+        def restore(self, snapshot):
+            self.value = snapshot
+            calls.append(("restore", snapshot))
+
+        def set_text(self, text):
+            self.value = text
+
+        def text(self):
+            return self.value
+
+    clipboard = Clipboard()
+
+    class Injector:
+        def is_trusted(self, *, prompt=False):
+            calls.append(("trusted", prompt))
+            return True
+
+        def require_accessibility(self):
+            calls.append("accessibility")
+
+        def command_key(self, key):
+            calls.append(("command", key))
+            if key == MacOSDesktopTextTarget.KEY_C:
+                clipboard.value = "外部文本框内容"
+
+        def inject(self, text: str) -> None:
+            calls.append(("inject", text))
+
+        def press_key(self, key):
+            calls.append(("press", key))
+
+    adapter = MacOSDesktopTextTarget(
+        clipboard,
+        injector=Injector(),
+        shortcut_settle_s=0.02,
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "TextEdit"))
+    target = adapter.capture_reference()
+    monkeypatch.setattr(adapter, "_activate", lambda value: calls.append(("activate", value)))
+
+    assert adapter.request_accessibility(prompt=True) is True
+    snapshot = adapter.capture_text(target)
+    adapter.inject(target, "听写内容")
+    adapter.replace(snapshot, "修改后内容")
+    adapter.replace(snapshot, "")
+
+    assert snapshot == DesktopTextSnapshot(target, "外部文本框内容")
+    assert clipboard.value == "用户原剪贴板"
+    assert ("inject", "听写内容") in calls
+    assert ("inject", "修改后内容") in calls
+    assert ("press", MacOSDesktopTextTarget.KEY_DELETE) in calls
+
+
+def test_macos_target_rejects_own_process() -> None:
+    adapter = object.__new__(MacOSDesktopTextTarget)
+    target = DesktopTargetRef(0, 0, "Proximic Voice", process_id=os.getpid())
+    with pytest.raises(RuntimeError, match="另一个应用"):
+        adapter._activate(target)
 
 
 def test_capture_retries_transient_empty_clipboard_and_restores_original() -> None:

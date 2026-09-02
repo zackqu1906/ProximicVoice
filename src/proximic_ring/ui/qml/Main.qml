@@ -283,7 +283,8 @@ ApplicationWindow {
                 id: voiceInputCard
                 objectName: "voiceInputCard"
                 Layout.fillWidth: true
-                Layout.preferredHeight: appController.reviewPending ? 420 : 380
+                Layout.preferredHeight: (appController.reviewPending ? 420 : 380)
+                                        + (appController.macOSAccessibilityRequired ? 78 : 0)
                 radius: 22
                 color: root.panel
                 border.color: root.border
@@ -293,14 +294,43 @@ ApplicationWindow {
                     anchors.margins: 22
                     spacing: 9
 
+                    Rectangle {
+                        Layout.fillWidth: true
+                        Layout.preferredHeight: 68
+                        visible: appController.macOSAccessibilityRequired
+                        radius: 12
+                        color: "#4A372A"
+                        border.width: 1
+                        border.color: "#D89B57"
+
+                        RowLayout {
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 12
+                            Label {
+                                Layout.fillWidth: true
+                                text: "macOS 尚未允许跨应用输入；浮窗可显示，但听写和编辑不会注入。\n授权后请重启 Proximic Voice。"
+                                color: "#FFE1BD"
+                                font.pixelSize: 12
+                                wrapMode: Text.Wrap
+                            }
+                            Button {
+                                text: "打开辅助功能设置"
+                                onClicked: appController.openMacOSAccessibilitySettings()
+                            }
+                        }
+                    }
+
                     RowLayout {
                         Layout.fillWidth: true
                         Label { text: "全局语音输入"; color: root.textMain; font.pixelSize: 17; font.bold: true }
                         Item { Layout.fillWidth: true }
                         Label {
-                            text: appController.inputRoutingMode === "auto"
-                                  ? "自动判断听写/指令 / 右 Alt 说话"
-                                  : "Alt+1 输入 / Alt+2 修改 / 右 Alt 说话"
+                            text: Qt.platform.os === "windows"
+                                  ? (appController.inputRoutingMode === "auto"
+                                     ? "自动判断听写/指令 / 右 Alt 说话"
+                                     : "Alt+1 输入 / Alt+2 修改 / 右 Alt 说话")
+                                  : "macOS 输入 / 编辑"
                             color: root.textMuted
                             font.pixelSize: 12
                         }
@@ -402,11 +432,6 @@ ApplicationWindow {
                             objectName: "cancelEditButton"
                             text: "取消"
                             onClicked: appController.cancelEdit()
-                        }
-                        Button {
-                            objectName: "retryEditButton"
-                            text: "重说指令"
-                            onClicked: appController.retryEdit()
                         }
                     }
 
@@ -538,35 +563,69 @@ ApplicationWindow {
                     spacing: 10
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: "语音会话记录"; color: root.textMain; font.pixelSize: 15; font.bold: true }
+                        Label { text: "逐句语音记录"; color: root.textMain; font.pixelSize: 15; font.bold: true }
                         Item { Layout.fillWidth: true }
-                        ToolButton { text: "清空"; onClicked: appController.clearSessionHistory() }
+                        ToolButton { text: "清空"; onClicked: appController.clearVoiceHistory() }
                     }
 
-                    ScrollView {
+                    ListView {
+                        id: voiceHistoryList
+                        objectName: "voiceHistoryList"
                         Layout.fillWidth: true
                         Layout.fillHeight: true
                         clip: true
-                        TextArea {
-                            id: sessionHistoryArea
-                            objectName: "sessionHistoryArea"
-                            text: appController.sessionHistoryText
-                            readOnly: true
-                            selectByMouse: true
-                            color: root.textMain
-                            font.pixelSize: 13
-                            wrapMode: TextEdit.Wrap
-                            leftPadding: 14
-                            rightPadding: 14
-                            topPadding: 12
-                            bottomPadding: 12
-                            placeholderText: "这里仅记录 ASR、LLM 结果以及是否应用；真正的文本始终留在外部应用。"
-                            background: Rectangle {
-                                color: root.panelAlt
-                                radius: 10
-                                border.color: root.border
+                        spacing: 8
+                        model: appController.voiceHistoryEntries
+                        ScrollBar.vertical: ScrollBar { }
+                        delegate: Rectangle {
+                            required property var modelData
+                            width: voiceHistoryList.width
+                            height: Math.max(68, historyText.implicitHeight + 34)
+                            radius: 10
+                            color: root.panelAlt
+                            border.color: root.border
+
+                            RowLayout {
+                                anchors.fill: parent
+                                anchors.leftMargin: 12
+                                anchors.rightMargin: 10
+                                anchors.topMargin: 8
+                                anchors.bottomMargin: 8
+                                spacing: 10
+
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    spacing: 4
+                                    Label {
+                                        text: modelData.displayTime + "  ·  "
+                                              + modelData.durationLabel
+                                              + (modelData.backend ? "  ·  " + modelData.backend : "")
+                                        color: root.textMuted
+                                        font.pixelSize: 10
+                                    }
+                                    Label {
+                                        id: historyText
+                                        Layout.fillWidth: true
+                                        text: modelData.text
+                                        color: modelData.recognized ? root.textMain : root.textMuted
+                                        font.pixelSize: 13
+                                        wrapMode: Text.Wrap
+                                    }
+                                }
+                                Button {
+                                    Layout.preferredWidth: 68
+                                    text: appController.playingVoicePath === modelData.audioPath
+                                          ? "停止" : "播放"
+                                    onClicked: appController.playVoiceHistory(modelData.audioPath)
+                                }
                             }
-                            onTextChanged: cursorPosition = length
+                        }
+                        Label {
+                            anchors.centerIn: parent
+                            visible: voiceHistoryList.count === 0
+                            text: "每段语音结束后，会在这里保存录音和识别文字"
+                            color: root.textMuted
+                            font.pixelSize: 12
                         }
                     }
                 }
@@ -1087,7 +1146,7 @@ ApplicationWindow {
                         text: "识别完成后输入到当前光标"
                         checked: appController.desktopOutputEnabled
                         onToggled: appController.desktopOutputEnabled = checked
-                        visible: Qt.platform.os === "windows"
+                        visible: Qt.platform.os === "windows" || Qt.platform.os === "osx"
                     }
                     Switch {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -1098,7 +1157,7 @@ ApplicationWindow {
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "macOS 当前支持 Ring、ProxiMic 和语音识别；全局按键与跨应用文字注入仅支持 Windows。"
+                        text: "macOS 听写和编辑可作用于当前文本框；首次使用请在系统设置的“隐私与安全性 → 辅助功能”中允许 Proximic Voice。编辑预览支持 Enter 确认、Esc 取消；右 Alt 控制仍仅支持 Windows。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                         visible: Qt.platform.os !== "windows"
                     }
@@ -1130,7 +1189,12 @@ ApplicationWindow {
         y: Screen.height - height - 96
         visible: appController.transcriptVisible
         color: "transparent"
-        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
+        // Qt.Tool maps to an NSPanel that macOS hides when another app gets
+        // focus. The transcript must remain visible over that target app.
+        flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool)
+               | Qt.FramelessWindowHint
+               | Qt.WindowStaysOnTopHint
+               | Qt.WindowDoesNotAcceptFocus
 
         Rectangle {
             anchors.fill: parent
@@ -1234,7 +1298,10 @@ ApplicationWindow {
            : Math.max(16, transcriptOverlay.y - height - 12)
         visible: appController.feedbackReasonVisible
         color: "transparent"
-        flags: Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
+        flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool)
+               | Qt.FramelessWindowHint
+               | Qt.WindowStaysOnTopHint
+               | Qt.WindowDoesNotAcceptFocus
 
         Rectangle {
             anchors.fill: parent
