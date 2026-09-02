@@ -56,10 +56,20 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
         def press_key(self, key):
             calls.append(("press", key))
 
+    class AccessibilityText:
+        def read_focused_value(self, process_id):
+            calls.append(("ax-read", process_id))
+            return None
+
+        def set_focused_value(self, process_id, text):
+            calls.append(("ax-set", process_id, text))
+            return False
+
     adapter = MacOSDesktopTextTarget(
         clipboard,
         injector=Injector(),
         shortcut_settle_s=0.02,
+        accessibility_text=AccessibilityText(),
     )
     monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "TextEdit"))
     target = adapter.capture_reference()
@@ -76,6 +86,52 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
     assert ("inject", "听写内容") in calls
     assert ("inject", "修改后内容") in calls
     assert ("press", MacOSDesktopTextTarget.KEY_DELETE) in calls
+
+
+def test_macos_target_prefers_accessibility_value_for_exact_replace(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class Clipboard:
+        def snapshot(self):
+            raise AssertionError("AXValue read should not use the clipboard")
+
+    class Injector:
+        def require_accessibility(self):
+            calls.append("accessibility")
+
+        def command_key(self, key):
+            raise AssertionError("AXValue replace should not send Command+A")
+
+    class AccessibilityText:
+        value = "原文"
+
+        def read_focused_value(self, process_id):
+            calls.append(("ax-read", process_id))
+            return self.value
+
+        def set_focused_value(self, process_id, text):
+            calls.append(("ax-set", process_id, text))
+            self.value = text
+            return True
+
+    accessibility_text = AccessibilityText()
+    adapter = MacOSDesktopTextTarget(
+        Clipboard(),
+        injector=Injector(),
+        shortcut_settle_s=0.02,
+        accessibility_text=accessibility_text,
+    )
+    target = DesktopTargetRef(0, 0, "TextEdit", process_id=4321)
+    monkeypatch.setattr(adapter, "_activate", lambda value: calls.append(("activate", value)))
+
+    snapshot = adapter.capture_text(target)
+    adapter.replace(snapshot, "新文本")
+    verified = adapter.capture_text(target)
+
+    assert snapshot.text == "原文"
+    assert verified.text == "新文本"
+    assert ("ax-set", 4321, "新文本") in calls
 
 
 def test_macos_target_rejects_own_process() -> None:

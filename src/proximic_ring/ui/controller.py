@@ -337,6 +337,7 @@ class AppController(QObject):
         self._session_targets: dict[int, DesktopTargetRef | None] = {}
         self._desktop_target = None
         self._macos_accessibility_trusted = sys.platform != "darwin"
+        self._macos_accessibility_last_reported: bool | None = None
         self._worker: threading.Thread | None = None
         self._runtime_active = False
         self._runtime_had_connection = False
@@ -499,6 +500,11 @@ class AppController(QObject):
         self._quit_timer = QTimer(self)
         self._quit_timer.setInterval(100)
         self._quit_timer.timeout.connect(self._finish_quit)
+        self._accessibility_timer = QTimer(self)
+        self._accessibility_timer.setInterval(1000)
+        self._accessibility_timer.timeout.connect(
+            self._poll_macos_accessibility
+        )
         self._runtimeStatus.connect(self._apply_runtime_status)
         self._runtimeConnected.connect(self._apply_runtime_connected)
         self._runtimeDisconnected.connect(self._apply_runtime_disconnected)
@@ -952,6 +958,8 @@ class AppController(QObject):
         self.accessibilityChanged.emit()
         if sys.platform == "darwin" and enabled:
             QTimer.singleShot(0, self._request_macos_accessibility)
+        elif not enabled:
+            self._accessibility_timer.stop()
 
     @Property(bool, notify=accessibilityChanged)
     def macOSAccessibilityRequired(self) -> bool:
@@ -2429,9 +2437,22 @@ class AppController(QObject):
             return
         self._clear_feedback_reason()
         try:
-            self._desktop_target_adapter().replace(
-                review.snapshot, review.proposed_text
-            )
+            adapter = self._desktop_target_adapter()
+            adapter.replace(review.snapshot, review.proposed_text)
+            if sys.platform == "darwin":
+                try:
+                    final_text = self._verify_macos_edit_text(review)
+                except BaseException as first_error:
+                    self._append_log(
+                        f"macOS 首次修改回读未通过，正在重新聚焦后重试：{first_error}"
+                    )
+                    adapter.replace(review.snapshot, review.proposed_text)
+                    final_text = self._verify_macos_edit_text(review)
+                manually_corrected = False
+            else:
+                final_text, manually_corrected = self._read_back_edit_text(
+                    review, fallback=review.proposed_text
+                )
         except BaseException as exc:
             self._record_history("修改 · 应用失败", detail=str(exc))
             try:
@@ -2447,9 +2468,6 @@ class AppController(QObject):
                 message=f"修改未应用：{exc}", state="error", hide_ms=4000
             )
             return
-        final_text, manually_corrected = self._read_back_edit_text(
-            review, fallback=review.proposed_text
-        )
         try:
             self._modification_dataset.feedback(
                 review.request_id,
@@ -2468,6 +2486,20 @@ class AppController(QObject):
         self._finish_edit_review(
             message="修改已应用到原文本框", state="applied", hide_ms=2200
         )
+
+    def _verify_macos_edit_text(self, review: _EditReview) -> str:
+        """Require actual external-control readback before reporting success."""
+        adapter = self._desktop_target_adapter()
+        snapshot = adapter.capture_text(review.snapshot.target)
+        try:
+            actual = snapshot.text
+        finally:
+            adapter.release_selection(review.snapshot.target)
+        if actual != review.proposed_text:
+            raise RuntimeError(
+                "外部文本框回读结果与修改预览不一致，系统没有确认替换成功"
+            )
+        return actual
 
     @Slot()
     def cancelEdit(self) -> None:
@@ -2648,25 +2680,42 @@ class AppController(QObject):
         return self._desktop_target
 
     def _request_macos_accessibility(self) -> None:
+        self._check_macos_accessibility(prompt=True)
+
+    @Slot()
+    def _poll_macos_accessibility(self) -> None:
+        self._check_macos_accessibility(prompt=False)
+
+    def _check_macos_accessibility(self, *, prompt: bool) -> None:
         if sys.platform != "darwin" or not self._desktop_output:
+            self._accessibility_timer.stop()
             return
         try:
             trusted = self._desktop_target_adapter().request_accessibility(
-                prompt=True
+                prompt=prompt
             )
         except BaseException as exc:
             self._append_log(f"macOS 辅助功能权限检查失败：{exc}")
+            if not self._accessibility_timer.isActive():
+                self._accessibility_timer.start()
             return
         changed = trusted != self._macos_accessibility_trusted
         self._macos_accessibility_trusted = trusted
         if changed:
             self.accessibilityChanged.emit()
         if trusted:
+            self._accessibility_timer.stop()
+        elif not self._accessibility_timer.isActive():
+            self._accessibility_timer.start()
+        if trusted == self._macos_accessibility_last_reported:
+            return
+        self._macos_accessibility_last_reported = trusted
+        if trusted:
             self._append_log("macOS 辅助功能权限已就绪，可听写和编辑当前文本框")
         else:
             self._append_log(
                 "macOS 尚未授予辅助功能权限；请在系统设置的“隐私与安全性 → "
-                "辅助功能”中允许 Proximic Voice，然后重启应用"
+                "辅助功能”中允许当前安装的 Proximic Voice"
             )
 
     def _capture_desktop_reference(self) -> DesktopTargetRef | None:

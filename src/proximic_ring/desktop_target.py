@@ -57,6 +57,155 @@ class DesktopTextTarget(Protocol):
     def release_selection(self, target: DesktopTargetRef) -> None: ...
 
 
+class _MacOSAccessibilityTextBridge:
+    """Read or replace the focused AXValue without depending on key timing.
+
+    PyObjC's Quartz module does not expose the Accessibility API on every
+    supported build, so this deliberately uses the stable C API. Controls
+    which do not expose a string AXValue return ``None``/``False`` and the
+    caller falls back to Select-All plus keyboard events.
+    """
+
+    _UTF8 = 0x08000100
+
+    def __init__(self) -> None:
+        application_services = ctypes.CDLL(
+            "/System/Library/Frameworks/ApplicationServices.framework/"
+            "ApplicationServices"
+        )
+        core_foundation = ctypes.CDLL(
+            "/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation"
+        )
+        application_services.AXUIElementCreateApplication.argtypes = (ctypes.c_int,)
+        application_services.AXUIElementCreateApplication.restype = ctypes.c_void_p
+        application_services.AXUIElementCopyAttributeValue.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        application_services.AXUIElementCopyAttributeValue.restype = ctypes.c_int
+        application_services.AXUIElementIsAttributeSettable.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_bool),
+        )
+        application_services.AXUIElementIsAttributeSettable.restype = ctypes.c_int
+        application_services.AXUIElementSetAttributeValue.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+        )
+        application_services.AXUIElementSetAttributeValue.restype = ctypes.c_int
+        core_foundation.CFStringCreateWithCString.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_uint32,
+        )
+        core_foundation.CFStringCreateWithCString.restype = ctypes.c_void_p
+        core_foundation.CFStringGetLength.argtypes = (ctypes.c_void_p,)
+        core_foundation.CFStringGetLength.restype = ctypes.c_long
+        core_foundation.CFStringGetMaximumSizeForEncoding.argtypes = (
+            ctypes.c_long,
+            ctypes.c_uint32,
+        )
+        core_foundation.CFStringGetMaximumSizeForEncoding.restype = ctypes.c_long
+        core_foundation.CFStringGetCString.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_char_p,
+            ctypes.c_long,
+            ctypes.c_uint32,
+        )
+        core_foundation.CFStringGetCString.restype = ctypes.c_bool
+        core_foundation.CFGetTypeID.argtypes = (ctypes.c_void_p,)
+        core_foundation.CFGetTypeID.restype = ctypes.c_ulong
+        core_foundation.CFStringGetTypeID.argtypes = ()
+        core_foundation.CFStringGetTypeID.restype = ctypes.c_ulong
+        core_foundation.CFRelease.argtypes = (ctypes.c_void_p,)
+        self._application_services = application_services
+        self._core_foundation = core_foundation
+
+    def read_focused_value(self, process_id: int) -> str | None:
+        application, focused, value = self._focused_value(int(process_id))
+        try:
+            if not value:
+                return None
+            cf = self._core_foundation
+            if cf.CFGetTypeID(value) != cf.CFStringGetTypeID():
+                return None
+            length = int(cf.CFStringGetLength(value))
+            size = int(cf.CFStringGetMaximumSizeForEncoding(length, self._UTF8)) + 1
+            buffer = ctypes.create_string_buffer(max(1, size))
+            if not cf.CFStringGetCString(value, buffer, len(buffer), self._UTF8):
+                return None
+            return buffer.value.decode("utf-8")
+        finally:
+            self._release(value, focused, application)
+
+    def set_focused_value(self, process_id: int, text: str) -> bool:
+        application, focused, current_value = self._focused_value(int(process_id))
+        value = None
+        attribute = None
+        try:
+            if not focused:
+                return False
+            attribute = self._cf_string("AXValue")
+            settable = ctypes.c_bool(False)
+            error = self._application_services.AXUIElementIsAttributeSettable(
+                focused, attribute, ctypes.byref(settable)
+            )
+            if error or not settable.value:
+                return False
+            value = self._cf_string(str(text or ""))
+            return not self._application_services.AXUIElementSetAttributeValue(
+                focused, attribute, value
+            )
+        finally:
+            self._release(value, attribute, current_value, focused, application)
+
+    def _focused_value(
+        self, process_id: int
+    ) -> tuple[int | None, int | None, int | None]:
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        focused = ctypes.c_void_p()
+        value = ctypes.c_void_p()
+        focused_attribute = None
+        value_attribute = None
+        try:
+            if not application:
+                return None, None, None
+            focused_attribute = self._cf_string("AXFocusedUIElement")
+            error = self._application_services.AXUIElementCopyAttributeValue(
+                application, focused_attribute, ctypes.byref(focused)
+            )
+            if error or not focused.value:
+                return application, None, None
+            value_attribute = self._cf_string("AXValue")
+            error = self._application_services.AXUIElementCopyAttributeValue(
+                focused.value, value_attribute, ctypes.byref(value)
+            )
+            if error:
+                return application, focused.value, None
+            return application, focused.value, value.value
+        finally:
+            self._release(value_attribute, focused_attribute)
+
+    def _cf_string(self, value: str) -> int:
+        result = self._core_foundation.CFStringCreateWithCString(
+            None, value.encode("utf-8"), self._UTF8
+        )
+        if not result:
+            raise RuntimeError("macOS 无法创建辅助功能字符串")
+        return int(result)
+
+    def _release(self, *values: object) -> None:
+        for value in values:
+            pointer = int(value or 0)
+            if pointer:
+                self._core_foundation.CFRelease(pointer)
+
+
 class MacOSDesktopTextTarget:
     """Read and update the locked macOS text control with native shortcuts."""
 
@@ -74,6 +223,7 @@ class MacOSDesktopTextTarget:
         copy_attempts: int = 3,
         focus_settle_s: float = 0.12,
         shortcut_settle_s: float = 0.05,
+        accessibility_text: object | None = None,
     ) -> None:
         if sys.platform != "darwin":
             raise RuntimeError("macOS desktop target requires macOS")
@@ -83,6 +233,11 @@ class MacOSDesktopTextTarget:
         self._copy_attempts = max(1, int(copy_attempts))
         self._focus_settle_s = max(0.05, float(focus_settle_s))
         self._shortcut_settle_s = max(0.02, float(shortcut_settle_s))
+        self._accessibility_text = (
+            accessibility_text
+            if accessibility_text is not None
+            else _MacOSAccessibilityTextBridge()
+        )
 
     @staticmethod
     def _frontmost_application() -> tuple[int, str]:
@@ -113,6 +268,15 @@ class MacOSDesktopTextTarget:
 
     def capture_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
         self._injector.require_accessibility()
+        self._activate(target)
+        try:
+            accessibility_value = self._accessibility_text.read_focused_value(
+                target.process_id
+            )
+        except BaseException:
+            accessibility_value = None
+        if accessibility_value is not None:
+            return DesktopTextSnapshot(target=target, text=accessibility_value)
         clipboard_snapshot = self._clipboard.snapshot()
         text = ""
         try:
@@ -148,13 +312,26 @@ class MacOSDesktopTextTarget:
 
     def replace(self, snapshot: DesktopTextSnapshot, text: str) -> None:
         self._activate(snapshot.target)
+        replacement = str(text or "")
+        try:
+            if self._accessibility_text.set_focused_value(
+                snapshot.target.process_id, replacement
+            ):
+                time.sleep(self._shortcut_settle_s)
+                return
+        except BaseException:
+            # Browser content-editables and custom editors often do not expose
+            # a settable AXValue. Keep the established keyboard fallback.
+            pass
         self._injector.command_key(self.KEY_A)
         time.sleep(self._shortcut_settle_s)
-        replacement = str(text or "")
         if replacement:
             self._injector.inject(replacement)
         else:
             self._injector.press_key(self.KEY_DELETE)
+        # Posted Quartz events are asynchronous. Do not let immediate readback
+        # steal the focus before the target app consumes the final chunk.
+        time.sleep(self._shortcut_settle_s)
 
     def release_selection(self, target: DesktopTargetRef) -> None:
         try:

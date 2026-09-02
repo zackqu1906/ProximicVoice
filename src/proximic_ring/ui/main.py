@@ -58,19 +58,36 @@ def main(argv: list[str] | None = None) -> int:
         except BaseException as exc:
             print(f"[voice-actions] 全局交互快捷键不可用：{exc}", file=sys.stderr)
     elif sys.platform == "darwin":
-        try:
-            from ..voice_actions import MacOSVoiceActionHotkeys
+        mac_hotkeys: dict[str, object | None] = {"instance": None}
 
-            voice_action_hotkeys = MacOSVoiceActionHotkeys(
-                controller.dispatchVoiceAction,
-                is_review_active=lambda: controller.reviewPending,
-            )
-            app.aboutToQuit.connect(voice_action_hotkeys.close)
-        except BaseException as exc:
-            print(
-                f"[voice-actions] macOS 编辑确认键不可用：{exc}",
-                file=sys.stderr,
-            )
+        def install_macos_hotkeys() -> None:
+            if (
+                mac_hotkeys["instance"] is not None
+                or controller.macOSAccessibilityRequired
+            ):
+                return
+            try:
+                from ..voice_actions import MacOSVoiceActionHotkeys
+
+                mac_hotkeys["instance"] = MacOSVoiceActionHotkeys(
+                    controller.dispatchVoiceAction,
+                    is_review_active=lambda: controller.reviewPending,
+                )
+                print("[voice-actions] macOS 编辑确认键已就绪")
+            except BaseException as exc:
+                print(
+                    f"[voice-actions] macOS 编辑确认键不可用：{exc}",
+                    file=sys.stderr,
+                )
+
+        def close_macos_hotkeys() -> None:
+            instance = mac_hotkeys["instance"]
+            if instance is not None:
+                instance.close()
+
+        controller.accessibilityChanged.connect(install_macos_hotkeys)
+        app.aboutToQuit.connect(close_macos_hotkeys)
+        QTimer.singleShot(0, install_macos_hotkeys)
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("appController", controller)
     qml_errors: list[str] = []

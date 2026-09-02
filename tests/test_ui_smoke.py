@@ -86,6 +86,58 @@ def test_macos_desktop_output_migrates_old_forced_off_setting(tmp_path, monkeypa
     restarted._text_processing_worker.close(wait=True)
 
 
+def test_macos_edit_does_not_report_success_without_verified_replacement(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication, QSettings
+
+    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.ui.controller import AppController, _EditReview
+
+    _app = QCoreApplication.instance() or QCoreApplication(["mac-edit-verification"])
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "darwin")
+    controller = AppController()
+    controller._text_processing_worker.close(wait=True)
+    controller._accessibility_timer.stop()
+    target = DesktopTargetRef(0, 0, "测试编辑器", process_id=4321)
+
+    class TargetThatIgnoresReplacement:
+        def __init__(self):
+            self.replace_calls = 0
+
+        def replace(self, snapshot, text):
+            self.replace_calls += 1
+
+        def capture_text(self, captured_target):
+            return DesktopTextSnapshot(captured_target, "仍然是原文")
+
+        def release_selection(self, captured_target):
+            return None
+
+    desktop_target = TargetThatIgnoresReplacement()
+    controller._desktop_target = desktop_target
+    controller._edit_review = _EditReview(
+        request_id=999,
+        session_id=1,
+        instruction="改得正式",
+        proposed_text="正式的新文本",
+        snapshot=DesktopTextSnapshot(target, "仍然是原文"),
+    )
+    controller._set_interaction_state("review")
+
+    controller.confirmEdit()
+
+    assert desktop_target.replace_calls == 2
+    assert controller.reviewPending is False
+    assert controller.interactionState == "error"
+    assert "修改未应用" in controller.transcriptText
+    assert "修改 · 应用失败" in controller.sessionHistoryText
+    assert "修改 · 已应用" not in controller.sessionHistoryText
+
+
 def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     tmp_path,
 ):
@@ -425,6 +477,31 @@ def test_qml_customer_window_loads(tmp_path):
     assert llm_model_field is not None
     assert llm_api_key_field is not None
     assert voice_history_list is not None
+    controller._voice_history_entries = [
+        {
+            "displayTime": "16:30:00",
+            "durationLabel": "1.2 秒",
+            "backend": "SenseVoice",
+            "text": "测试语音记录",
+            "recognized": True,
+            "audioPath": str(tmp_path / "voice.wav"),
+        }
+    ]
+    controller.voiceHistoryChanged.emit()
+    app.processEvents()
+    assert voice_history_list.property("count") == 1
+    voice_history_list.setProperty("currentIndex", 0)
+    QMetaObject.invokeMethod(voice_history_list, "forceLayout")
+    QTest.qWait(50)
+    current_voice_item = voice_history_list.property("currentItem")
+    assert current_voice_item is not None
+    voice_play_button = current_voice_item.findChild(
+        QQuickItem, "voiceHistoryPlayButton"
+    )
+    assert voice_play_button is not None
+    assert voice_play_button.property("text") == "播放录音"
+    assert voice_play_button.property("width") >= 88
+    assert voice_play_button.property("contentItem").property("text") == "播放录音"
     assert confirm_edit_button is not None
     assert cancel_edit_button is not None
     assert edit_preview_text is not None

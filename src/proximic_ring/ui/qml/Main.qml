@@ -284,7 +284,7 @@ ApplicationWindow {
                 objectName: "voiceInputCard"
                 Layout.fillWidth: true
                 Layout.preferredHeight: (appController.reviewPending ? 420 : 380)
-                                        + (appController.macOSAccessibilityRequired ? 78 : 0)
+                                        + (appController.macOSAccessibilityRequired ? 102 : 0)
                 radius: 22
                 color: root.panel
                 border.color: root.border
@@ -296,7 +296,7 @@ ApplicationWindow {
 
                     Rectangle {
                         Layout.fillWidth: true
-                        Layout.preferredHeight: 68
+                        Layout.preferredHeight: 92
                         visible: appController.macOSAccessibilityRequired
                         radius: 12
                         color: "#4A372A"
@@ -309,7 +309,7 @@ ApplicationWindow {
                             spacing: 12
                             Label {
                                 Layout.fillWidth: true
-                                text: "macOS 尚未允许跨应用输入；浮窗可显示，但听写和编辑不会注入。\n授权后请重启 Proximic Voice。"
+                                text: "macOS 尚未允许当前安装包跨应用输入；浮窗可显示，但听写和编辑不会注入。\n授权后会自动检测，无需重启。如这里已显示开启，请删除旧条目，再重新添加 /Applications/Proximic Voice.app。"
                                 color: "#FFE1BD"
                                 font.pixelSize: 12
                                 wrapMode: Text.Wrap
@@ -613,9 +613,20 @@ ApplicationWindow {
                                     }
                                 }
                                 Button {
-                                    Layout.preferredWidth: 68
+                                    objectName: "voiceHistoryPlayButton"
+                                    Layout.minimumWidth: 88
+                                    Layout.preferredWidth: 88
                                     text: appController.playingVoicePath === modelData.audioPath
-                                          ? "停止" : "播放"
+                                          ? "停止播放" : "播放录音"
+                                    font.pixelSize: 12
+                                    contentItem: Label {
+                                        text: parent.text
+                                        color: parent.enabled ? root.textMain : root.textMuted
+                                        font: parent.font
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                        elide: Text.ElideNone
+                                    }
                                     onClicked: appController.playVoiceHistory(modelData.audioPath)
                                 }
                             }
