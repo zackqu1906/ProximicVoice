@@ -91,13 +91,13 @@ ps -axo pid,ppid,lstart,command | grep -E 'ProximicVoice|Proximic Voice' | grep 
 
 ### UI 日志验收
 
-- [ ] 应用打开后，“运行日志”不一直停留在“尚未启动”。
+- [ ] 点击顶栏“实时日志”后弹出完整日志窗口，应用启动后的日志不一直停留在“尚未启动”。
 - [ ] 点击扫描后立即显示“开始扫描附近的蓝牙设备”。
 - [ ] 选择设备后显示连接、验证、模型加载和模型就绪信息。
 - [ ] 日志可以显示中文、英文、路径和异常信息。
-- [ ] 日志区域会滚动到最新一行。
+- [ ] 弹出的日志区域会滚动到最新一行。
 - [ ] 清空按钮有效，清空后新日志仍能继续出现。
-- [ ] 窗口缩放后日志不消失、不被裁掉、不产生异常的横向宽度。
+- [ ] 窗口缩放后日志弹窗不消失、不被裁掉、不产生异常的横向宽度。
 
 重点确认 QML 中 `logArea.text` 与 `appController.logText` 一致。若控制器已有日志但界面没有显示，检查 QML binding/`Connections`、Qt 主线程事件循环和控件尺寸；若两者都没有日志，继续向上检查运行时回调是否仍在使用 `print()`。
 
@@ -327,7 +327,7 @@ DiagnosticReports：
 请按照 docs/MACOS_VALIDATION_CHECKLIST.md 在这台真实 macOS 机器上验证 Proximic Voice。
 
 先记录环境并复现，不要根据 Windows 行为猜测。优先检查：
-1. UI 运行日志是否实时显示；
+1. 顶栏“实时日志”弹窗是否实时显示；
 2. 连接设备或加载模型后是否出现第二个相同主窗口；
 3. CoreBluetooth 扫描、连接、断开和重连；
 4. streaming_sensevoice 与 funasr_nano 的加载和识别；

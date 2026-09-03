@@ -18,6 +18,7 @@ from proximic_ring.text_processing import (
     LLMBranchTrace,
     LLMSettings,
     OpenAICompatibleTextProcessor,
+    TextProcessingRequest,
     TextProcessingResult,
 )
 
@@ -123,6 +124,10 @@ def test_confirm_persists_one_complete_training_attempt_and_retry_is_rejected(tm
         assert audio_file.getframerate() == 16_000
         assert audio_file.getnchannels() == 1
         assert audio_file.getnframes() == first_audio.size
+    interaction_audio = next(
+        (collector.interactions_root).glob("*/audio.wav")
+    )
+    assert (first_dir / "audio_raw.wav").samefile(interaction_audio)
     asr_rows = [
         json.loads(line)
         for line in (first_dir / "asr_updates.jsonl").read_text(encoding="utf-8").splitlines()
@@ -141,11 +146,9 @@ def test_confirm_persists_one_complete_training_attempt_and_retry_is_rejected(tm
     assert first_meta["llm"]["winner_branch"] == "fragment"
     with pytest.raises(ValueError, match="unsupported feedback action"):
         collector.feedback(10, "retry")
-    with pytest.raises(ValueError, match="unsupported feedback reason action"):
-        collector.annotate_feedback_reason(10, "retry", "asr_error")
 
 
-def test_cancel_reason_can_be_attached_after_episode_is_finalized(tmp_path):
+def test_cancel_records_objective_action_without_reason_prompt_data(tmp_path):
     collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
     episode_id, attempt_id = collector.begin_attempt(
         request_id=20,
@@ -156,8 +159,6 @@ def test_cancel_reason_can_be_attached_after_episode_is_finalized(tmp_path):
         model="qwen.gguf",
     )
     collector.feedback(20, "cancel", final_text="原文。")
-
-    assert collector.annotate_feedback_reason(20, "cancel", "llm_error") is True
     attempt_path = (
         tmp_path
         / "dataset"
@@ -167,12 +168,9 @@ def test_cancel_reason_can_be_attached_after_episode_is_finalized(tmp_path):
         / "attempt.json"
     )
     attempt = json.loads(attempt_path.read_text(encoding="utf-8"))
-    assert attempt["feedback"][-1]["failure_reason"]["code"] == "llm_error"
-    assert attempt["feedback"][-1]["failure_reason"]["label"] == "大模型理解错误"
-    assert collector.annotate_feedback_reason(20, "cancel", "other") is False
-
-    with pytest.raises(ValueError, match="unsupported feedback reason"):
-        collector.annotate_feedback_reason(20, "cancel", "unknown")
+    assert attempt["feedback"][-1]["action"] == "cancel"
+    assert "failure_reason" not in attempt["feedback"][-1]
+    assert not hasattr(collector, "annotate_feedback_reason")
 
 
 def test_slow_branch_trace_can_fill_attempt_after_winner_is_available(tmp_path):
@@ -212,6 +210,187 @@ def test_slow_branch_trace_can_fill_attempt_after_winner_is_available(tmp_path):
     )
     assert attempt["llm"]["winner_branch"] == "fragment"
     assert "branches_collected_at" in attempt["llm"]
+
+
+def test_unified_interaction_collects_history_llm_outcome_reason_and_imu(tmp_path):
+    saved = []
+    collector = ModificationDatasetCollector(
+        tmp_path / "dataset", "anonymous-1", on_saved=saved.append
+    )
+    collector.record_runtime_event(
+        "STAGE2 sample=100 score=+0.900 threshold=0.700 ACTIVATE"
+    )
+    collector.record_audio(9, np.zeros(1600, dtype=np.float32))
+    collector.record_asr_update(_update(9, "帮我整理一下", final=False))
+    collector.record_asr_update(_update(9, "帮我整理一下。", final=True))
+
+    request = TextProcessingRequest(
+        request_id=90,
+        session_id=9,
+        mode="dictation",
+        raw_text="帮我整理一下。",
+        settings=LLMSettings(
+            enabled=True,
+            provider="openai",
+            model="test-model",
+            api_key="must-not-be-stored",
+        ),
+    )
+    collector.record_text_request(request)
+    result = TextProcessingResult(
+        request_id=90,
+        session_id=9,
+        mode="dictation",
+        raw_text=request.raw_text,
+        final_text="请帮我整理一下。",
+        latency_s=0.2,
+        used_llm=True,
+        model_output="请帮我整理一下。",
+    )
+    collector.record_llm_result(90, result)
+    collector.record_application(
+        action="applied",
+        session_id=9,
+        request_id=90,
+        mode="dictation",
+        candidate_text=result.final_text,
+        final_text=result.final_text,
+    )
+    applied_record_path = next(collector.interactions_root.glob("*/record.json"))
+    applied_record = json.loads(applied_record_path.read_text(encoding="utf-8"))
+    assert applied_record["outcome"]["accepted"] is None
+    assert applied_record["outcome"]["acceptance_strength"] == "pending_undo"
+    collector.feedback(90, "cancel", final_text="")
+    collector.record_application(
+        action="undone",
+        session_id=9,
+        request_id=90,
+        mode="dictation",
+    )
+    collector.record_imu_samples(
+        9,
+        [
+            {"timestamp_ms": 0, "ax": 0.1, "ay": 0.2, "az": 0.9},
+            {"timestamp_ms": 10, "ax": 0.1, "ay": 0.2, "az": 1.0},
+        ],
+        sample_rate_hz=100,
+        clock_offset_ms=2.5,
+    )
+
+    assert len(saved) == 1
+    assert len(collector.load_entries()) == 1
+    record_path = next(collector.interactions_root.glob("*/record.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["asr"]["final_text"] == "帮我整理一下。"
+    assert record["llm"]["requests"][0]["input"]["user_content"] == request.raw_text
+    assert record["llm"]["requests"][0]["raw_output"] == result.model_output
+    assert "must-not-be-stored" not in record_path.read_text(encoding="utf-8")
+    assert record["outcome"]["status"] == "undone"
+    assert record["outcome"]["accepted"] is False
+    assert "failure_reason" not in record["outcome"]
+    assert record["near_field"]["audio_score"] == 0.9
+    assert record["near_field"]["stage2_threshold"] == 0.7
+    assert record["near_field"]["detector_decision"] == "activate"
+    assert record["imu"]["sample_count"] == 2
+    assert (record_path.parent / "imu.jsonl").is_file()
+
+
+def test_llm_association_index_links_rejected_and_manual_chosen_result(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    interaction_ids = []
+    for session_id, request_id, instruction, candidate in (
+        (1, 101, "改正式一点", "失败结果一"),
+        (2, 102, "把它写得正式", "失败结果二"),
+    ):
+        collector.record_asr_update(_update(session_id, instruction, final=True))
+        request = TextProcessingRequest(
+            request_id=request_id,
+            session_id=session_id,
+            mode="edit",
+            raw_text=instruction,
+            target_text="共同原文",
+            settings=LLMSettings(enabled=True, model="test-model"),
+        )
+        collector.record_text_request(request)
+        collector.record_llm_result(
+            request_id,
+            TextProcessingResult(
+                request_id=request_id,
+                session_id=session_id,
+                mode="edit",
+                raw_text=instruction,
+                final_text=candidate,
+                latency_s=0.1,
+                used_llm=True,
+                target_text="共同原文",
+                model_output=candidate,
+            ),
+        )
+        collector.record_application(
+            action="undone",
+            session_id=session_id,
+            request_id=request_id,
+            mode="edit",
+            before_text=candidate,
+            final_text="共同原文",
+        )
+        interaction_ids.append(collector.interaction_id_for_session(session_id))
+
+    result_id = collector.record_manual_result(
+        interaction_ids[-1], text="人工写出的正式文本", mode="edit"
+    )
+    group_id = collector.create_association(
+        kind="llm",
+        subtype="edit_preference",
+        chosen={"interaction_id": interaction_ids[-1], "result_id": result_id},
+        rejected=[
+            {"interaction_id": interaction_ids[0], "request_id": 101},
+            {"interaction_id": interaction_ids[1], "request_id": 102},
+        ],
+        source="manual_association_center",
+    )
+    group = collector.load_associations()[0]
+    assert group["association_id"] == group_id
+    assert group["source"] == "manual_association_center"
+    assert group["chosen"]["result_id"] == result_id
+    assert [item["request_id"] for item in group["rejected"]] == [101, 102]
+
+
+def test_asr_association_index_points_to_all_original_interactions(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    for session_id in (1, 2):
+        collector.record_audio(session_id, np.zeros(16_000, dtype=np.float32))
+        collector.record_asr_update(_update(session_id, "", final=True))
+        time.sleep(0.002)
+    collector.record_audio(3, np.zeros(16_000, dtype=np.float32))
+    collector.record_asr_update(_update(3, "今天下午三点开会", final=True))
+
+    failed_ids = [
+        collector.interaction_id_for_session(1),
+        collector.interaction_id_for_session(2),
+    ]
+    reference_id = collector.interaction_id_for_session(3)
+    group_id = collector.create_association(
+        kind="asr",
+        subtype="dictation_retry",
+        relation_type="probable_exact_repeat",
+        chosen={"interaction_id": reference_id},
+        rejected=[{"interaction_id": item} for item in failed_ids],
+        source="auto_recommended",
+    )
+    group = collector.load_associations()[0]
+    assert group["association_id"] == group_id
+    assert group["kind"] == "asr"
+    assert group["chosen"]["interaction_id"] == reference_id
+    assert group["member_interaction_ids"] == [reference_id, *failed_ids]
+    for interaction_id in group["member_interaction_ids"]:
+        record = json.loads(
+            (collector.interactions_root / interaction_id / "record.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert group_id in record["association_ids"]
+    assert collector.association_index_path.is_file()
 
 
 def test_collection_race_waits_for_and_records_both_parallel_branches():

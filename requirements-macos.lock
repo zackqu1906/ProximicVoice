@@ -5,6 +5,7 @@ torch==2.11.0
 torchaudio==2.11.0
 funasr==1.4.2
 modelscope==1.39.1
+modelscope-hub==0.3.0
 transformers==5.15.0
 PySide6==6.11.1
 PySide6-Addons==6.11.1
@@ -15,6 +16,5 @@ bleak==3.0.2
 asr-decoder==0.1.2
 online-fbank==0.0.4
 kaldi-native-fbank==1.22.3
-pyopenjtalk-plus==0.4.1.post9
 websocket-client==1.9.0
 opuslib==3.0.1

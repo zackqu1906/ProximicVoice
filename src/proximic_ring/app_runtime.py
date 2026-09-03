@@ -8,6 +8,7 @@ does not need to spawn or scrape a terminal process.
 from __future__ import annotations
 
 from argparse import Namespace
+from collections import deque
 import ctypes
 from dataclasses import dataclass
 import os
@@ -15,7 +16,10 @@ from pathlib import Path
 import re
 import sys
 import threading
+import time
 from typing import Callable
+
+import numpy as np
 
 from .asr import ASRBackendCache
 from .audio import RingAudioSource
@@ -35,6 +39,105 @@ WINDOWS_DESKTOP_INPUT_SUPPORTED = os.name == "nt"
 DESKTOP_TEXT_INJECTION_SUPPORTED = (
     WINDOWS_DESKTOP_INPUT_SUPPORTED or sys.platform == "darwin"
 )
+ASR_GAIN_DB_MIN = 0.0
+ASR_GAIN_DB_MAX = 12.0
+ASR_GAIN_DB_DEFAULT = 0.0
+IMU_SAMPLE_RATE_HZ = 50
+IMU_BUFFER_SECONDS = 45.0
+IMU_SYNC_MARGIN_MS = 300.0
+
+
+class _ImuSampleBuffer:
+    """Bounded, thread-safe bridge from BLE callbacks to utterance records."""
+
+    def __init__(
+        self,
+        *,
+        sample_rate_hz: int = IMU_SAMPLE_RATE_HZ,
+        buffer_seconds: float = IMU_BUFFER_SECONDS,
+    ) -> None:
+        self.sample_rate_hz = int(sample_rate_hz)
+        self._max_age_ns = int(float(buffer_seconds) * 1_000_000_000)
+        self._rows: deque[dict] = deque()
+        self._lock = threading.Lock()
+
+    def append(self, row: dict) -> None:
+        received_ns = int(row["host_monotonic_ns"])
+        cutoff_ns = received_ns - self._max_age_ns
+        with self._lock:
+            self._rows.append(dict(row))
+            while self._rows and int(
+                self._rows[0]["host_monotonic_ns"]
+            ) < cutoff_ns:
+                self._rows.popleft()
+
+    def slice_for_audio(
+        self,
+        audio_duration_s: float,
+        *,
+        end_monotonic_ns: int | None = None,
+    ) -> tuple[list[dict], dict]:
+        end_ns = int(end_monotonic_ns or time.monotonic_ns())
+        duration_ns = max(0, int(float(audio_duration_s) * 1_000_000_000))
+        margin_ns = int(IMU_SYNC_MARGIN_MS * 1_000_000)
+        audio_start_ns = end_ns - duration_ns
+        lower_ns = audio_start_ns - margin_ns
+        upper_ns = end_ns + margin_ns
+        with self._lock:
+            selected = [
+                dict(row)
+                for row in self._rows
+                if lower_ns <= int(row["host_monotonic_ns"]) <= upper_ns
+            ]
+
+        for row in selected:
+            row["relative_to_audio_start_ms"] = round(
+                (int(row["host_monotonic_ns"]) - audio_start_ns) / 1_000_000,
+                3,
+            )
+
+        offsets = [
+            int(row["host_monotonic_ns"]) / 1_000_000
+            - float(row["device_uptime_ms"])
+            for row in selected
+        ]
+        clock_offset_ms = float(np.median(offsets)) if offsets else None
+        sample_indexes = sorted(
+            {int(row["sample_index"]) for row in selected}
+        )
+        dropped_samples = 0
+        if len(sample_indexes) >= 2:
+            dropped_samples = max(
+                0,
+                sample_indexes[-1] - sample_indexes[0] + 1 - len(sample_indexes),
+            )
+        return selected, {
+            "sample_rate_hz": self.sample_rate_hz,
+            "clock_offset_ms": clock_offset_ms,
+            "dropped_samples": dropped_samples,
+            "sync_method": "host_monotonic_receive_window_v1",
+            "sync_margin_ms": IMU_SYNC_MARGIN_MS,
+            "audio_duration_ms": round(float(audio_duration_s) * 1000, 3),
+            "audio_end_monotonic_ns": end_ns,
+        }
+
+
+def apply_asr_gain(audio_16k: object, gain_db: float) -> np.ndarray:
+    """Apply bounded ASR-only gain without changing detector input or timing."""
+
+    gain_db = float(gain_db)
+    if not np.isfinite(gain_db):
+        raise ValueError("ASR gain must be finite")
+    if not ASR_GAIN_DB_MIN <= gain_db <= ASR_GAIN_DB_MAX:
+        raise ValueError(
+            f"ASR gain must be between {ASR_GAIN_DB_MIN:g} and "
+            f"{ASR_GAIN_DB_MAX:g} dB"
+        )
+    audio = np.asarray(audio_16k, dtype=np.float32).reshape(-1)
+    if gain_db == 0.0 or not audio.size:
+        return audio
+    scale = np.float32(10.0 ** (gain_db / 20.0))
+    return np.clip(audio * scale, -1.0, 1.0).astype(np.float32, copy=False)
 
 
 def normalize_funasr_nano_hotwords(value: str) -> tuple[str, ...]:
@@ -112,8 +215,9 @@ class RuntimeSettings:
     streaming_sensevoice_repo: Path | None = None
     funasr_nano_repo: Path | None = None
     funasr_nano_hotwords: str = ""
+    asr_gain_db: float = ASR_GAIN_DB_DEFAULT
 
-    asr_pre_roll_s: float = 1.5
+    asr_pre_roll_s: float = 1.0
     asr_end_rejects: int = 2
     asr_stage1_inactivity_s: float = 1.25
     asr_min_duration_s: float = 0.40
@@ -124,13 +228,25 @@ class RuntimeSettings:
     # Passed only to the selected online ASR backend.  Environment-variable
     # lookup inside that backend remains available for CLI compatibility.
     asr_api_key: str = ""
+    # IMU is dataset evidence only.  It never gates the detector/audio path.
+    collect_imu: bool = True
+    imu_sample_rate_hz: int = IMU_SAMPLE_RATE_HZ
 
     def to_namespace(self) -> Namespace:
         backend = self.asr_backend.strip().lower().replace("-", "_")
         model_entry = f"{backend}={self.asr_model}" if self.asr_model else None
         hotwords = normalize_funasr_nano_hotwords(self.funasr_nano_hotwords)
-        if backend == "funasr_nano" and hotwords:
-            asr_options = [f"funasr_nano.hotwords={','.join(hotwords)}"]
+        if backend == "streaming_sensevoice":
+            # The QML flow already receives stable streaming text. Flushing
+            # that session is much faster than decoding the whole utterance a
+            # second time after the detector has ended it.
+            asr_options = ["streaming_sensevoice.final_redecode=false"]
+        elif backend == "funasr_nano":
+            asr_options = ["funasr_nano.final_redecode=false"]
+            if hotwords:
+                asr_options.append(
+                    f"funasr_nano.hotwords={','.join(hotwords)}"
+                )
         elif backend == "volcengine" and self.asr_api_key.strip():
             asr_options = [f"volcengine.api_key={self.asr_api_key.strip()}"]
         else:
@@ -191,6 +307,7 @@ class RecognitionRuntime:
         disconnect_event: threading.Event,
         recognition_event: threading.Event,
         *,
+        cancel_utterance_event: threading.Event | None = None,
         on_update: Callable[[object], None],
         on_state: Callable[[str], None],
         on_connected: Callable[[], None],
@@ -198,8 +315,14 @@ class RecognitionRuntime:
         on_started: Callable[[], None],
         on_push_to_talk: Callable[[bool], None] | None = None,
         on_raw_audio: Callable[[int, object], None] | None = None,
+        on_raw_imu: Callable[[int, object, dict], None] | None = None,
     ) -> None:
         args = self.settings.to_namespace()
+        imu_buffer = (
+            _ImuSampleBuffer(sample_rate_hz=self.settings.imu_sample_rate_hz)
+            if self.settings.collect_imu and on_raw_imu is not None
+            else None
+        )
         source = RingAudioSource(
             name_keyword=args.name,
             selector=args.selector,
@@ -207,6 +330,8 @@ class RecognitionRuntime:
             timeout_s=args.timeout,
             encoding=args.encoding,
             data_root=args.data_dir,
+            imu_observer=imu_buffer.append if imu_buffer is not None else None,
+            imu_hz=self.settings.imu_sample_rate_hz,
         )
         detector = None
         controller = None
@@ -214,6 +339,22 @@ class RecognitionRuntime:
         connection_attempted = threading.Event()
         source_disconnected = threading.Event()
         source_close_lock = threading.Lock()
+
+        def publish_raw_utterance(session_id: int, audio_16k: object) -> None:
+            if on_raw_audio is not None:
+                on_raw_audio(session_id, audio_16k)
+            if on_raw_imu is None or imu_buffer is None:
+                return
+            audio = np.asarray(audio_16k, dtype=np.float32).reshape(-1)
+            rows, metadata = imu_buffer.slice_for_audio(
+                audio.size / 16_000.0,
+                end_monotonic_ns=time.monotonic_ns(),
+            )
+            imu_error = getattr(source, "imu_error", None)
+            metadata["collection_error"] = (
+                str(imu_error) if imu_error is not None else None
+            )
+            on_raw_imu(session_id, rows, metadata)
 
         def close_source_and_report() -> None:
             """Close the physical device once and publish that independently."""
@@ -277,7 +418,11 @@ class RecognitionRuntime:
                 push_to_talk_observer=on_push_to_talk,
                 desktop_should_inject=external_window_has_focus,
                 backend_cache=self.asr_backend_cache,
-                raw_audio_observer=on_raw_audio,
+                raw_audio_observer=(
+                    publish_raw_utterance
+                    if on_raw_audio is not None or on_raw_imu is not None
+                    else None
+                ),
             )
             if source.error is not None:
                 raise RuntimeError(str(source.error)) from source.error
@@ -292,6 +437,20 @@ class RecognitionRuntime:
                 block = source.read(320)
                 if block is None:
                     break
+
+                if (
+                    cancel_utterance_event is not None
+                    and cancel_utterance_event.is_set()
+                ):
+                    cancel_utterance_event.clear()
+                    discard_current = getattr(controller, "discard_current", None)
+                    if callable(discard_current):
+                        discard_current()
+                    detector.reset()
+                    # Keep the user's recognition on/off choice unchanged.
+                    # The next block begins with clean detector/session clocks.
+                    recognition_was_enabled = recognition_event.is_set()
+                    continue
 
                 recognition_enabled = recognition_event.is_set()
                 if not recognition_enabled:
@@ -309,11 +468,16 @@ class RecognitionRuntime:
                     detector.reset()
                     controller.reset()
                 recognition_was_enabled = True
+                # ProxiMic always evaluates the untouched Ring waveform.  Gain
+                # is applied only after detection, so both ASR and the raw
+                # utterance observer/history receive the same enhanced audio.
                 events = detector.feed(block)
                 for event in events:
                     if isinstance(event, Stage2Event):
                         on_state(format_event(event))
-                controller.process(block, events)
+                controller.process(
+                    apply_asr_gain(block, self.settings.asr_gain_db), events
+                )
 
             if recognition_was_enabled and not disconnect_event.is_set():
                 controller.flush()

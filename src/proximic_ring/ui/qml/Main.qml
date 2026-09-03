@@ -214,6 +214,72 @@ ApplicationWindow {
         }
     }
 
+    Dialog {
+        id: runtimeLogDialog
+        objectName: "runtimeLogDialog"
+        parent: Overlay.overlay
+        x: Math.round((parent.width - width) / 2)
+        y: Math.round((parent.height - height) / 2)
+        width: Math.min(820, parent.width - 48)
+        height: Math.min(620, parent.height - 48)
+        modal: true
+        popupType: Popup.Item
+        title: "完整实时日志"
+        closePolicy: Popup.CloseOnEscape
+
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            ScrollView {
+                id: logScroll
+                objectName: "logScroll"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                clip: true
+
+                TextArea {
+                    id: logArea
+                    objectName: "logArea"
+                    width: logScroll.availableWidth
+                    readOnly: true
+                    textFormat: TextEdit.PlainText
+                    text: "尚未启动"
+                    color: root.textMuted
+                    font.family: Qt.platform.os === "osx" ? "Menlo" : "Cascadia Mono"
+                    font.pixelSize: 14
+                    wrapMode: TextEdit.Wrap
+                    selectByMouse: true
+                    background: Rectangle { color: root.panelAlt; radius: 10 }
+
+                    function refreshLog() {
+                        var nextText = appController.logText
+                        text = nextText.length > 0 ? nextText : "尚未启动"
+                        cursorPosition = length
+                    }
+
+                    Component.onCompleted: refreshLog()
+                    Connections {
+                        target: appController
+                        function onLogChanged() { logArea.refreshLog() }
+                    }
+                    onTextChanged: cursorPosition = length
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    Layout.fillWidth: true
+                    text: "日志会在窗口打开期间继续实时更新"
+                    color: root.textMuted
+                    font.pixelSize: 11
+                }
+                Button { text: "清空"; onClicked: appController.clearLog() }
+                Button { text: "关闭"; onClicked: runtimeLogDialog.close() }
+            }
+        }
+    }
+
     header: Rectangle {
         height: 78
         color: "#0D1118"
@@ -250,6 +316,13 @@ ApplicationWindow {
             }
 
             Item { Layout.fillWidth: true }
+
+            Button {
+                id: runtimeLogButton
+                objectName: "runtimeLogButton"
+                text: "实时日志"
+                onClicked: runtimeLogDialog.open()
+            }
 
             Rectangle {
                 implicitWidth: statusRow.implicitWidth + 26
@@ -405,9 +478,9 @@ ApplicationWindow {
                         Layout.alignment: Qt.AlignHCenter
                         Layout.maximumWidth: 430
                         text: appController.inputRoutingMode === "auto"
-                              ? "下一段语音说完后由所选 LLM 自动判断：听写会输入到光标，编辑指令会生成修改预览"
+                              ? "自动判断听写/指令；判断后可按 Tab 纠正，整句处理期间按 Esc 取消"
                               : (appController.inputMode === "edit"
-                              ? "把光标留在目标文本框，下一段语音是修改要求；生成预览后再确认"
+                              ? "把光标留在目标文本框；修改预览 2 秒后自动应用，Enter 立即应用，Esc 取消"
                               : (appController.llmEnabled
                                  ? "下一段语音经文本 LLM 整理后，输入到当前外部文本框"
                                  : "下一段语音直接采用 ASR 最终结果，不再经过文本 LLM"))
@@ -424,14 +497,16 @@ ApplicationWindow {
 
                         Button {
                             objectName: "confirmEditButton"
-                            text: "确认应用"
+                            text: appController.editAutoConfirmText === ""
+                                  ? "立即应用"
+                                  : "立即应用 · " + appController.editAutoConfirmText
                             visible: appController.reviewCanConfirm
-                            onClicked: appController.confirmEdit()
+                            onClicked: appController.dispatchVoiceAction("confirm")
                         }
                         Button {
                             objectName: "cancelEditButton"
                             text: "取消"
-                            onClicked: appController.cancelEdit()
+                            onClicked: appController.dispatchVoiceAction("cancel")
                         }
                     }
 
@@ -552,8 +627,11 @@ ApplicationWindow {
             }
 
             Rectangle {
+                id: voiceHistoryCard
+                objectName: "voiceHistoryCard"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 250
+                Layout.fillHeight: true
+                Layout.minimumHeight: 250
                 radius: 18
                 color: root.panel
                 border.color: root.border
@@ -580,7 +658,7 @@ ApplicationWindow {
                         delegate: Rectangle {
                             required property var modelData
                             width: voiceHistoryList.width
-                            height: Math.max(68, historyText.implicitHeight + 34)
+                            height: Math.max(68, historyContent.implicitHeight + 18)
                             radius: 10
                             color: root.panelAlt
                             border.color: root.border
@@ -594,6 +672,7 @@ ApplicationWindow {
                                 spacing: 10
 
                                 ColumnLayout {
+                                    id: historyContent
                                     Layout.fillWidth: true
                                     spacing: 4
                                     Label {
@@ -611,6 +690,23 @@ ApplicationWindow {
                                         font.pixelSize: 13
                                         wrapMode: Text.Wrap
                                     }
+                                    Label {
+                                        Layout.fillWidth: true
+                                        visible: Boolean(modelData.candidateText)
+                                                 && modelData.candidateText !== modelData.text
+                                        text: "处理结果：" + modelData.candidateText
+                                        color: "#C9B2F2"
+                                        font.pixelSize: 12
+                                        wrapMode: Text.Wrap
+                                    }
+                                }
+                                Button {
+                                    objectName: "voiceHistoryOpenLocationButton"
+                                    Layout.minimumWidth: 76
+                                    Layout.preferredWidth: 76
+                                    text: "打开位置"
+                                    font.pixelSize: 12
+                                    onClicked: appController.openVoiceHistoryLocation(modelData.audioPath)
                                 }
                                 Button {
                                     objectName: "voiceHistoryPlayButton"
@@ -639,61 +735,30 @@ ApplicationWindow {
                             font.pixelSize: 12
                         }
                     }
-                }
-            }
 
-            Rectangle {
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                radius: 18
-                color: root.panel
-                border.color: root.border
-                ColumnLayout {
-                    anchors.fill: parent
-                    anchors.margins: 18
                     RowLayout {
                         Layout.fillWidth: true
-                        Label { text: "运行日志"; color: root.textMain; font.pixelSize: 14; font.bold: true }
-                        Item { Layout.fillWidth: true }
-                        ToolButton { text: "清空"; onClicked: appController.clearLog() }
-                    }
-                    ScrollView {
-                        id: logScroll
-                        objectName: "logScroll"
-                        Layout.fillWidth: true
-                        Layout.fillHeight: true
-                        clip: true
-                        TextArea {
-                            id: logArea
-                            objectName: "logArea"
-                            width: logScroll.availableWidth
-                            readOnly: true
-                            textFormat: TextEdit.PlainText
-                            text: "尚未启动"
-                            color: root.textMuted
-                            font.family: Qt.platform.os === "osx" ? "Menlo" : "Cascadia Mono"
-                            font.pixelSize: 14
-                            wrapMode: TextEdit.Wrap
-                            background: Rectangle { color: "transparent" }
+                        spacing: 8
 
-                            function refreshLog() {
-                                var nextText = appController.logText
-                                text = nextText.length > 0 ? nextText : "尚未启动"
-                                cursorPosition = length
-                            }
-
-                            Component.onCompleted: refreshLog()
-                            Connections {
-                                target: appController
-                                function onLogChanged() { logArea.refreshLog() }
-                            }
-                            onTextChanged: {
-                                cursorPosition = length
-                            }
+                        Switch {
+                            objectName: "smartAssociationSwitch"
+                            Layout.fillWidth: true
+                            text: "智能关联推荐"
+                            checked: appController.smartAssociationEnabled
+                            onToggled: appController.smartAssociationEnabled = checked
+                        }
+                        Button {
+                            objectName: "openAssociationCenterButton"
+                            Layout.minimumWidth: 132
+                            text: "数据关联中心"
+                            onClicked: appController.performAssociationAction(
+                                "center.open", ""
+                            )
                         }
                     }
                 }
             }
+
         }
 
         Rectangle {
@@ -778,6 +843,44 @@ ApplicationWindow {
                         text: appController.asrModel
                         placeholderText: appController.asrBackend === "funasr_nano" ? "留空则优先使用本地 checkpoint" : ""
                         onEditingFinished: appController.asrModel = text
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        Label {
+                            text: "ASR 输入增益"
+                            color: root.textMuted
+                            font.pixelSize: 12
+                        }
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            text: "+" + appController.asrGainDb.toFixed(0) + " dB"
+                            color: root.textMain
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                    }
+                    Slider {
+                        id: asrGainSlider
+                        objectName: "asrGainSlider"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        from: 0
+                        to: 12
+                        stepSize: 1
+                        value: appController.asrGainDb
+                        onMoved: appController.asrGainDb = value
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "仅增强送入 ASR 和语音记录的音频，不影响近点模型。默认 0 dB；弱声可先试 +6 dB，过高可能削波，重新连接后生效。"
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
                     }
                     RowLayout {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; spacing: 10
@@ -1168,7 +1271,7 @@ ApplicationWindow {
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "macOS 听写和编辑可作用于当前文本框；首次使用请在系统设置的“隐私与安全性 → 辅助功能”中允许 Proximic Voice。编辑预览支持 Enter 确认、Esc 取消；右 Alt 控制仍仅支持 Windows。"
+                        text: "macOS 听写和编辑可作用于当前文本框；首次使用请在系统设置的“隐私与安全性 → 辅助功能”中允许 Proximic Voice。整句支持 Esc 取消，自动分类后 Tab 纠错，编辑预览 Enter 立即应用；右 Alt 控制仍仅支持 Windows。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                         visible: Qt.platform.os !== "windows"
                     }
@@ -1221,7 +1324,9 @@ ApplicationWindow {
                 id: overlayContent
                 anchors.centerIn: parent
                 width: parent.width - 36
-                spacing: appController.reviewPending ? 10 : 0
+                spacing: (appController.reviewPending
+                          || appController.interactionCanCancel
+                          || appController.undoAvailable) ? 10 : 0
 
                 RowLayout {
                     width: parent.width
@@ -1291,71 +1396,630 @@ ApplicationWindow {
                     font.pixelSize: 17
                     wrapMode: Text.Wrap
                 }
+
+                RowLayout {
+                    width: parent.width
+                    visible: appController.interactionCanCancel
+                             || appController.undoAvailable
+                    spacing: 8
+
+                    Label {
+                        Layout.fillWidth: true
+                        visible: appController.reviewCanConfirm
+                        text: appController.editAutoConfirmText
+                        color: "#C9B2F2"
+                        font.family: root.uiFontFamily
+                        font.pixelSize: 12
+                    }
+
+                    Button {
+                        objectName: "switchModeButton"
+                        visible: appController.modeCorrectionAvailable
+                        text: appController.modeCorrectionLabel + " · Tab"
+                        onClicked: appController.dispatchVoiceAction("switch_mode")
+                    }
+
+                    Button {
+                        objectName: "overlayConfirmButton"
+                        visible: appController.reviewCanConfirm
+                        text: "立即应用 · Enter"
+                        onClicked: appController.dispatchVoiceAction("confirm")
+                    }
+
+                    Button {
+                        objectName: "cancelUtteranceButton"
+                        visible: appController.interactionCanCancel
+                        text: "取消本句 · Esc"
+                        onClicked: appController.dispatchVoiceAction("cancel")
+                    }
+
+                    Button {
+                        objectName: "undoAppliedButton"
+                        visible: appController.undoAvailable
+                        text: "撤回上次结果 · "
+                              + appController.undoRemainingSeconds + "s"
+                        onClicked: appController.dispatchVoiceAction("undo")
+                    }
+                }
+
             }
         }
     }
 
     Window {
-        id: feedbackReasonOverlay
-        objectName: "feedbackReasonOverlay"
-        width: 250
-        height: 166
-        readonly property real rightSideX: transcriptOverlay.x + transcriptOverlay.width + 12
-        x: rightSideX + width <= Screen.width - 16
-           ? rightSideX
-           : Math.max(16, transcriptOverlay.x + transcriptOverlay.width - width)
-        y: rightSideX + width <= Screen.width - 16
-           ? Math.max(16, transcriptOverlay.y + transcriptOverlay.height - height)
-           : Math.max(16, transcriptOverlay.y - height - 12)
-        visible: appController.feedbackReasonVisible
+        id: associationRecommendationOverlay
+        objectName: "associationRecommendationOverlay"
+        readonly property bool hasTargetBounds:
+            appController.associationPopupTargetWidth > 0
+            && appController.associationPopupTargetHeight > 0
+        width: 430
+        height: 194
+        x: {
+            var preferred = Screen.width - width - 32
+            if (hasTargetBounds) {
+                var right = appController.associationPopupTargetX
+                          + appController.associationPopupTargetWidth + 12
+                var left = appController.associationPopupTargetX - width - 12
+                preferred = right + width <= Screen.width - 12 ? right : left
+            }
+            return Math.round(Math.max(12, Math.min(Screen.width - width - 12,
+                                                     preferred)))
+        }
+        y: {
+            var preferred = hasTargetBounds
+                    ? appController.associationPopupTargetY : 72
+            var maximum = appController.transcriptVisible
+                    ? transcriptOverlay.y - height - 12
+                    : Screen.height - height - 20
+            return Math.round(Math.max(20, Math.min(maximum, preferred)))
+        }
+        visible: appController.associationRecommendationVisible
+                 && !appController.associationDetailVisible
+                 && !appController.associationCenterVisible
         color: "transparent"
         flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool)
                | Qt.FramelessWindowHint
                | Qt.WindowStaysOnTopHint
-               | Qt.WindowDoesNotAcceptFocus
+        onClosing: function(close) {
+            close.accepted = false
+            appController.performAssociationAction("recommendation.reject", "")
+        }
 
         Rectangle {
             anchors.fill: parent
             radius: 16
             color: "#F2141924"
-            border.color: "#637892FF"
+            border.color: "#8A4DD4AC"
             border.width: 1
 
-            Column {
+            ColumnLayout {
                 anchors.fill: parent
                 anchors.margins: 16
-                spacing: 7
+                spacing: 9
 
                 Label {
-                    text: appController.feedbackReasonPrompt
-                    color: "#F5F7FB"
-                    font.family: root.uiFontFamily
+                    Layout.fillWidth: true
+                    text: appController.associationRecommendationTitle
+                    color: root.textMain
                     font.pixelSize: 15
                     font.bold: true
                 }
                 Label {
-                    text: "Alt+A   语音识别错误"
-                    color: "#DDE5F2"
-                    font.family: root.uiFontFamily
+                    Layout.fillWidth: true
+                    text: appController.associationRecommendationPositiveLabel
+                          + "："
+                          + appController.associationRecommendationPositiveText
+                    color: "#8BE2C5"
                     font.pixelSize: 13
+                    wrapMode: Text.Wrap
+                    maximumLineCount: 2
+                    elide: Text.ElideRight
+                }
+                Item { Layout.fillHeight: true }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Button {
+                        objectName: "acceptAssociationRecommendationButton"
+                        Layout.minimumWidth: 92
+                        text: "关联"
+                        onClicked: appController.performAssociationAction(
+                            "recommendation.accept", ""
+                        )
+                    }
+                    Button {
+                        objectName: "showAssociationDetailsButton"
+                        Layout.minimumWidth: 108
+                        text: "查看详情"
+                        onClicked: appController.performAssociationAction(
+                            "recommendation.details.open", ""
+                        )
+                    }
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        objectName: "rejectAssociationRecommendationButton"
+                        Layout.minimumWidth: 92
+                        text: "不关联"
+                        onClicked: appController.performAssociationAction(
+                            "recommendation.reject", ""
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    Window {
+        id: associationDetailsWindow
+        objectName: "associationDetailsWindow"
+        width: 620
+        height: 560
+        minimumWidth: 540
+        minimumHeight: 420
+        x: Math.round((Screen.width - width) / 2)
+        y: appController.transcriptVisible
+           ? Math.round(Math.max(20, transcriptOverlay.y - height - 16))
+           : Math.round((Screen.height - height) / 2)
+        visible: appController.associationDetailVisible
+        title: "推荐关联详情"
+        color: root.color
+        flags: Qt.Window | Qt.WindowStaysOnTopHint
+        onClosing: function(close) {
+            close.accepted = false
+            appController.performAssociationAction(
+                "recommendation.details.close", ""
+            )
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 18
+            spacing: 12
+
+            Label {
+                text: "推荐关联详情"
+                color: root.textMain
+                font.pixelSize: 19
+                font.bold: true
+            }
+            Label {
+                text: appController.associationRecommendationTitle
+                color: root.textMuted
+                font.pixelSize: 12
+            }
+            ListView {
+                id: associationDetailsList
+                objectName: "associationDetailsList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                spacing: 10
+                clip: true
+                model: appController.associationDetailEntries
+                ScrollBar.vertical: ScrollBar { }
+                delegate: Rectangle {
+                    required property var modelData
+                    width: associationDetailsList.width
+                    height: detailColumn.implicitHeight + 24
+                    radius: 12
+                    color: modelData.role === "chosen" ? "#253E3540" : "#3A282D40"
+                    border.width: 2
+                    border.color: modelData.role === "chosen" ? "#4DD4AC" : "#FF646F"
+                    ColumnLayout {
+                        id: detailColumn
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 12
+                        spacing: 6
+                        Label {
+                            text: modelData.role === "chosen" ? "✓ 正例" : "× 反例"
+                            color: modelData.role === "chosen" ? "#8BE2C5" : "#FF9DA5"
+                            font.bold: true
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "ASR：" + modelData.asrText
+                            color: root.textMain
+                            wrapMode: Text.Wrap
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            visible: Boolean(modelData.resultText)
+                            text: "结果：" + modelData.resultText
+                            color: root.textMain
+                            wrapMode: Text.Wrap
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData.status
+                                color: root.textMuted
+                                font.pixelSize: 11
+                            }
+                            Button {
+                                Layout.minimumWidth: 92
+                                visible: Boolean(modelData.audioPath)
+                                text: "播放录音"
+                                onClicked: appController.playVoiceHistory(
+                                    modelData.audioPath
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    Layout.minimumWidth: 112
+                    text: "关联"
+                    onClicked: appController.performAssociationAction(
+                        "recommendation.accept", ""
+                    )
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    Layout.minimumWidth: 112
+                    text: "不关联"
+                    onClicked: appController.performAssociationAction(
+                        "recommendation.reject", ""
+                    )
+                }
+            }
+        }
+    }
+
+    Window {
+        id: associationCenterWindow
+        objectName: "associationCenterWindow"
+        width: 760
+        height: 680
+        minimumWidth: 640
+        minimumHeight: 520
+        x: Math.round((Screen.width - width) / 2)
+        y: appController.transcriptVisible
+           ? Math.round(Math.max(20, transcriptOverlay.y - height - 16))
+           : Math.round((Screen.height - height) / 2)
+        visible: appController.associationCenterVisible
+        title: "数据关联中心"
+        color: root.color
+        onClosing: function(close) {
+            close.accepted = false
+            appController.performAssociationAction("center.close", "")
+        }
+
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 12
+
+            RowLayout {
+                Layout.fillWidth: true
+                Label {
+                    text: "数据关联中心"
+                    color: root.textMain
+                    font.pixelSize: 20
+                    font.bold: true
+                }
+                Item { Layout.fillWidth: true }
+                Button {
+                    visible: appController.associationCenterStage !== "home"
+                    Layout.minimumWidth: 104
+                    text: "上一步"
+                    onClicked: appController.performAssociationAction(
+                        "center.back", ""
+                    )
+                }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                visible: appController.associationCenterStage !== "home"
+                text: appController.associationCenterStage === "type"
+                      ? "步骤 1/3 · 选择关联类型"
+                      : appController.associationCenterStage === "select"
+                        ? "步骤 2/3 · 选择一个正例和一个或多个反例"
+                        : "步骤 3/3 · 确认并创建关联"
+                color: root.textMuted
+                font.pixelSize: 12
+            }
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: appController.associationCenterStage === "home"
+                spacing: 16
+
+                Item { Layout.fillHeight: true }
+                Label {
+                    Layout.alignment: Qt.AlignHCenter
+                    text: appController.associationCenterLastCreatedId === ""
+                          ? "每次操作只创建一个独立的 Association"
+                          : "已创建关联："
+                            + appController.associationCenterLastCreatedId
+                    color: appController.associationCenterLastCreatedId === ""
+                           ? root.textMuted : "#8BE2C5"
+                    font.pixelSize: 14
                 }
                 Label {
-                    text: "Alt+L   大模型理解错误"
-                    color: "#DDE5F2"
-                    font.family: root.uiFontFamily
-                    font.pixelSize: 13
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.maximumWidth: 480
+                    text: "选择类型、正例和反例后，最后确认才会写入关联。"
+                    color: root.textMuted
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
                 }
-                Label {
-                    text: "Alt+O   其他原因"
-                    color: "#DDE5F2"
-                    font.family: root.uiFontFamily
-                    font.pixelSize: 13
+                Button {
+                    objectName: "createAssociationButton"
+                    Layout.alignment: Qt.AlignHCenter
+                    Layout.minimumWidth: 180
+                    Layout.preferredHeight: 48
+                    text: "创建一次关联"
+                    onClicked: appController.performAssociationAction(
+                        "center.create", ""
+                    )
                 }
+                Item { Layout.fillHeight: true }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: appController.associationCenterStage === "type"
+                spacing: 14
+                Button {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 74
+                    text: "ASR关联\n听写与编辑指令"
+                    onClicked: appController.performAssociationAction(
+                        "center.kind", "asr"
+                    )
+                }
+                Button {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 74
+                    text: "LLM关联\n正确结果与失败编辑"
+                    onClicked: appController.performAssociationAction(
+                        "center.kind", "llm"
+                    )
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: appController.associationCenterStage === "select"
+                         && appController.associationCenterKind === "asr"
+                Button {
+                    Layout.minimumWidth: 120
+                    text: "听写记录"
+                    highlighted: appController.associationCenterAsrSubtype
+                                 === "dictation_retry"
+                    onClicked: appController.performAssociationAction(
+                        "center.asrSubtype", "dictation_retry"
+                    )
+                }
+                Button {
+                    Layout.minimumWidth: 120
+                    text: "编辑指令记录"
+                    highlighted: appController.associationCenterAsrSubtype
+                                 === "instruction_retry"
+                    onClicked: appController.performAssociationAction(
+                        "center.asrSubtype", "instruction_retry"
+                    )
+                }
+                Item { Layout.fillWidth: true }
+            }
+
+            ListView {
+                id: associationCenterList
+                objectName: "associationCenterList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: appController.associationCenterStage === "select"
+                spacing: 9
+                clip: true
+                model: appController.associationCenterEntries
+                ScrollBar.vertical: ScrollBar { }
+                delegate: Rectangle {
+                    required property var modelData
+                    readonly property string selectedRole: {
+                        appController.associationCenterSelectionSummary
+                        return appController.associationCenterRole(
+                            modelData.interactionId || ""
+                        )
+                    }
+                    width: associationCenterList.width
+                    height: centerCardColumn.implicitHeight + 22
+                    radius: 11
+                    color: selectedRole === "chosen"
+                           ? "#253E3540"
+                           : selectedRole === "rejected"
+                             ? "#3A282D40" : root.panelAlt
+                    border.width: selectedRole === "" ? 1 : 2
+                    border.color: selectedRole === "chosen"
+                                  ? "#4DD4AC"
+                                  : selectedRole === "rejected"
+                                    ? "#FF646F" : root.border
+                    ColumnLayout {
+                        id: centerCardColumn
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 11
+                        spacing: 5
+                        Label {
+                            text: (selectedRole === "chosen" ? "✓ 正例 · "
+                                  : selectedRole === "rejected" ? "× 反例 · " : "")
+                                  + modelData.displayTime
+                            color: selectedRole === "chosen"
+                                   ? "#8BE2C5"
+                                   : selectedRole === "rejected"
+                                     ? "#FF9DA5" : root.textMuted
+                            font.bold: selectedRole !== ""
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "ASR：" + (modelData.asrText || "（未识别出文本）")
+                            color: root.textMain
+                            wrapMode: Text.Wrap
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            visible: Boolean(modelData.resultText)
+                            text: "结果：" + modelData.resultText
+                            color: root.textMain
+                            wrapMode: Text.Wrap
+                        }
+                        RowLayout {
+                            Layout.fillWidth: true
+                            Label {
+                                Layout.fillWidth: true
+                                text: modelData.statusLabel
+                                color: root.textMuted
+                                font.pixelSize: 11
+                            }
+                            Button {
+                                Layout.minimumWidth: 74
+                                enabled: Boolean(modelData.audioPath)
+                                text: "播放"
+                                onClicked: appController.playVoiceHistory(
+                                    modelData.audioPath
+                                )
+                            }
+                            Button {
+                                Layout.minimumWidth: 108
+                                text: selectedRole === "chosen"
+                                      ? "✓ 已设为正例" : "设为正例"
+                                onClicked: appController.performAssociationAction(
+                                    "center.chosen", modelData.interactionId || ""
+                                )
+                            }
+                            Button {
+                                Layout.minimumWidth: 108
+                                text: selectedRole === "rejected"
+                                      ? "× 已设为反例" : "设为反例"
+                                onClicked: appController.performAssociationAction(
+                                    "center.rejected", modelData.interactionId || ""
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            Label {
+                Layout.alignment: Qt.AlignHCenter
+                visible: appController.associationCenterStage === "select"
+                         && associationCenterList.count === 0
+                text: "没有尚未关联的可用记录"
+                color: root.textMuted
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: appController.associationCenterStage === "select"
                 Label {
-                    text: "10 秒内不选择则不标记"
-                    color: "#8F9BAD"
-                    font.family: root.uiFontFamily
-                    font.pixelSize: 11
+                    Layout.fillWidth: true
+                    text: appController.associationCenterSelectionSummary
+                    color: appController.associationCenterCanSave
+                           ? "#8BE2C5" : root.textMuted
+                }
+                Button {
+                    Layout.minimumWidth: 108
+                    text: "加载更早记录"
+                    onClicked: appController.performAssociationAction(
+                        "center.loadMore", ""
+                    )
+                }
+                Button {
+                    Layout.minimumWidth: 96
+                    text: "清空选择"
+                    onClicked: appController.performAssociationAction(
+                        "center.clear", ""
+                    )
+                }
+                Button {
+                    Layout.minimumWidth: 128
+                    enabled: appController.associationCenterCanSave
+                    text: "下一步：确认"
+                    onClicked: appController.performAssociationAction(
+                        "center.confirm", ""
+                    )
+                }
+            }
+
+            ListView {
+                id: associationConfirmationList
+                objectName: "associationConfirmationList"
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                visible: appController.associationCenterStage === "confirm"
+                spacing: 10
+                clip: true
+                model: appController.associationCenterConfirmationEntries
+                ScrollBar.vertical: ScrollBar { }
+                delegate: Rectangle {
+                    required property var modelData
+                    width: associationConfirmationList.width
+                    height: confirmationColumn.implicitHeight + 22
+                    radius: 11
+                    color: modelData.role === "chosen" ? "#253E3540" : "#3A282D40"
+                    border.width: 2
+                    border.color: modelData.role === "chosen" ? "#4DD4AC" : "#FF646F"
+
+                    ColumnLayout {
+                        id: confirmationColumn
+                        anchors.left: parent.left
+                        anchors.right: parent.right
+                        anchors.top: parent.top
+                        anchors.margins: 11
+                        spacing: 6
+                        Label {
+                            text: modelData.role === "chosen" ? "✓ 正例" : "× 反例"
+                            color: modelData.role === "chosen" ? "#8BE2C5" : "#FF9DA5"
+                            font.bold: true
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            text: "ASR：" + (modelData.asrText || "（未识别出文本）")
+                            color: root.textMain
+                            wrapMode: Text.Wrap
+                        }
+                        Label {
+                            Layout.fillWidth: true
+                            visible: Boolean(modelData.resultText)
+                            text: "结果：" + modelData.resultText
+                            color: root.textMain
+                            wrapMode: Text.Wrap
+                        }
+                    }
+                }
+            }
+
+            RowLayout {
+                Layout.fillWidth: true
+                visible: appController.associationCenterStage === "confirm"
+                Label {
+                    Layout.fillWidth: true
+                    text: (appController.associationCenterKind === "llm"
+                           ? "LLM / DPO 关联 · " : "ASR 关联 · ")
+                          + appController.associationCenterSelectionSummary
+                    color: root.textMuted
+                }
+                Button {
+                    Layout.minimumWidth: 112
+                    text: "返回修改"
+                    onClicked: appController.performAssociationAction(
+                        "center.back", ""
+                    )
+                }
+                Button {
+                    objectName: "commitAssociationButton"
+                    Layout.minimumWidth: 136
+                    text: "确定创建"
+                    onClicked: appController.performAssociationAction(
+                        "center.commit", ""
+                    )
                 }
             }
         }

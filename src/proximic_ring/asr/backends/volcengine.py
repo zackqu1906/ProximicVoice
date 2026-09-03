@@ -55,7 +55,11 @@ def _pcm16(audio_16k: np.ndarray) -> bytes:
         return b""
     if not np.all(np.isfinite(x)):
         raise ValueError("ASR audio contains NaN or infinity")
-    return (np.clip(x, -1.0, 1.0) * 32767.0).astype("<i2", copy=False).tobytes()
+    # Match VoiceHistoryStore's PCM16 quantization exactly so a saved WAV is a
+    # byte-for-byte record of the samples submitted to the cloud ASR.
+    return np.rint(np.clip(x, -1.0, 1.0) * 32767.0).astype(
+        "<i2", copy=False
+    ).tobytes()
 
 
 def _packet(

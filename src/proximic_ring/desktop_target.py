@@ -14,6 +14,7 @@ import os
 import sys
 import time
 from typing import Protocol
+import unicodedata
 import uuid
 
 from .desktop_output import MacOSUnicodeTextInjector, WindowsUnicodeTextInjector
@@ -22,6 +23,14 @@ from .windows_uia import UIATextControlRef, WindowsUIATextBridge
 
 if os.name == "nt":
     from ctypes import wintypes
+
+
+class _CGPoint(ctypes.Structure):
+    _fields_ = (("x", ctypes.c_double), ("y", ctypes.c_double))
+
+
+class _CGSize(ctypes.Structure):
+    _fields_ = (("width", ctypes.c_double), ("height", ctypes.c_double))
 
 
 class ClipboardBridge(Protocol):
@@ -41,6 +50,10 @@ class DesktopTargetRef:
     process_id: int = 0
     process_name: str = ""
     uia_control: UIATextControlRef | None = None
+    screen_x: int = 0
+    screen_y: int = 0
+    screen_width: int = 0
+    screen_height: int = 0
 
 
 @dataclass(frozen=True)
@@ -54,7 +67,19 @@ class DesktopTextTarget(Protocol):
     def capture_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot: ...
     def inject(self, target: DesktopTargetRef, text: str) -> None: ...
     def replace(self, snapshot: DesktopTextSnapshot, text: str) -> None: ...
+    def undo(self, target: DesktopTargetRef) -> None: ...
     def release_selection(self, target: DesktopTargetRef) -> None: ...
+
+
+def macos_texts_equivalent(actual: str, expected: str) -> bool:
+    """Compare user-visible macOS text without transport-only differences."""
+
+    def canonical(value: str) -> str:
+        normalized = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+        normalized = normalized.replace("\u2028", "\n").replace("\u2029", "\n")
+        return unicodedata.normalize("NFC", normalized)
+
+    return canonical(actual) == canonical(expected)
 
 
 class _MacOSAccessibilityTextBridge:
@@ -96,6 +121,12 @@ class _MacOSAccessibilityTextBridge:
             ctypes.c_void_p,
         )
         application_services.AXUIElementSetAttributeValue.restype = ctypes.c_int
+        application_services.AXValueGetValue.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_void_p,
+        )
+        application_services.AXValueGetValue.restype = ctypes.c_bool
         core_foundation.CFStringCreateWithCString.argtypes = (
             ctypes.c_void_p,
             ctypes.c_char_p,
@@ -162,6 +193,62 @@ class _MacOSAccessibilityTextBridge:
         finally:
             self._release(value, attribute, current_value, focused, application)
 
+    def focused_bounds(self, process_id: int) -> tuple[int, int, int, int]:
+        """Return the focused accessibility element's global screen bounds."""
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        focused = ctypes.c_void_p()
+        focused_attribute = None
+        position_attribute = None
+        size_attribute = None
+        position_value = ctypes.c_void_p()
+        size_value = ctypes.c_void_p()
+        try:
+            if not application:
+                return 0, 0, 0, 0
+            focused_attribute = self._cf_string("AXFocusedUIElement")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                application, focused_attribute, ctypes.byref(focused)
+            ) or not focused.value:
+                return 0, 0, 0, 0
+            position_attribute = self._cf_string("AXPosition")
+            size_attribute = self._cf_string("AXSize")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                focused.value, position_attribute, ctypes.byref(position_value)
+            ):
+                return 0, 0, 0, 0
+            if self._application_services.AXUIElementCopyAttributeValue(
+                focused.value, size_attribute, ctypes.byref(size_value)
+            ):
+                return 0, 0, 0, 0
+            point = _CGPoint()
+            size = _CGSize()
+            if not self._application_services.AXValueGetValue(
+                position_value.value, 1, ctypes.byref(point)
+            ):
+                return 0, 0, 0, 0
+            if not self._application_services.AXValueGetValue(
+                size_value.value, 2, ctypes.byref(size)
+            ):
+                return 0, 0, 0, 0
+            return (
+                int(round(point.x)),
+                int(round(point.y)),
+                max(0, int(round(size.width))),
+                max(0, int(round(size.height))),
+            )
+        finally:
+            self._release(
+                size_value.value,
+                position_value.value,
+                size_attribute,
+                position_attribute,
+                focused.value,
+                focused_attribute,
+                application,
+            )
+
     def _focused_value(
         self, process_id: int
     ) -> tuple[int | None, int | None, int | None]:
@@ -211,6 +298,8 @@ class MacOSDesktopTextTarget:
 
     KEY_A = 0
     KEY_C = 8
+    KEY_V = 9
+    KEY_Z = 6
     KEY_DELETE = 51
     KEY_RIGHT = 124
 
@@ -255,12 +344,23 @@ class MacOSDesktopTextTarget:
 
     def capture_reference(self) -> DesktopTargetRef:
         process_id, name = self._frontmost_application()
+        bounds = (0, 0, 0, 0)
+        focused_bounds = getattr(self._accessibility_text, "focused_bounds", None)
+        if callable(focused_bounds):
+            try:
+                bounds = tuple(int(item) for item in focused_bounds(process_id))
+            except BaseException:
+                bounds = (0, 0, 0, 0)
         return DesktopTargetRef(
             window_handle=0,
             control_handle=0,
             window_title=name,
             process_id=process_id,
             process_name=name,
+            screen_x=bounds[0],
+            screen_y=bounds[1],
+            screen_width=bounds[2],
+            screen_height=bounds[3],
         )
 
     def request_accessibility(self, *, prompt: bool = True) -> bool:
@@ -307,8 +407,46 @@ class MacOSDesktopTextTarget:
         return DesktopTextSnapshot(target=target, text=text)
 
     def inject(self, target: DesktopTargetRef, text: str) -> None:
+        value = str(text or "")
+        if not value:
+            return
+        # WeChat and several Chromium/Electron editors silently ignore
+        # CGEventKeyboardSetUnicodeString even though posting the event reports
+        # success. Clipboard paste is accepted consistently and intentionally
+        # leaves the dictated text available to the user afterwards.
         self._activate(target)
-        self._injector.inject(text)
+        before = None
+        try:
+            before = self._accessibility_text.read_focused_value(
+                target.process_id
+            )
+        except BaseException:
+            pass
+        self._set_clipboard_text_for_paste(value)
+        self._injector.command_key(self.KEY_V)
+        time.sleep(max(self._shortcut_settle_s, 0.12))
+        if before is not None:
+            try:
+                after = self._accessibility_text.read_focused_value(
+                    target.process_id
+                )
+            except BaseException:
+                after = None
+            if after is not None and after == before:
+                raise RuntimeError("目标文本框没有接收剪贴板听写内容")
+
+    def _set_clipboard_text_for_paste(self, value: str) -> None:
+        """Publish and verify the exact string before sending Command+V."""
+        for attempt in range(self._copy_attempts):
+            self._clipboard.set_text(value)
+            deadline = time.monotonic() + self._copy_timeout_s
+            while time.monotonic() < deadline:
+                if str(self._clipboard.text() or "") == value:
+                    return
+                time.sleep(0.01)
+            if attempt + 1 < self._copy_attempts:
+                time.sleep(0.03)
+        raise RuntimeError("剪贴板未更新为本次听写内容，已停止粘贴以避免插入旧文字")
 
     def replace(self, snapshot: DesktopTextSnapshot, text: str) -> None:
         self._activate(snapshot.target)
@@ -317,21 +455,45 @@ class MacOSDesktopTextTarget:
             if self._accessibility_text.set_focused_value(
                 snapshot.target.process_id, replacement
             ):
-                time.sleep(self._shortcut_settle_s)
-                return
+                # Some Chromium/Electron controls report AXValue success while
+                # silently keeping the old value. Trust the setter only after
+                # the focused control itself confirms the new text.
+                time.sleep(max(self._shortcut_settle_s, 0.12))
+                for attempt in range(2):
+                    try:
+                        observed = self._accessibility_text.read_focused_value(
+                            snapshot.target.process_id
+                        )
+                    except BaseException:
+                        observed = None
+                    if observed is not None and macos_texts_equivalent(
+                        observed, replacement
+                    ):
+                        return
+                    if attempt == 0:
+                        time.sleep(0.08)
         except BaseException:
             # Browser content-editables and custom editors often do not expose
-            # a settable AXValue. Keep the established keyboard fallback.
+            # a settable AXValue. Continue with the keyboard fallback.
             pass
         self._injector.command_key(self.KEY_A)
         time.sleep(self._shortcut_settle_s)
         if replacement:
-            self._injector.inject(replacement)
+            # WeChat and multiple Chromium/Electron editors ignore Quartz
+            # Unicode events but reliably accept a verified clipboard paste.
+            self._set_clipboard_text_for_paste(replacement)
+            self._injector.command_key(self.KEY_V)
         else:
             self._injector.press_key(self.KEY_DELETE)
         # Posted Quartz events are asynchronous. Do not let immediate readback
         # steal the focus before the target app consumes the final chunk.
-        time.sleep(self._shortcut_settle_s)
+        time.sleep(max(self._shortcut_settle_s, 0.12))
+
+    def undo(self, target: DesktopTargetRef) -> None:
+        """Undo the most recent edit in the locked external text control."""
+        self._activate(target)
+        self._injector.command_key(self.KEY_Z)
+        time.sleep(max(self._shortcut_settle_s, 0.12))
 
     def release_selection(self, target: DesktopTargetRef) -> None:
         try:
@@ -469,6 +631,10 @@ class WindowsDesktopTextTarget:
         title_buffer = ctypes.create_unicode_buffer(title_length + 1)
         if title_length:
             self._user32.GetWindowTextW(window, title_buffer, title_length + 1)
+        bounds = wintypes.RECT()
+        bounds_handle = focus if self._user32.GetWindowRect(focus, ctypes.byref(bounds)) else window
+        if bounds_handle == window:
+            self._user32.GetWindowRect(window, ctypes.byref(bounds))
         return DesktopTargetRef(
             window,
             focus,
@@ -476,6 +642,10 @@ class WindowsDesktopTextTarget:
             int(process_id.value),
             process_name,
             uia_control,
+            int(bounds.left),
+            int(bounds.top),
+            max(0, int(bounds.right - bounds.left)),
+            max(0, int(bounds.bottom - bounds.top)),
         )
 
     def capture_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
@@ -586,6 +756,12 @@ class WindowsDesktopTextTarget:
         else:
             self._press_key(self.VK_BACK)
 
+    def undo(self, target: DesktopTargetRef) -> None:
+        """Undo the most recent edit in the locked external text control."""
+        self._activate(target)
+        self._hotkey(self.VK_CONTROL, 0x5A)  # Z
+        time.sleep(getattr(self, "_shortcut_settle_s", 0.03))
+
     def release_selection(self, target: DesktopTargetRef) -> None:
         try:
             self._activate(target)
@@ -682,6 +858,11 @@ class WindowsDesktopTextTarget:
             ctypes.c_int,
         )
         self._user32.GetWindowTextW.restype = ctypes.c_int
+        self._user32.GetWindowRect.argtypes = (
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.RECT),
+        )
+        self._user32.GetWindowRect.restype = wintypes.BOOL
         self._user32.IsWindow.argtypes = (wintypes.HWND,)
         self._user32.IsWindow.restype = wintypes.BOOL
         self._user32.SetForegroundWindow.argtypes = (wintypes.HWND,)

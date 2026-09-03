@@ -7,6 +7,7 @@ import queue
 import sys
 import threading
 import time
+from typing import Callable
 from pathlib import Path
 
 import numpy as np
@@ -31,6 +32,8 @@ _MIC_RECOVERY_PAUSE_S = 0.75
 # otherwise make MIC OFF and the following MIC ON effectively back-to-back,
 # before the firmware has finished closing the previous capture.
 _MIC_RESTART_PAUSE_S = 0.25
+_DEFAULT_IMU_HZ = 50
+_DEFAULT_IMU_FRAMES_PER_PACKET = 10
 
 
 class RingAudioSource(AudioSource):
@@ -65,6 +68,8 @@ class RingAudioSource(AudioSource):
         encoding: str = "opus",
         data_root: str | Path = "data",
         queue_blocks: int = 256,
+        imu_observer: Callable[[dict], None] | None = None,
+        imu_hz: int = _DEFAULT_IMU_HZ,
     ) -> None:
         encoding = encoding.lower()
         if encoding not in {"pcm", "adpcm", "opus"}:
@@ -73,6 +78,8 @@ class RingAudioSource(AudioSource):
             raise ValueError("timeout_s must be > 0")
         if queue_blocks <= 0:
             raise ValueError("queue_blocks must be > 0")
+        if imu_hz <= 0:
+            raise ValueError("imu_hz must be > 0")
 
         self.name_keyword = name_keyword
         self.selector = selector
@@ -80,6 +87,8 @@ class RingAudioSource(AudioSource):
         self.timeout_s = float(timeout_s)
         self.encoding = encoding
         self.data_root = Path(data_root)
+        self.imu_observer = imu_observer
+        self.imu_hz = int(imu_hz)
 
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_blocks)
         self._pending = np.empty(0, dtype=np.float32)
@@ -106,6 +115,8 @@ class RingAudioSource(AudioSource):
         self._near_zero_samples: int = 0
         self._clipped_samples: int = 0
         self._pcm_abs_peak: float = 0.0
+        self.imu_samples_received: int = 0
+        self.imu_error: BaseException | None = None
 
     def open(self) -> None:
         self.connect()
@@ -129,6 +140,8 @@ class RingAudioSource(AudioSource):
         self._near_zero_samples = 0
         self._clipped_samples = 0
         self._pcm_abs_peak = 0.0
+        self.imu_samples_received = 0
+        self.imu_error = None
         self._stop.clear()
         self._connected_ready.clear()
         self._start_stream.clear()
@@ -350,6 +363,32 @@ class RingAudioSource(AudioSource):
         # the pipeline.  BLE connection readiness is tracked separately.
         self._ready.set()
 
+    def _on_imu_sample(self, sample: object) -> None:
+        """Forward one normalized IMU row without coupling it to audio health."""
+        observer = self.imu_observer
+        if observer is None or self.imu_error is not None:
+            return
+        try:
+            accel = tuple(getattr(sample, "accel_ms2"))
+            gyro = tuple(getattr(sample, "gyro_dps"))
+            raw = getattr(sample, "raw", None)
+            row = {
+                "host_monotonic_ns": time.monotonic_ns(),
+                "device_uptime_ms": float(getattr(sample, "uptime_ms")),
+                "sample_index": int(getattr(sample, "sample_index")),
+                "packet_seq": int(getattr(sample, "packet_seq")),
+                "accel_ms2": [float(value) for value in accel],
+                "gyro_dps": [float(value) for value in gyro],
+                "raw": [int(value) for value in raw] if raw is not None else None,
+            }
+            observer(row)
+            self.imu_samples_received += 1
+        except BaseException as exc:
+            # Dataset collection is deliberately a side channel.  A malformed
+            # sample or consumer failure must never stop microphone delivery.
+            self.imu_error = exc
+            print(f"Ring IMU collection disabled for this connection: {exc}")
+
     def diagnostic_summary(self) -> str:
         """Return lightweight stream/audio evidence suitable for persistent logs."""
 
@@ -550,6 +589,11 @@ class RingAudioSource(AudioSource):
 
     async def _shutdown_session(self, session) -> None:
         """Best-effort BLE shutdown that never hides the stream failure."""
+        if bool(getattr(session, "imu_active", False)):
+            try:
+                await session.imu_off()
+            except Exception as exc:
+                print(f"Ring cleanup: IMU OFF failed during shutdown: {exc}")
         if session.mic_active:
             try:
                 await session.mic_off()
@@ -664,6 +708,8 @@ class RingAudioSource(AudioSource):
                     "Ring connected, but no microphone audio was received. "
                     f"The device was disconnected; reconnect manually.{hint}"
                 )
+
+            await self._start_imu_best_effort(session)
 
             # Start the stall timer from MIC ON.  If the Ring never sends the
             # first callback, that is treated exactly like a stream stall.
@@ -819,3 +865,27 @@ class RingAudioSource(AudioSource):
                 stall_reported = True
         finally:
             await self._shutdown_session(session)
+
+    async def _start_imu_best_effort(self, session) -> None:
+        """Start low-bandwidth IMU capture, but never fail the audio session."""
+        if self.imu_observer is None:
+            return
+        imu_on = getattr(session, "imu_on", None)
+        if not callable(imu_on):
+            self.imu_error = RuntimeError("Ring SDK does not expose imu_on")
+            print(f"Ring IMU unavailable: {self.imu_error}")
+            return
+        try:
+            await imu_on(
+                gyro_hz=self.imu_hz,
+                accel_hz=self.imu_hz,
+                frames_per_packet=_DEFAULT_IMU_FRAMES_PER_PACKET,
+                on_sample=self._on_imu_sample,
+            )
+            print(
+                "Ring IMU collection enabled: "
+                f"{self.imu_hz} Hz, {_DEFAULT_IMU_FRAMES_PER_PACKET} frames/packet"
+            )
+        except BaseException as exc:
+            self.imu_error = exc
+            print(f"Ring IMU unavailable; microphone audio will continue: {exc}")

@@ -264,6 +264,38 @@ def test_third_party_adapter_uses_external_api_and_redecodes_trimmed_final(monke
     np.testing.assert_allclose(infer_calls[0][0], np.full(160, 16384.0, dtype=np.float32))
 
 
+def test_low_latency_sensevoice_redecodes_short_utterance_without_partial(monkeypatch):
+    calls = []
+
+    class FakeExternal:
+        def __init__(self, **_kwargs):
+            return None
+
+        def reset(self):
+            calls.append(("reset", None))
+
+        def streaming_inference(self, audio, is_last):
+            size = int(np.asarray(audio).size)
+            calls.append(("infer", (size, is_last)))
+            if is_last and size:
+                yield {"text": "短句结果"}
+
+    fake_module = types.ModuleType("streaming_sensevoice")
+    fake_module.StreamingSenseVoice = FakeExternal
+    monkeypatch.setitem(sys.modules, "streaming_sensevoice", fake_module)
+
+    backend = StreamingSenseVoiceASR(
+        model="iic/SenseVoiceSmall",
+        device="cpu",
+        language="zh",
+        final_redecode=False,
+    )
+    backend.start()
+    assert backend.feed(np.ones(80, dtype=np.float32)) is None
+    assert backend.finish(np.ones(160, dtype=np.float32)) == "短句结果"
+    assert ("infer", (160, True)) in calls
+
+
 def test_funasr_nano_buffers_chunks_and_redecodes_trimmed_final(monkeypatch, tmp_path):
     (tmp_path / "model.py").write_text("# fake external model", encoding="utf-8")
     calls = []

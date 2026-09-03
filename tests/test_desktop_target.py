@@ -10,6 +10,7 @@ from proximic_ring.desktop_target import (
     DesktopTextSnapshot,
     MacOSDesktopTextTarget,
     WindowsDesktopTextTarget,
+    macos_texts_equivalent,
 )
 from proximic_ring.windows_uia import UIATextControlRef, WindowsUIATextBridge
 
@@ -57,6 +58,10 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
             calls.append(("press", key))
 
     class AccessibilityText:
+        def focused_bounds(self, process_id):
+            calls.append(("ax-bounds", process_id))
+            return 120, 240, 500, 180
+
         def read_focused_value(self, process_id):
             calls.append(("ax-read", process_id))
             return None
@@ -76,16 +81,75 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
     monkeypatch.setattr(adapter, "_activate", lambda value: calls.append(("activate", value)))
 
     assert adapter.request_accessibility(prompt=True) is True
+    assert (
+        target.screen_x,
+        target.screen_y,
+        target.screen_width,
+        target.screen_height,
+    ) == (120, 240, 500, 180)
     snapshot = adapter.capture_text(target)
     adapter.inject(target, "听写内容")
     adapter.replace(snapshot, "修改后内容")
     adapter.replace(snapshot, "")
 
     assert snapshot == DesktopTextSnapshot(target, "外部文本框内容")
-    assert clipboard.value == "用户原剪贴板"
-    assert ("inject", "听写内容") in calls
-    assert ("inject", "修改后内容") in calls
+    assert clipboard.value == "修改后内容"
+    assert ("command", MacOSDesktopTextTarget.KEY_V) in calls
+    assert ("inject", "听写内容") not in calls
+    assert ("inject", "修改后内容") not in calls
+    assert calls.count(("command", MacOSDesktopTextTarget.KEY_V)) == 2
     assert ("press", MacOSDesktopTextTarget.KEY_DELETE) in calls
+
+
+def test_macos_edit_falls_back_to_verified_paste_when_ax_lies(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class Clipboard:
+        value = "用户原剪贴板"
+
+        def set_text(self, text):
+            self.value = text
+
+        def text(self):
+            return self.value
+
+    clipboard = Clipboard()
+
+    class Injector:
+        def command_key(self, key):
+            calls.append(("command", key, clipboard.value))
+
+        def press_key(self, key):
+            calls.append(("press", key))
+
+    class AccessibilityText:
+        def set_focused_value(self, process_id, text):
+            calls.append(("ax-set", process_id, text))
+            return True
+
+        def read_focused_value(self, process_id):
+            return "仍然是原文"
+
+    adapter = MacOSDesktopTextTarget(
+        clipboard,
+        injector=Injector(),
+        shortcut_settle_s=0.02,
+        accessibility_text=AccessibilityText(),
+    )
+    target = DesktopTargetRef(0, 0, "微信", process_id=4321)
+    monkeypatch.setattr(adapter, "_activate", lambda value: None)
+
+    adapter.replace(DesktopTextSnapshot(target, "仍然是原文"), "修改后内容")
+
+    assert ("command", MacOSDesktopTextTarget.KEY_A, "用户原剪贴板") in calls
+    assert ("command", MacOSDesktopTextTarget.KEY_V, "修改后内容") in calls
+
+
+def test_macos_edit_text_comparison_ignores_transport_normalization() -> None:
+    assert macos_texts_equivalent("第一行\r\nCafe\u0301", "第一行\nCaf\u00e9")
+    assert macos_texts_equivalent("第一段\u2028第二段", "第一段\n第二段")
+    assert not macos_texts_equivalent("少了一个字", "没有少一个字")
 
 
 def test_macos_target_prefers_accessibility_value_for_exact_replace(monkeypatch) -> None:
@@ -134,11 +198,121 @@ def test_macos_target_prefers_accessibility_value_for_exact_replace(monkeypatch)
     assert ("ax-set", 4321, "新文本") in calls
 
 
+def test_macos_injection_waits_for_current_clipboard_before_paste(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class DelayedClipboard:
+        def __init__(self) -> None:
+            self.current = "上一条听写"
+            self.pending = ""
+            self.reads = 0
+
+        def set_text(self, text):
+            self.pending = text
+            self.reads = 0
+            calls.append(("set", text))
+
+        def text(self):
+            self.reads += 1
+            if self.reads >= 2:
+                self.current = self.pending
+            calls.append(("read", self.current))
+            return self.current
+
+    clipboard = DelayedClipboard()
+
+    class Injector:
+        def command_key(self, key):
+            calls.append(("paste", key, clipboard.current))
+
+    class AccessibilityText:
+        def read_focused_value(self, process_id):
+            return None
+
+    adapter = MacOSDesktopTextTarget(
+        clipboard,
+        injector=Injector(),
+        copy_timeout_s=0.2,
+        shortcut_settle_s=0.02,
+        accessibility_text=AccessibilityText(),
+    )
+    target = DesktopTargetRef(0, 0, "微信", process_id=4321)
+    monkeypatch.setattr(
+        adapter, "_activate", lambda value: calls.append(("activate", value))
+    )
+
+    adapter.inject(target, "这一条听写")
+
+    activate_index = next(i for i, item in enumerate(calls) if item[0] == "activate")
+    set_index = next(i for i, item in enumerate(calls) if item[0] == "set")
+    assert activate_index < set_index
+    assert ("paste", MacOSDesktopTextTarget.KEY_V, "这一条听写") in calls
+
+
+def test_macos_injection_never_pastes_when_clipboard_stays_stale(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class StaleClipboard:
+        def set_text(self, text):
+            calls.append(("set", text))
+
+        def text(self):
+            return "上一条听写"
+
+    class Injector:
+        def command_key(self, key):
+            calls.append(("paste", key))
+
+    class AccessibilityText:
+        def read_focused_value(self, process_id):
+            return None
+
+    adapter = MacOSDesktopTextTarget(
+        StaleClipboard(),
+        injector=Injector(),
+        copy_timeout_s=0.01,
+        copy_attempts=1,
+        shortcut_settle_s=0.02,
+        accessibility_text=AccessibilityText(),
+    )
+    target = DesktopTargetRef(0, 0, "微信", process_id=4321)
+    monkeypatch.setattr(adapter, "_activate", lambda value: None)
+
+    with pytest.raises(RuntimeError, match="避免插入旧文字"):
+        adapter.inject(target, "这一条听写")
+
+    assert not any(item[0] == "paste" for item in calls)
+
+
 def test_macos_target_rejects_own_process() -> None:
     adapter = object.__new__(MacOSDesktopTextTarget)
     target = DesktopTargetRef(0, 0, "Proximic Voice", process_id=os.getpid())
     with pytest.raises(RuntimeError, match="另一个应用"):
         adapter._activate(target)
+
+
+def test_macos_undo_targets_the_locked_external_control() -> None:
+    adapter = object.__new__(MacOSDesktopTextTarget)
+    target = DesktopTargetRef(1, 2, "测试窗口", process_id=30)
+    calls: list[object] = []
+
+    adapter._activate = lambda value: calls.append(("activate", value))
+    adapter._shortcut_settle_s = 0
+
+    class Injector:
+        def command_key(self, key):
+            calls.append(("command", key))
+
+    adapter._injector = Injector()
+
+    adapter.undo(target)
+
+    assert calls == [
+        ("activate", target),
+        ("command", MacOSDesktopTextTarget.KEY_Z),
+    ]
 
 
 def test_capture_retries_transient_empty_clipboard_and_restores_original() -> None:
@@ -215,6 +389,23 @@ def test_replace_empty_text_selects_all_and_clears_field() -> None:
         ("activate", target),
         ("hotkey", (adapter.VK_CONTROL, adapter.VK_A)),
         ("press", adapter.VK_BACK),
+    ]
+
+
+def test_windows_undo_targets_the_locked_external_control() -> None:
+    adapter = object.__new__(WindowsDesktopTextTarget)
+    target = DesktopTargetRef(1, 2, "测试窗口")
+    calls: list[object] = []
+
+    adapter._activate = lambda value: calls.append(("activate", value))
+    adapter._hotkey = lambda *keys: calls.append(("hotkey", keys))
+    adapter._shortcut_settle_s = 0
+
+    adapter.undo(target)
+
+    assert calls == [
+        ("activate", target),
+        ("hotkey", (adapter.VK_CONTROL, 0x5A)),
     ]
 
 

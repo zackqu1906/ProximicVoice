@@ -211,7 +211,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 ### 3. 使用
 
-1. 在设置区选择 ASR 后端、语言和 CPU/GPU。
+1. 在设置区选择 ASR 后端、语言和 CPU/GPU；可按需要调整只作用于 ASR/语音记录的输入增益。
 2. 点击“选择并连接设备”，在实时扫描列表中选择目标 Ringo。
 3. 应用会依次完成 BLE 连接、ProxiMic/ASR 加载，再开启 Opus 音频并验证解码后的 PCM。
 4. 点击“开启语音识别”。这会启动自动近场监听，不会断开或重连 Ring。
@@ -228,6 +228,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 每段语音结束后，主界面的“逐句语音记录”会显示最终裁剪录音和 ASR 文字，可直接播放；
 记录保存在当前用户的应用数据目录，重新打开应用后仍可查看。录音写盘在后台完成。
+完整运行日志默认不占用主界面空间，点击顶栏“实时日志”按钮即可打开并持续查看。
 
 “暂停语音识别”只暂停 ProxiMic 和 ASR，Ring 仍保持连接；“断开设备”才会释放麦克风和 BLE。
 

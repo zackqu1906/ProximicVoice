@@ -10,6 +10,7 @@ import numpy as np
 from proximic_ring.asr.backends.volcengine import (
     DEFAULT_RESOURCE_ID,
     VolcengineStreamingASR,
+    _pcm16,
 )
 from proximic_ring.asr.factory import (
     ASRBackendSettings,
@@ -57,6 +58,13 @@ class ClosingAfterFinalWebSocket(FakeWebSocket):
         if self.responses:
             return self.responses.pop(0)
         raise ConnectionError("Connection to remote host was lost")
+
+
+def test_pcm16_quantization_matches_saved_voice_history_wav_samples():
+    audio = np.array([-1.0, -0.25, 0.0, 0.25, 1.0], dtype=np.float32)
+    saved_pcm = np.rint(np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
+
+    assert _pcm16(audio) == saved_pcm.tobytes()
 
 
 def test_native_streaming_uses_new_console_headers_and_returns_partial(monkeypatch):

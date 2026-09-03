@@ -158,7 +158,7 @@ def _add_asr_args(parser: argparse.ArgumentParser) -> None:
             "for --asr-option funasr_nano.repo=PATH."
         ),
     )
-    parser.add_argument("--asr-pre-roll", type=float, default=1.5, help="Seconds retained before first ACTIVATE")
+    parser.add_argument("--asr-pre-roll", type=float, default=1.0, help="Seconds retained before first ACTIVATE")
     parser.add_argument(
         "--asr-end-rejects",
         type=int,

@@ -52,7 +52,8 @@ def main(argv: list[str] | None = None) -> int:
             voice_action_hotkeys = WindowsVoiceActionHotkeys(
                 controller.dispatchVoiceAction,
                 is_review_active=lambda: controller.reviewPending,
-                is_feedback_reason_active=lambda: controller.feedbackReasonAvailable,
+                is_interaction_active=lambda: controller.interactionCanCancel,
+                is_mode_correction_active=lambda: controller.modeCorrectionAvailable,
             )
             app.aboutToQuit.connect(voice_action_hotkeys.close)
         except BaseException as exc:
@@ -72,8 +73,10 @@ def main(argv: list[str] | None = None) -> int:
                 mac_hotkeys["instance"] = MacOSVoiceActionHotkeys(
                     controller.dispatchVoiceAction,
                     is_review_active=lambda: controller.reviewPending,
+                    is_interaction_active=lambda: controller.interactionCanCancel,
+                    is_mode_correction_active=lambda: controller.modeCorrectionAvailable,
                 )
-                print("[voice-actions] macOS 编辑确认键已就绪")
+                print("[voice-actions] macOS 语音交互按键已就绪")
             except BaseException as exc:
                 print(
                     f"[voice-actions] macOS 编辑确认键不可用：{exc}",
@@ -105,12 +108,17 @@ def main(argv: list[str] | None = None) -> int:
     if startup_probe:
         # Packaging CI sets this flag to prove the frozen executable can import
         # the application, QML, and the dynamically loaded ASR modules.
+        from ..asr.backends.funasr_nano import FunASRNanoStreamingASR
         from ..asr.backends.streaming_sensevoice import StreamingSenseVoiceASR
 
         StreamingSenseVoiceASR._load_external_class(
             resource_root() / "third_party" / "streaming-sensevoice"
         )
-        __import__("funasr.auto.auto_model")
+        nano_repo = resource_root() / "third_party" / "Fun-ASR"
+        nano_probe = object.__new__(FunASRNanoStreamingASR)
+        nano_probe.repo_path = nano_repo
+        nano_probe._load_external_class(nano_repo / "model.py")
+        __import__("transformers.models.qwen3.modeling_qwen3")
         print("[startup] packaged ASR imports ready")
         QTimer.singleShot(300, app.quit)
     else:

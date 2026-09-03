@@ -35,7 +35,7 @@ class ProximitySessionController:
         self,
         sink,
         *,
-        pre_roll_s: float = 1.5,
+        pre_roll_s: float = 1.0,
         end_rejects: int = 2,
         stage1_inactivity_s: float = 1.25,
         stage2_delay_s: float = 0.50,
@@ -80,6 +80,10 @@ class ProximitySessionController:
         self._active = False
         self._utterance: list[np.ndarray] = []
         self._utterance_samples = 0
+        # Audio after a first reject remains provisional until a later
+        # ACTIVATE cancels the endpoint or another reject confirms it.
+        self._pending_sink_audio: list[np.ndarray] = []
+        self._sink_samples = 0
         self._session_start_sample = 0
         self._last_stage1_sample: int | None = None
         self._last_activate_sample: int | None = None
@@ -141,6 +145,8 @@ class ProximitySessionController:
                     # Explicit user control outranks automatic reject-based
                     # endpointing.  ACTIVATE/Stage1 evidence above is still
                     # observed so release can return cleanly to auto control.
+                    self._consecutive_rejects = 0
+                    self._first_reject_cutoff_sample = None
                     continue
                 self._handle_reject(event)
                 if not self._active:
@@ -165,6 +171,10 @@ class ProximitySessionController:
             and self._utterance_samples >= self.min_utterance_samples
         ):
             self._finish(reason="stage1-inactivity")
+            return
+
+        if self._first_reject_cutoff_sample is None:
+            self._flush_pending_sink_audio()
 
     def flush(self) -> None:
         """Submit an active utterance at EOF/shutdown, if it is long enough."""
@@ -180,11 +190,37 @@ class ProximitySessionController:
         self._active = False
         self._utterance = []
         self._utterance_samples = 0
+        self._pending_sink_audio = []
+        self._sink_samples = 0
         self._consecutive_rejects = 0
         self._first_reject_cutoff_sample = None
         abort_sink = getattr(self.sink, "abort", None)
         if callable(abort_sink):
             abort_sink()
+
+    def discard_current(self) -> None:
+        """Cancel only the current utterance and stay ready for the next one.
+
+        Unlike :meth:`abort`, this deliberately does not close/abort the ASR
+        sink.  The next ``sink.start`` establishes a fresh backend session.
+        Unlike :meth:`reset`, it never submits the cancelled audio as a final.
+        """
+        if self._active:
+            self._log("[ASR] CANCEL reason=user-request")
+        self._history.clear()
+        self._history_count = 0
+        self._stream_samples = 0
+        self._active = False
+        self._utterance = []
+        self._utterance_samples = 0
+        self._pending_sink_audio = []
+        self._sink_samples = 0
+        self._session_start_sample = 0
+        self._last_stage1_sample = None
+        self._last_activate_sample = None
+        self._consecutive_rejects = 0
+        self._first_reject_cutoff_sample = None
+        self._manual_was_active = False
 
     def reset(self) -> None:
         """Finish the current utterance and restart the detector-aligned clock.
@@ -200,6 +236,8 @@ class ProximitySessionController:
         self._active = False
         self._utterance = []
         self._utterance_samples = 0
+        self._pending_sink_audio = []
+        self._sink_samples = 0
         self._session_start_sample = 0
         self._last_stage1_sample = None
         self._last_activate_sample = None
@@ -233,6 +271,7 @@ class ProximitySessionController:
         self._active = True
         self._utterance = [b.copy() for b in self._history]
         self._utterance_samples = sum(b.size for b in self._utterance)
+        self._pending_sink_audio = []
         self._session_start_sample = self._stream_samples - self._utterance_samples
 
         # The Stage1 trigger that led to this ACTIVATE happened stage2_delay
@@ -252,6 +291,7 @@ class ProximitySessionController:
             else np.empty(0, dtype=np.float32)
         )
         self.sink.start(initial)
+        self._sink_samples = int(initial.size)
 
     def _begin_manual(self, current_block: np.ndarray) -> None:
         self._active = True
@@ -262,6 +302,7 @@ class ProximitySessionController:
         block = np.asarray(current_block, dtype=np.float32).reshape(-1).copy()
         self._utterance = [block]
         self._utterance_samples = block.size
+        self._pending_sink_audio = []
         self._session_start_sample = self._stream_samples - block.size
         # If the detector sees real proximity evidence during the hold it will
         # update this heartbeat.  Otherwise release naturally reaches the
@@ -275,12 +316,28 @@ class ProximitySessionController:
             f"(lead-in={self._utterance_samples / self.sample_rate:.2f}s)"
         )
         self.sink.start(block)
+        self._sink_samples = int(block.size)
 
     def _append_active(self, x: np.ndarray) -> None:
         block = x.copy()
         self._utterance.append(block)
         self._utterance_samples += block.size
-        self.sink.feed(block)
+        self._pending_sink_audio.append(block)
+
+    def _flush_pending_sink_audio(self) -> None:
+        if not self._pending_sink_audio:
+            return
+        audio = (
+            self._pending_sink_audio[0]
+            if len(self._pending_sink_audio) == 1
+            else np.concatenate(self._pending_sink_audio).astype(
+                np.float32, copy=False
+            )
+        )
+        self._pending_sink_audio = []
+        if audio.size:
+            self.sink.feed(audio)
+            self._sink_samples += int(audio.size)
 
     def _handle_reject(self, event: Stage2Event) -> None:
         self._consecutive_rejects += 1
@@ -317,14 +374,24 @@ class ProximitySessionController:
             f"rejects={self._consecutive_rejects}"
         )
 
-        self.sink.end(
+        final_audio = (
             audio if audio is not None else np.empty(0, dtype=np.float32)
         )
+        # A streaming service cannot retract bytes already sent. The
+        # first-reject tail was held above, so publish only the prefix retained
+        # by the final crop. The service and history now receive the same PCM.
+        if final_audio.size > self._sink_samples:
+            remaining = final_audio[self._sink_samples :]
+            self.sink.feed(remaining)
+            self._sink_samples += int(remaining.size)
+        self.sink.end(final_audio)
 
         # Keep rolling history intact; only the current session state resets.
         self._active = False
         self._utterance = []
         self._utterance_samples = 0
+        self._pending_sink_audio = []
+        self._sink_samples = 0
         self._session_start_sample = self._stream_samples
         self._last_stage1_sample = None
         self._last_activate_sample = None
@@ -406,6 +473,15 @@ class DirectASRSessionController:
         abort_sink = getattr(self.sink, "abort", None)
         if callable(abort_sink):
             abort_sink()
+
+    def discard_current(self) -> None:
+        """Drop one direct-ASR utterance without shutting down its sink."""
+        if self._active:
+            self._log("[ASR] CANCEL direct reason=user-request")
+        self._parts = []
+        self._samples = 0
+        self._stream_samples = 0
+        self._active = False
 
     def close(self) -> None:
         self.flush()

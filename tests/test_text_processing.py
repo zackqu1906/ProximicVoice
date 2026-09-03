@@ -1,6 +1,7 @@
 import io
 import json
 import threading
+import time
 
 import pytest
 
@@ -225,6 +226,41 @@ def test_routing_worker_returns_fallback_mode_and_latency_on_failure():
     assert results[0].mode == INPUT_MODE_EDIT
     assert results[0].error == "router unavailable"
     assert results[0].latency_s >= 0.0
+
+
+def test_cancelled_slow_request_does_not_block_or_publish_before_next_request():
+    slow_started = threading.Event()
+    release_slow = threading.Event()
+    fast_finished = threading.Event()
+    results = []
+
+    class Processor:
+        def process(self, text, *_args):
+            if text == "slow":
+                slow_started.set()
+                release_slow.wait(2.0)
+            return text
+
+    worker = TextProcessingWorker(
+        processor=Processor(),
+        on_result=lambda result: (
+            results.append(result),
+            fast_finished.set() if result.raw_text == "fast" else None,
+        ),
+    )
+    settings = LLMSettings(enabled=False)
+    worker.submit(TextProcessingRequest(1, 1, "dictation", "slow", settings))
+    assert slow_started.wait(1.0)
+    worker.cancel_request(1)
+    worker.submit(TextProcessingRequest(2, 2, "dictation", "fast", settings))
+
+    assert fast_finished.wait(1.0)
+    assert [item.raw_text for item in results] == ["fast"]
+    release_slow.set()
+    time.sleep(0.05)
+    worker.close(wait=True)
+    assert [item.raw_text for item in results] == ["fast"]
+    assert worker._cancelled_request_ids == set()
 
 
 def test_processor_can_use_local_endpoint_without_api_key():

@@ -77,6 +77,7 @@ class OpenAICompatibleTextProcessor:
         self._local_servers: dict[
             tuple[str, str, str, str, int, str], LocalModelServer
         ] = {}
+        self._local_server_lock = threading.RLock()
 
     def process(
         self,
@@ -915,30 +916,32 @@ class OpenAICompatibleTextProcessor:
             int(settings.local_context_size),
             settings.local_reasoning.strip(),
         )
-        server = self._local_servers.get(key)
-        if server is None:
-            server = self._local_server_factory(
-                base_url=key[0],
-                model_alias=key[1],
-                server_path=key[2],
-                model_path=key[3],
-                context_size=key[4],
-                reasoning=key[5],
-            )
-            self._local_servers[key] = server
-        try:
-            server.ensure_running()
-        except BaseException:
-            server.stop_started_process()
-            self._local_servers.pop(key, None)
-            raise
+        with self._local_server_lock:
+            server = self._local_servers.get(key)
+            if server is None:
+                server = self._local_server_factory(
+                    base_url=key[0],
+                    model_alias=key[1],
+                    server_path=key[2],
+                    model_path=key[3],
+                    context_size=key[4],
+                    reasoning=key[5],
+                )
+                self._local_servers[key] = server
+            try:
+                server.ensure_running()
+            except BaseException:
+                server.stop_started_process()
+                self._local_servers.pop(key, None)
+                raise
 
     def close(self) -> None:
         """Release local model processes started by this processor."""
 
-        for server in self._local_servers.values():
-            server.stop_started_process()
-        self._local_servers.clear()
+        with self._local_server_lock:
+            for server in self._local_servers.values():
+                server.stop_started_process()
+            self._local_servers.clear()
 
     @staticmethod
     def _chat_completions_url(base_url: str) -> str:

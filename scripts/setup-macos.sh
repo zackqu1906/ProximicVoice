@@ -58,7 +58,7 @@ fi
 
 "$VENV_PYTHON" -m pip install --upgrade "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
 "$VENV_PYTHON" -m pip install -c "$CONSTRAINT_FILE" -e ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]"
-"$VENV_PYTHON" -c 'import torch, torchaudio, PySide6, bleak, cryptography, funasr, modelscope, transformers, websocket, asr_decoder, online_fbank, zhconv, pyopenjtalk, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; assert torch.version.cuda is None; print("Torch:", torch.__version__); print("Compute: cpu"); print("macOS installation self-check passed.")'
+"$VENV_PYTHON" -c 'import torch, torchaudio, PySide6, bleak, cryptography, funasr, modelscope_hub, transformers, websocket, asr_decoder, online_fbank, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; assert torch.version.cuda is None; print("Torch:", torch.__version__); print("Compute: cpu"); print("macOS installation self-check passed.")'
 
 echo
 echo "Installation completed. Start Proximic Voice with:"

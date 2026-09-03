@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import asyncio
-from dataclasses import dataclass, replace
+from collections import deque
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from difflib import SequenceMatcher
 from html import escape
 import json
+import math
 import os
 from pathlib import Path
 import subprocess
 import sys
 import threading
+import time
 import uuid
 
 from PySide6.QtCore import (
@@ -28,19 +31,32 @@ from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from ..asr import ASRBackendCache
 from ..app_runtime import (
+    ASR_GAIN_DB_DEFAULT,
+    ASR_GAIN_DB_MAX,
+    ASR_GAIN_DB_MIN,
     DESKTOP_TEXT_INJECTION_SUPPORTED,
     WINDOWS_DESKTOP_INPUT_SUPPORTED,
     RecognitionRuntime,
     RuntimeSettings,
     normalize_funasr_nano_hotwords,
 )
-from ..desktop_target import DesktopTargetRef, DesktopTextSnapshot
-from ..model_packages import install_default_local_model
-from ..modification_dataset import (
-    FEEDBACK_REASON_LABELS,
-    ModificationDatasetCollector,
-    PROMPT_VERSION,
+from ..desktop_target import (
+    DesktopTargetRef,
+    DesktopTextSnapshot,
+    macos_texts_equivalent,
 )
+from ..model_packages import install_default_local_model
+from ..interaction_associations import (
+    ASSOCIATION_ASR,
+    ASSOCIATION_LLM,
+    ASR_DICTATION_RETRY,
+    ASR_INSTRUCTION_RETRY,
+    AssociationActionRouter,
+    AssociationMember,
+    AssociationRecommendation,
+    RecentFailureCoordinator,
+)
+from ..modification_dataset import ModificationDatasetCollector, PROMPT_VERSION
 from ..runtime_paths import app_data_root, is_frozen, resource_root
 from ..text_processing import (
     DEFAULT_ARK_API_KEY_ENV,
@@ -76,22 +92,54 @@ from ..voice_actions import (
     ACTION_CONFIRM,
     ACTION_EDIT,
     ACTION_INPUT,
-    ACTION_REASON_ASR_ERROR,
-    ACTION_REASON_LLM_ERROR,
-    ACTION_REASON_OTHER,
+    ACTION_SWITCH_MODE,
+    ACTION_UNDO,
 )
-from ..voice_history import VoiceHistoryStore
+
+
+def _resolve_voice_history_path(audio_path: str, history_root: Path) -> Path:
+    resolved = Path(str(audio_path)).expanduser().resolve(strict=True)
+    resolved.relative_to(Path(history_root).resolve())
+    if not resolved.is_file():
+        raise ValueError("not a file")
+    return resolved
+
+
+def _open_voice_history_location(path: Path) -> None:
+    if sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(path)])
+    elif os.name == "nt":
+        subprocess.Popen(["explorer.exe", "/select,", str(path)])
+    elif not QDesktopServices.openUrl(QUrl.fromLocalFile(str(path.parent))):
+        raise RuntimeError("系统文件管理器未能打开录音目录")
 
 
 @dataclass
 class _PendingInteraction:
     target: DesktopTargetRef | None = None
     snapshot: DesktopTextSnapshot | None = None
+    auto_route_id: int = 0
 
 
 @dataclass
 class _PendingModeRoute:
     target: DesktopTargetRef | None = None
+
+
+@dataclass
+class _AutoInteraction:
+    route_id: int
+    session_id: int
+    raw_text: str
+    target: DesktopTargetRef | None
+    selected_mode: str
+    routed_at: float
+    snapshot: DesktopTextSnapshot | None = None
+    request_ids: dict[str, int] = field(default_factory=dict)
+    results: dict[str, TextProcessingResult] = field(default_factory=dict)
+    candidate_errors: dict[str, str] = field(default_factory=dict)
+    preparing: bool = True
+    classified: bool = False
 
 
 @dataclass
@@ -105,12 +153,19 @@ class _EditReview:
 
 
 @dataclass(frozen=True)
-class _PendingFeedbackReason:
+class _AppliedInteraction:
+    mode: str
+    target: DesktopTargetRef
+    session_id: int
     request_id: int
-    action: str
+    raw_text: str
+    applied_text: str
+    original_snapshot: DesktopTextSnapshot | None = None
 
 
 _EDIT_DIFF_COLOR = "#FF646F"
+_EDIT_AUTO_CONFIRM_MS = 2_000
+_DICTATION_CORRECTION_GRACE_MS = 700
 
 
 def _edit_preview_html(original_text: str, modified_text: str) -> str:
@@ -200,7 +255,7 @@ class AppController(QObject):
     inputRoutingModeChanged = Signal()
     textProcessingChanged = Signal()
     localModelInstallationChanged = Signal()
-    feedbackReasonChanged = Signal()
+    associationChanged = Signal()
     accessibilityChanged = Signal()
 
     _runtimeStatus = Signal(str)
@@ -218,6 +273,7 @@ class AppController(QObject):
     _localModelInstallProgress = Signal(str, int, int)
     _localModelInstallFinished = Signal(object, str)
     _voiceActionRequested = Signal(str)
+    _associationActionRequested = Signal(str, str)
     _voiceHistorySaved = Signal(object)
 
     def __init__(self) -> None:
@@ -244,9 +300,49 @@ class AppController(QObject):
         self._playing_voice_path = ""
         self._voice_history_closed = False
         self._interaction_state = "idle"
+        self._utterance_active = False
+        self._latest_asr_session_id = 0
+        self._cancelled_asr_session_ids: set[int] = set()
+        self._ignore_asr_updates_until_next_start = False
+        self._speech_start_target: DesktopTargetRef | None = None
         self._edit_review: _EditReview | None = None
-        self._pending_feedback_reason: _PendingFeedbackReason | None = None
-        self._feedback_reason_visible = False
+        self._applied_interaction: _AppliedInteraction | None = None
+        self._active_auto_interaction: _AutoInteraction | None = None
+        self._pending_dictation_result: tuple[
+            TextProcessingResult, DesktopTargetRef | None
+        ] | None = None
+        self._edit_auto_confirm_deadline = 0.0
+        self._edit_confirm_method = "manual"
+        self._smart_association_enabled = self._bool_setting(
+            "dataCollection/smartAssociationEnabled", True
+        )
+        self._association_coordinator = RecentFailureCoordinator(
+            limit=5, max_age_s=60.0
+        )
+        self._association_actions = AssociationActionRouter()
+        self._association_queue: deque[AssociationRecommendation] = deque()
+        self._association_recommendation: AssociationRecommendation | None = None
+        self._provisional_association_recommendations: list[
+            AssociationRecommendation
+        ] = []
+        self._association_detail_visible = False
+        self._association_center_visible = False
+        self._association_center_stage = "home"
+        self._association_center_last_created_id = ""
+        self._association_center_kind = ""
+        self._association_center_asr_subtype = ASR_DICTATION_RETRY
+        self._association_center_entries: list[dict[str, object]] = []
+        self._association_center_limit = 40
+        self._association_center_chosen_id = ""
+        self._association_center_rejected_ids: set[str] = set()
+        self._manual_association_watch: tuple[
+            DesktopTargetRef, str, AssociationMember
+        ] | None = None
+        self._manual_association_watch_deadline = 0.0
+        self._manual_association_candidate_text = ""
+        self._manual_association_candidate_since = 0.0
+        self._undo_deadline = 0.0
+        self._undo_display_seconds = 0
         self._log_lines: list[str] = []
         self._ptt_active = False
         self._input_mode = normalize_input_mode(
@@ -356,6 +452,7 @@ class AppController(QObject):
         self._scan_message = "打开设备列表后会扫描附近的蓝牙设备"
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
+        self._cancel_utterance_event = threading.Event()
 
         # Resolve bundled resources from the installed source tree instead of
         # depending on the terminal's current working directory.
@@ -370,13 +467,17 @@ class AppController(QObject):
                 "dataCollection/anonymousUserId", anonymous_user_id
             )
         self._modification_dataset = ModificationDatasetCollector(
-            app_data_root() / "dataset", anonymous_user_id
-        )
-        self._voice_history = VoiceHistoryStore(
-            app_data_root() / "voice_history",
+            app_data_root() / "dataset",
+            anonymous_user_id,
             on_saved=self._voiceHistorySaved.emit,
+            legacy_history_root=app_data_root() / "voice_history",
         )
+        # Voice History is now a projection of the same InteractionRecords
+        # used for ASR/LLM/feedback training data. Keep the old attribute so
+        # the QML and playback code remain stable.
+        self._voice_history = self._modification_dataset
         self._voice_history_entries = self._voice_history.load_entries()
+        self._register_association_actions()
         self._voice_audio_output: QAudioOutput | None = None
         self._voice_player: QMediaPlayer | None = None
         assets = Path(__file__).resolve().parents[1] / "assets"
@@ -422,6 +523,17 @@ class AppController(QObject):
         self._asr_api_key = str(
             self._settings.value("asr/volcengineApiKey", "")
         ).strip()
+        try:
+            saved_asr_gain_db = float(
+                self._settings.value("asr/gainDb", ASR_GAIN_DB_DEFAULT)
+            )
+        except (TypeError, ValueError):
+            saved_asr_gain_db = ASR_GAIN_DB_DEFAULT
+        if not math.isfinite(saved_asr_gain_db):
+            saved_asr_gain_db = ASR_GAIN_DB_DEFAULT
+        self._asr_gain_db = max(
+            ASR_GAIN_DB_MIN, min(saved_asr_gain_db, ASR_GAIN_DB_MAX)
+        )
         self._asr_model = str(
             self._settings.value("asr/model", "iic/SenseVoiceSmall")
         )
@@ -487,15 +599,23 @@ class AppController(QObject):
         self._hide_overlay_timer = QTimer(self)
         self._hide_overlay_timer.setSingleShot(True)
         self._hide_overlay_timer.timeout.connect(self._hide_transcript)
-        self._feedback_reason_timer = QTimer(self)
-        self._feedback_reason_timer.setSingleShot(True)
-        self._feedback_reason_timer.setInterval(10_000)
-        self._feedback_reason_timer.timeout.connect(self._clear_feedback_reason)
-        self._feedback_reason_reveal_timer = QTimer(self)
-        self._feedback_reason_reveal_timer.setSingleShot(True)
-        self._feedback_reason_reveal_timer.setInterval(180)
-        self._feedback_reason_reveal_timer.timeout.connect(
-            self._reveal_feedback_reason
+        self._undo_window_timer = QTimer(self)
+        self._undo_window_timer.setInterval(100)
+        self._undo_window_timer.timeout.connect(self._tick_undo_window)
+        self._dictation_commit_timer = QTimer(self)
+        self._dictation_commit_timer.setSingleShot(True)
+        self._dictation_commit_timer.timeout.connect(
+            self._commit_pending_dictation
+        )
+        self._edit_auto_confirm_timer = QTimer(self)
+        self._edit_auto_confirm_timer.setInterval(100)
+        self._edit_auto_confirm_timer.timeout.connect(
+            self._tick_edit_auto_confirm
+        )
+        self._manual_association_timer = QTimer(self)
+        self._manual_association_timer.setInterval(750)
+        self._manual_association_timer.timeout.connect(
+            self._poll_manual_association_result
         )
         self._quit_timer = QTimer(self)
         self._quit_timer.setInterval(100)
@@ -524,6 +644,7 @@ class AppController(QObject):
             self._apply_local_model_install_finished
         )
         self._voiceActionRequested.connect(self._apply_voice_action)
+        self._associationActionRequested.connect(self._apply_association_action)
         self._voiceHistorySaved.connect(self._apply_voice_history_saved)
         self._text_processing_worker = TextProcessingWorker(
             on_result=self._textProcessed.emit,
@@ -708,6 +829,667 @@ class AppController(QObject):
     def playingVoicePath(self) -> str:
         return self._playing_voice_path
 
+    @Property(bool, notify=associationChanged)
+    def smartAssociationEnabled(self) -> bool:
+        return self._smart_association_enabled
+
+    @smartAssociationEnabled.setter
+    def smartAssociationEnabled(self, value: bool) -> None:
+        enabled = bool(value)
+        if enabled == self._smart_association_enabled:
+            return
+        self._smart_association_enabled = enabled
+        self._settings.setValue(
+            "dataCollection/smartAssociationEnabled", enabled
+        )
+        if not enabled:
+            self._association_coordinator.clear()
+            self._association_queue.clear()
+            self._association_recommendation = None
+            self._provisional_association_recommendations.clear()
+            self._association_detail_visible = False
+            self._stop_manual_association_watch()
+        self.associationChanged.emit()
+
+    @Property(bool, notify=associationChanged)
+    def associationRecommendationVisible(self) -> bool:
+        return self._association_recommendation is not None
+
+    @Property(str, notify=associationChanged)
+    def associationRecommendationTitle(self) -> str:
+        recommendation = self._association_recommendation
+        return recommendation.title if recommendation is not None else ""
+
+    @Property(str, notify=associationChanged)
+    def associationRecommendationPositiveLabel(self) -> str:
+        recommendation = self._association_recommendation
+        return recommendation.positive_label if recommendation is not None else ""
+
+    @Property(str, notify=associationChanged)
+    def associationRecommendationPositiveText(self) -> str:
+        recommendation = self._association_recommendation
+        return recommendation.positive_text if recommendation is not None else ""
+
+    @Property(int, notify=associationChanged)
+    def associationPopupTargetX(self) -> int:
+        recommendation = self._association_recommendation
+        return recommendation.chosen.target_x if recommendation is not None else 0
+
+    @Property(int, notify=associationChanged)
+    def associationPopupTargetY(self) -> int:
+        recommendation = self._association_recommendation
+        return recommendation.chosen.target_y if recommendation is not None else 0
+
+    @Property(int, notify=associationChanged)
+    def associationPopupTargetWidth(self) -> int:
+        recommendation = self._association_recommendation
+        return recommendation.chosen.target_width if recommendation is not None else 0
+
+    @Property(int, notify=associationChanged)
+    def associationPopupTargetHeight(self) -> int:
+        recommendation = self._association_recommendation
+        return recommendation.chosen.target_height if recommendation is not None else 0
+
+    @Property(bool, notify=associationChanged)
+    def associationDetailVisible(self) -> bool:
+        return self._association_detail_visible
+
+    @Property("QVariantList", notify=associationChanged)
+    def associationDetailEntries(self) -> list[dict[str, object]]:
+        recommendation = self._association_recommendation
+        return recommendation.ui_entries() if recommendation is not None else []
+
+    @Property(bool, notify=associationChanged)
+    def associationCenterVisible(self) -> bool:
+        return self._association_center_visible
+
+    @Property(str, notify=associationChanged)
+    def associationCenterStage(self) -> str:
+        return self._association_center_stage
+
+    @Property(str, notify=associationChanged)
+    def associationCenterLastCreatedId(self) -> str:
+        return self._association_center_last_created_id
+
+    @Property(str, notify=associationChanged)
+    def associationCenterKind(self) -> str:
+        return self._association_center_kind
+
+    @Property(str, notify=associationChanged)
+    def associationCenterAsrSubtype(self) -> str:
+        return self._association_center_asr_subtype
+
+    @Property("QVariantList", notify=associationChanged)
+    def associationCenterEntries(self) -> list[dict[str, object]]:
+        return list(self._association_center_entries)
+
+    @Property("QVariantList", notify=associationChanged)
+    def associationCenterConfirmationEntries(self) -> list[dict[str, object]]:
+        chosen, rejected = self._association_center_selected_entries()
+        rows: list[dict[str, object]] = []
+        if chosen is not None:
+            rows.append({**chosen, "role": "chosen", "roleLabel": "正例"})
+        rows.extend(
+            {**item, "role": "rejected", "roleLabel": "反例"}
+            for item in rejected
+        )
+        return rows
+
+    @Property(str, notify=associationChanged)
+    def associationCenterSelectionSummary(self) -> str:
+        chosen = 1 if self._association_center_chosen_id else 0
+        rejected = len(self._association_center_rejected_ids)
+        return f"已选择：{chosen} 个正例 · {rejected} 个反例"
+
+    @Property(bool, notify=associationChanged)
+    def associationCenterCanSave(self) -> bool:
+        return bool(
+            self._association_center_kind
+            and self._association_center_chosen_id
+            and self._association_center_rejected_ids
+        )
+
+    @Slot(str, result=str)
+    def associationCenterRole(self, interaction_id: str) -> str:
+        value = str(interaction_id)
+        if value == self._association_center_chosen_id:
+            return "chosen"
+        if value in self._association_center_rejected_ids:
+            return "rejected"
+        return ""
+
+    @Slot(str, str)
+    def performAssociationAction(self, action: str, payload: str = "") -> None:
+        """Thread-safe command entry used by QML and future Ring gestures."""
+        self._associationActionRequested.emit(str(action), str(payload))
+
+    @Slot(str, str)
+    def _apply_association_action(self, action: str, payload: str) -> None:
+        if not self._association_actions.dispatch(action, payload):
+            self._append_log(f"忽略未知关联动作：{action}")
+
+    def _register_association_actions(self) -> None:
+        handlers = {
+            "recommendation.accept": lambda _payload: self._accept_recommendation(),
+            "recommendation.reject": lambda _payload: self._reject_recommendation(),
+            "recommendation.details.open": lambda _payload: self._set_association_details(True),
+            "recommendation.details.close": lambda _payload: self._set_association_details(False),
+            "center.open": lambda _payload: self._open_association_center(),
+            "center.close": lambda _payload: self._close_association_center(),
+            "center.create": lambda _payload: self._begin_association_center_draft(),
+            "center.back": lambda _payload: self._back_association_center(),
+            "center.kind": self._select_association_center_kind,
+            "center.asrSubtype": self._select_association_center_asr_subtype,
+            "center.chosen": lambda payload: self._set_association_center_role(payload, "chosen"),
+            "center.rejected": lambda payload: self._set_association_center_role(payload, "rejected"),
+            "center.clear": lambda _payload: self._clear_association_center_selection(),
+            "center.confirm": lambda _payload: self._confirm_association_center_draft(),
+            "center.commit": lambda _payload: self._save_association_center(),
+            "center.loadMore": lambda _payload: self._load_more_association_candidates(),
+        }
+        for action, handler in handlers.items():
+            self._association_actions.register(action, handler)
+
+    def _set_association_details(self, visible: bool) -> None:
+        self._association_detail_visible = bool(
+            visible and self._association_recommendation is not None
+        )
+        if self._association_detail_visible:
+            self._association_center_visible = False
+        self.associationChanged.emit()
+
+    def _accept_recommendation(self) -> None:
+        recommendation = self._association_recommendation
+        if recommendation is None:
+            return
+        try:
+            association_id = self._modification_dataset.create_association(
+                kind=recommendation.kind,
+                subtype=recommendation.subtype,
+                chosen=self._association_member_reference(recommendation.chosen),
+                rejected=[
+                    self._association_member_reference(item)
+                    for item in recommendation.rejected
+                ],
+                source="auto_recommended",
+                relation_type=recommendation.relation_type,
+            )
+        except BaseException as exc:
+            self._append_log(f"关联推荐保存失败：{exc}")
+            return
+        self._append_log(
+            f"已保存关联 {association_id}：1 个正例、"
+            f"{len(recommendation.rejected)} 个反例"
+        )
+        applied = self._applied_interaction
+        if (
+            applied is not None
+            and applied.session_id == recommendation.chosen.session_id
+            and applied.mode == recommendation.chosen.mode
+        ):
+            self._confirm_applied_interaction(
+                reason="association_accepted",
+                hide_overlay=True,
+            )
+        self._advance_association_recommendation()
+
+    def _reject_recommendation(self) -> None:
+        if self._association_recommendation is None:
+            return
+        self._append_log("已忽略本次关联推荐")
+        self._advance_association_recommendation()
+
+    def _advance_association_recommendation(self) -> None:
+        self._association_detail_visible = False
+        self._association_recommendation = (
+            self._association_queue.popleft() if self._association_queue else None
+        )
+        self.associationChanged.emit()
+
+    def _open_association_center(self) -> None:
+        self._association_detail_visible = False
+        self._association_center_visible = True
+        self._association_center_stage = "home"
+        self._association_center_last_created_id = ""
+        self._association_center_kind = ""
+        self._association_center_entries = []
+        self._clear_association_center_selection(emit=False)
+        self.associationChanged.emit()
+
+    def _close_association_center(self) -> None:
+        self._association_center_visible = False
+        self._association_center_stage = "home"
+        self._association_center_last_created_id = ""
+        self._association_center_kind = ""
+        self._association_center_entries = []
+        self._clear_association_center_selection(emit=False)
+        self.associationChanged.emit()
+
+    def _begin_association_center_draft(self) -> None:
+        self._association_center_stage = "type"
+        self._association_center_last_created_id = ""
+        self._association_center_kind = ""
+        self._association_center_entries = []
+        self._clear_association_center_selection(emit=False)
+        self.associationChanged.emit()
+
+    def _back_association_center(self) -> None:
+        if self._association_center_stage == "confirm":
+            self._association_center_stage = "select"
+        elif self._association_center_stage == "select":
+            self._association_center_stage = "type"
+            self._association_center_kind = ""
+            self._association_center_entries = []
+            self._clear_association_center_selection(emit=False)
+        elif self._association_center_stage == "type":
+            self._association_center_stage = "home"
+        self.associationChanged.emit()
+
+    def _select_association_center_kind(self, kind: str) -> None:
+        normalized = str(kind).strip().lower()
+        if normalized not in {ASSOCIATION_ASR, ASSOCIATION_LLM}:
+            return
+        if self._association_center_stage != "type":
+            return
+        self._association_center_kind = normalized
+        self._association_center_stage = "select"
+        self._association_center_limit = 40
+        self._clear_association_center_selection(emit=False)
+        self._reload_association_center()
+
+    def _select_association_center_asr_subtype(self, subtype: str) -> None:
+        normalized = str(subtype).strip()
+        if normalized not in {ASR_DICTATION_RETRY, ASR_INSTRUCTION_RETRY}:
+            return
+        self._association_center_asr_subtype = normalized
+        self._clear_association_center_selection(emit=False)
+        if self._association_center_kind == ASSOCIATION_ASR:
+            self._reload_association_center()
+
+    def _reload_association_center(self) -> None:
+        try:
+            self._association_center_entries = (
+                self._modification_dataset.load_association_candidates(
+                    self._association_center_kind,
+                    asr_subtype=self._association_center_asr_subtype,
+                    limit=self._association_center_limit,
+                )
+            )
+        except BaseException as exc:
+            self._association_center_entries = []
+            self._append_log(f"读取关联候选失败：{exc}")
+        self.associationChanged.emit()
+
+    def _load_more_association_candidates(self) -> None:
+        if (
+            self._association_center_stage != "select"
+            or not self._association_center_kind
+        ):
+            return
+        self._association_center_limit += 40
+        self._reload_association_center()
+
+    def _set_association_center_role(self, interaction_id: str, role: str) -> None:
+        if self._association_center_stage != "select":
+            return
+        value = str(interaction_id).strip()
+        candidate = next(
+            (
+                item for item in self._association_center_entries
+                if str(item.get("interactionId", "")) == value
+            ),
+            None,
+        )
+        if not value or candidate is None:
+            return
+        if role == "chosen":
+            positive = (
+                str(
+                    candidate.get("asrText", "")
+                    or candidate.get("resultText", "")
+                ).strip()
+                if self._association_center_kind == ASSOCIATION_ASR
+                else str(candidate.get("resultText", "")).strip()
+            )
+            if not positive:
+                self._append_log("空结果不能设为正例")
+                return
+            self._association_center_chosen_id = (
+                "" if self._association_center_chosen_id == value else value
+            )
+            self._association_center_rejected_ids.discard(value)
+        else:
+            if value in self._association_center_rejected_ids:
+                self._association_center_rejected_ids.remove(value)
+            else:
+                self._association_center_rejected_ids.add(value)
+                if self._association_center_chosen_id == value:
+                    self._association_center_chosen_id = ""
+        self.associationChanged.emit()
+
+    def _clear_association_center_selection(self, *, emit: bool = True) -> None:
+        self._association_center_chosen_id = ""
+        self._association_center_rejected_ids.clear()
+        if emit:
+            self.associationChanged.emit()
+
+    def _association_center_selected_entries(
+        self,
+    ) -> tuple[dict[str, object] | None, list[dict[str, object]]]:
+        chosen = next(
+            (
+                item
+                for item in self._association_center_entries
+                if str(item.get("interactionId", ""))
+                == self._association_center_chosen_id
+            ),
+            None,
+        )
+        rejected = [
+            item
+            for item in self._association_center_entries
+            if str(item.get("interactionId", ""))
+            in self._association_center_rejected_ids
+        ]
+        return chosen, rejected
+
+    def _confirm_association_center_draft(self) -> None:
+        if self._association_center_stage != "select":
+            return
+        if not self.associationCenterCanSave:
+            return
+        self._association_center_stage = "confirm"
+        self.associationChanged.emit()
+
+    def _save_association_center(self) -> None:
+        if (
+            self._association_center_stage != "confirm"
+            or not self.associationCenterCanSave
+        ):
+            return
+        chosen, rejected = self._association_center_selected_entries()
+        if chosen is None or not rejected:
+            return
+        subtype = (
+            self._association_center_asr_subtype
+            if self._association_center_kind == ASSOCIATION_ASR
+            else "edit_preference"
+        )
+        try:
+            association_id = self._modification_dataset.create_association(
+                kind=self._association_center_kind,
+                subtype=subtype,
+                chosen=self._association_candidate_reference(chosen, chosen=True),
+                rejected=[
+                    self._association_candidate_reference(item, chosen=False)
+                    for item in rejected
+                ],
+                source="manual_association_center",
+                relation_type=(
+                    "same_intent_retry"
+                    if self._association_center_kind == ASSOCIATION_ASR
+                    else ""
+                ),
+            )
+        except BaseException as exc:
+            self._append_log(f"手动关联保存失败：{exc}")
+            return
+        self._append_log(
+            f"已保存关联 {association_id}：1 个正例、{len(rejected)} 个反例"
+        )
+        applied = self._applied_interaction
+        if (
+            applied is not None
+            and self._modification_dataset.interaction_id_for_session(
+                applied.session_id
+            )
+            == str(chosen.get("interactionId", ""))
+        ):
+            self._confirm_applied_interaction(
+                reason="association_accepted",
+                hide_overlay=True,
+            )
+        self._association_center_last_created_id = association_id
+        self._association_center_stage = "home"
+        self._association_center_kind = ""
+        self._association_center_entries = []
+        self._clear_association_center_selection(emit=False)
+        self.associationChanged.emit()
+
+    @staticmethod
+    def _association_candidate_reference(
+        candidate: dict, *, chosen: bool
+    ) -> dict:
+        reference = {
+            "interaction_id": str(candidate.get("interactionId", "")),
+            "request_id": int(candidate.get("requestId", 0) or 0),
+        }
+        if chosen and candidate.get("resultId"):
+            reference["result_id"] = str(candidate["resultId"])
+        return reference
+
+    @staticmethod
+    def _association_member_reference(member: AssociationMember) -> dict:
+        return {
+            "interaction_id": member.interaction_id,
+            "request_id": member.request_id,
+            "result_id": member.result_id,
+        }
+
+    @staticmethod
+    def _association_target_key(target: DesktopTargetRef | None) -> str:
+        if target is None:
+            return ""
+        return ":".join(
+            (
+                str(int(target.process_id)),
+                str(int(target.window_handle)),
+                str(int(target.control_handle)),
+                str(target.process_name or ""),
+                str(target.window_title or ""),
+            )
+        )
+
+    def _association_member(
+        self,
+        *,
+        session_id: int,
+        target: DesktopTargetRef | None,
+        mode: str,
+        status: str,
+    ) -> AssociationMember | None:
+        target_key = self._association_target_key(target)
+        if not target_key:
+            return None
+        try:
+            value = self._modification_dataset.association_member_for_session(
+                int(session_id),
+                target_key=target_key,
+                mode=normalize_input_mode(mode),
+                status=status,
+            )
+        except BaseException as exc:
+            self._append_log(f"读取关联记录失败：{exc}")
+            return None
+        if not value:
+            return None
+        return AssociationMember(
+            interaction_id=str(value.get("interaction_id", "")),
+            session_id=int(value.get("session_id", 0) or 0),
+            request_id=int(value.get("request_id", 0) or 0),
+            mode=str(value.get("mode", "")),
+            target_key=str(value.get("target_key", "")),
+            asr_text=str(value.get("asr_text", "")),
+            result_text=str(value.get("result_text", "")),
+            status=str(value.get("status", "")),
+            audio_path=str(value.get("audio_path", "")),
+            created_at=str(value.get("created_at", "")),
+            target_x=int(target.screen_x),
+            target_y=int(target.screen_y),
+            target_width=int(target.screen_width),
+            target_height=int(target.screen_height),
+        )
+
+    def _record_association_failure(
+        self,
+        *,
+        session_id: int,
+        target: DesktopTargetRef | None,
+        mode: str,
+        status: str,
+    ) -> AssociationMember | None:
+        if not self._smart_association_enabled:
+            return None
+        member = self._association_member(
+            session_id=session_id,
+            target=target,
+            mode=mode,
+            status=status,
+        )
+        if member is not None:
+            self._association_coordinator.record_failure(member)
+        return member
+
+    def _record_association_success(
+        self, interaction: _AppliedInteraction
+    ) -> list[AssociationRecommendation]:
+        self._provisional_association_recommendations = []
+        if not self._smart_association_enabled:
+            return []
+        member = self._association_member(
+            session_id=interaction.session_id,
+            target=interaction.target,
+            mode=interaction.mode,
+            status="accepted",
+        )
+        if member is None:
+            return []
+        recommendations = self._association_coordinator.record_success(member)
+        if not recommendations:
+            return []
+        self._provisional_association_recommendations = list(recommendations)
+        self._association_queue.extend(recommendations)
+        if self._association_recommendation is None:
+            self._association_recommendation = self._association_queue.popleft()
+        self.associationChanged.emit()
+        return recommendations
+
+    def _start_manual_association_watch(
+        self,
+        target: DesktopTargetRef | None,
+        member: AssociationMember | None,
+        *,
+        baseline: str | None = None,
+    ) -> None:
+        if (
+            not self._smart_association_enabled
+            or target is None
+            or member is None
+        ):
+            return
+        if baseline is None:
+            try:
+                snapshot = self._desktop_target_adapter().capture_text(target)
+                baseline = snapshot.text
+            except BaseException:
+                return
+            finally:
+                try:
+                    self._desktop_target_adapter().release_selection(target)
+                except BaseException:
+                    pass
+        self._manual_association_watch = (target, str(baseline), member)
+        self._manual_association_watch_deadline = time.monotonic() + 60.0
+        self._manual_association_candidate_text = ""
+        self._manual_association_candidate_since = 0.0
+        self._manual_association_timer.start()
+
+    def _stop_manual_association_watch(self) -> None:
+        self._manual_association_watch = None
+        self._manual_association_watch_deadline = 0.0
+        self._manual_association_candidate_text = ""
+        self._manual_association_candidate_since = 0.0
+        self._manual_association_timer.stop()
+
+    @Slot()
+    def _poll_manual_association_result(self) -> None:
+        watched = self._manual_association_watch
+        if watched is None or not self._smart_association_enabled:
+            self._stop_manual_association_watch()
+            return
+        if time.monotonic() >= self._manual_association_watch_deadline:
+            self._stop_manual_association_watch()
+            return
+        target, baseline, failed_member = watched
+        try:
+            snapshot = self._desktop_target_adapter().capture_text(target)
+            current = snapshot.text
+        except BaseException:
+            return
+        finally:
+            try:
+                self._desktop_target_adapter().release_selection(target)
+            except BaseException:
+                pass
+        if current == baseline:
+            self._manual_association_candidate_text = ""
+            self._manual_association_candidate_since = 0.0
+            return
+        positive_text = (
+            self._inserted_text(baseline, current)
+            if failed_member.mode == INPUT_MODE_DICTATION
+            else current
+        )
+        if not positive_text:
+            return
+        now = time.monotonic()
+        if positive_text != self._manual_association_candidate_text:
+            self._manual_association_candidate_text = positive_text
+            self._manual_association_candidate_since = now
+            return
+        if now - self._manual_association_candidate_since < 1.5:
+            return
+        try:
+            result_id = self._modification_dataset.record_manual_result(
+                failed_member.interaction_id,
+                text=positive_text,
+                mode=failed_member.mode,
+            )
+        except BaseException as exc:
+            self._append_log(f"人工结果保存失败：{exc}")
+            return
+        chosen = replace(
+            failed_member,
+            request_id=0,
+            result_id=result_id,
+            asr_text=(
+                positive_text
+                if failed_member.mode == INPUT_MODE_DICTATION
+                else failed_member.asr_text
+            ),
+            result_text=positive_text,
+            status="手动修改正例",
+            occurred_monotonic=time.monotonic(),
+        )
+        recommendations = self._association_coordinator.record_manual_success(chosen)
+        self._stop_manual_association_watch()
+        if not recommendations:
+            return
+        self._association_queue.extend(recommendations)
+        if self._association_recommendation is None:
+            self._association_recommendation = self._association_queue.popleft()
+        self.associationChanged.emit()
+
+    @staticmethod
+    def _inserted_text(before: str, after: str) -> str:
+        chunks: list[str] = []
+        for tag, _i1, _i2, j1, j2 in SequenceMatcher(
+            None, str(before), str(after)
+        ).get_opcodes():
+            if tag in {"insert", "replace"}:
+                chunks.append(str(after)[j1:j2])
+        return "".join(chunks).strip()
+
     @Property(str, notify=interactionChanged)
     def interactionState(self) -> str:
         return self._interaction_state
@@ -724,18 +1506,55 @@ class AppController(QObject):
     def reviewCanConfirm(self) -> bool:
         return bool(self._edit_review and not self._edit_review.failure_error)
 
-    @Property(bool, notify=feedbackReasonChanged)
-    def feedbackReasonVisible(self) -> bool:
-        return self._feedback_reason_visible
+    @Property(bool, notify=interactionChanged)
+    def undoAvailable(self) -> bool:
+        return self._applied_interaction is not None
 
-    @Property(bool, notify=feedbackReasonChanged)
-    def feedbackReasonAvailable(self) -> bool:
-        """Whether a reason can bind, including the brief visual refresh gap."""
-        return self._pending_feedback_reason is not None
+    @Property(int, notify=interactionChanged)
+    def undoRemainingSeconds(self) -> int:
+        return self._undo_display_seconds if self.undoAvailable else 0
 
-    @Property(str, notify=feedbackReasonChanged)
-    def feedbackReasonPrompt(self) -> str:
-        return "刚才为什么取消？"
+    @Property(bool, notify=interactionChanged)
+    def interactionCanCancel(self) -> bool:
+        return bool(
+            self._utterance_active
+            or self._active_auto_interaction is not None
+            or self._edit_review is not None
+            or self._pending_text_requests
+            or self._pending_mode_routes
+            or self._pending_dictation_result is not None
+            or self._interaction_state
+            in {"listening", "processing", "review", "review_error"}
+        )
+
+    @Property(bool, notify=interactionChanged)
+    def modeCorrectionAvailable(self) -> bool:
+        return bool(
+            self._active_auto_interaction is not None
+            and self._active_auto_interaction.classified
+        )
+
+    @Property(str, notify=interactionChanged)
+    def modeCorrectionLabel(self) -> str:
+        interaction = self._active_auto_interaction
+        if interaction is None:
+            return ""
+        return (
+            "改为听写"
+            if interaction.selected_mode == INPUT_MODE_EDIT
+            else "改为指令"
+        )
+
+    @Property(str, notify=interactionChanged)
+    def editAutoConfirmText(self) -> str:
+        if (
+            self._edit_review is None
+            or self._edit_review.failure_error
+            or self._edit_auto_confirm_deadline <= 0
+        ):
+            return ""
+        remaining = max(0.0, self._edit_auto_confirm_deadline - time.monotonic())
+        return f"{remaining:.1f}s 后自动应用"
 
     @Property(str, notify=logChanged)
     def logText(self) -> str:
@@ -878,6 +1697,26 @@ class AppController(QObject):
             str(value).strip(),
             "asr/volcengineApiKey",
         )
+
+    @Property(float, notify=settingsChanged)
+    def asrGainDb(self) -> float:
+        return self._asr_gain_db
+
+    @asrGainDb.setter
+    def asrGainDb(self, value: float) -> None:
+        try:
+            gain_db = float(value)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(gain_db):
+            return
+        gain_db = round(
+            max(ASR_GAIN_DB_MIN, min(gain_db, ASR_GAIN_DB_MAX)), 1
+        )
+        if gain_db == self._asr_gain_db:
+            return
+        self._set_setting("_asr_gain_db", gain_db, "asr/gainDb")
+        self._append_log(f"ASR 输入增益已设为 {gain_db:+.1f} dB，重新连接后生效")
 
     @Property(str, notify=settingsChanged)
     def asrDevice(self) -> str:
@@ -1302,7 +2141,6 @@ class AppController(QObject):
     def _start_selected_device(self) -> None:
         if self._worker is not None and self._worker.is_alive():
             return
-        self._clear_feedback_reason()
         try:
             settings = self._runtime_settings()
         except BaseException as exc:
@@ -1313,11 +2151,13 @@ class AppController(QObject):
             self._modification_dataset.reset_runtime()
         except BaseException as exc:
             self._append_log(f"修改数据采集初始化失败：{exc}")
-        self._voice_history.reset_runtime()
         self._interaction_recognition_suspended = False
+        self._cancelled_asr_session_ids.clear()
+        self._ignore_asr_updates_until_next_start = False
 
         self._disconnect_event = threading.Event()
         self._recognition_event = threading.Event()
+        self._cancel_utterance_event = threading.Event()
         self._runtime_active = True
         self._runtime_had_connection = False
         self._busy = True
@@ -1339,6 +2179,7 @@ class AppController(QObject):
                 runtime.run(
                     self._disconnect_event,
                     self._recognition_event,
+                    cancel_utterance_event=self._cancel_utterance_event,
                     on_update=self._publish_update,
                     on_state=self._runtimeStatus.emit,
                     on_connected=self._runtimeConnected.emit,
@@ -1346,6 +2187,7 @@ class AppController(QObject):
                     on_started=self._runtimeStarted.emit,
                     on_push_to_talk=self._pushToTalkChanged.emit,
                     on_raw_audio=self._record_raw_attempt_audio,
+                    on_raw_imu=self._record_raw_imu_samples,
                 )
             except BaseException as exc:
                 error = str(exc)
@@ -1361,13 +2203,37 @@ class AppController(QObject):
 
     def _record_raw_attempt_audio(self, session_id: int, audio_16k) -> None:
         try:
-            self._voice_history.record_audio(session_id, audio_16k)
-        except BaseException as exc:
-            print(f"[voice-history] raw utterance audio was not queued: {exc}")
-        try:
             self._modification_dataset.record_audio(session_id, audio_16k)
         except BaseException as exc:
-            print(f"[dataset] raw attempt audio was not saved: {exc}")
+            print(f"[dataset] raw interaction audio was not saved: {exc}")
+
+    def _record_raw_imu_samples(
+        self,
+        session_id: int,
+        samples,
+        metadata: dict,
+    ) -> None:
+        try:
+            self._modification_dataset.record_imu_samples(
+                session_id,
+                samples,
+                sample_rate_hz=metadata.get("sample_rate_hz"),
+                clock_offset_ms=metadata.get("clock_offset_ms"),
+                dropped_samples=int(metadata.get("dropped_samples", 0)),
+                metadata={
+                    key: value
+                    for key, value in metadata.items()
+                    if key
+                    not in {
+                        "sample_rate_hz",
+                        "clock_offset_ms",
+                        "dropped_samples",
+                    }
+                },
+            )
+        except BaseException as exc:
+            # IMU is evidence collection only; do not disturb recognition.
+            print(f"[dataset] utterance IMU was not saved: {exc}")
 
     @Slot()
     def startRecognition(self) -> None:
@@ -1473,18 +2339,20 @@ class AppController(QObject):
             self._append_log(f"逐句语音记录清空失败：{exc}")
             return
         self._voice_history_entries.clear()
+        self._association_coordinator.clear()
+        self._association_queue.clear()
+        self._association_recommendation = None
+        self._association_detail_visible = False
+        self._association_center_entries = []
+        self._clear_association_center_selection(emit=False)
         self.voiceHistoryChanged.emit()
+        self.associationChanged.emit()
         self._append_log("逐句语音记录已清空")
 
     @Slot(str)
     def playVoiceHistory(self, audio_path: str) -> None:
-        path = Path(str(audio_path)).expanduser()
-        try:
-            resolved = path.resolve(strict=True)
-            history_root = (app_data_root() / "voice_history").resolve()
-            resolved.relative_to(history_root)
-        except (OSError, ValueError):
-            self._append_log("无法播放：语音记录文件不存在或路径无效")
+        resolved = self._validated_voice_history_path(audio_path, "播放")
+        if resolved is None:
             return
         player = self._ensure_voice_player()
         if (
@@ -1498,6 +2366,33 @@ class AppController(QObject):
         self._playing_voice_path = str(resolved)
         self.playingVoiceChanged.emit()
         player.play()
+
+    @Slot(str)
+    def openVoiceHistoryLocation(self, audio_path: str) -> None:
+        resolved = self._validated_voice_history_path(audio_path, "打开位置")
+        if resolved is None:
+            return
+        try:
+            _open_voice_history_location(resolved)
+        except (OSError, RuntimeError) as exc:
+            self._append_log(f"无法打开语音文件位置：{exc}")
+            return
+        self._append_log(f"已打开语音文件位置：{resolved.name}")
+
+    def _validated_voice_history_path(
+        self, audio_path: str, action: str
+    ) -> Path | None:
+        roots = [self._modification_dataset.user_root]
+        legacy_root = self._modification_dataset.legacy_history_root
+        if legacy_root is not None:
+            roots.append(legacy_root)
+        for root in roots:
+            try:
+                return _resolve_voice_history_path(audio_path, root)
+            except (OSError, ValueError):
+                continue
+        self._append_log(f"无法{action}：语音记录文件不存在或路径无效")
+        return None
 
     def _ensure_voice_player(self) -> QMediaPlayer:
         if self._voice_player is not None:
@@ -1517,6 +2412,17 @@ class AppController(QObject):
             return
         self._voice_history_entries.insert(0, dict(entry))
         del self._voice_history_entries[100:]
+        self.voiceHistoryChanged.emit()
+
+    def _refresh_voice_history_entries(self) -> None:
+        try:
+            entries = self._voice_history.load_entries()
+        except BaseException as exc:
+            self._append_log(f"刷新逐句语音记录失败：{exc}")
+            return
+        if entries == self._voice_history_entries:
+            return
+        self._voice_history_entries = entries
         self.voiceHistoryChanged.emit()
 
     def _apply_voice_playback_state(self, state) -> None:
@@ -1625,7 +2531,6 @@ class AppController(QObject):
             QCoreApplication.quit()
             return
         self._quitting = True
-        self._clear_feedback_reason()
         self._cancel_pending_text_processing()
         self._text_processing_worker.close(wait=False)
         self._quit_wait_ticks = 0
@@ -1659,6 +2564,8 @@ class AppController(QObject):
         if self._voice_history_closed:
             return
         self._voice_history_closed = True
+        self._stop_undo_window()
+        self._stop_manual_association_watch()
         if self._voice_player is not None:
             self._voice_player.stop()
         self._voice_history.close(wait=True)
@@ -1755,15 +2662,17 @@ class AppController(QObject):
 
     # Worker event application --------------------------------------------------
     def _publish_update(self, update) -> None:
+        session_id = int(getattr(update, "session_id", 0))
+        if (
+            self._ignore_asr_updates_until_next_start
+            or session_id in self._cancelled_asr_session_ids
+        ):
+            return
         if bool(getattr(update, "is_final", False)):
             # This callback runs in the recognition thread. Clear the physical
             # gate before posting the final into Qt so another utterance cannot
             # begin while routing, text processing, injection, or review runs.
             self._suspend_recognition_for_interaction()
-            try:
-                self._voice_history.record_final(update)
-            except BaseException as exc:
-                print(f"[voice-history] final utterance was not queued: {exc}")
         try:
             self._modification_dataset.record_asr_update(update)
         except BaseException as exc:
@@ -1772,7 +2681,7 @@ class AppController(QObject):
             str(update.text or ""),
             bool(update.is_final),
             str(update.error or ""),
-            int(getattr(update, "session_id", 0)),
+            session_id,
         )
 
     @Slot(str)
@@ -1782,6 +2691,46 @@ class AppController(QObject):
             return
         summary = text.splitlines()[0].strip()
         self._append_log(text)
+        if summary.startswith(("STAGE1 ", "STAGE2 ", "[ASR TIMING]")):
+            try:
+                self._modification_dataset.record_runtime_event(
+                    text, self._latest_asr_session_id
+                )
+            except BaseException as exc:
+                self._append_log(f"检测证据保存失败：{exc}")
+        if summary.startswith("[ASR] START"):
+            # Stage2 activation is the authoritative start of a detected voice
+            # session.  Show the overlay now, before ASR has any text to emit.
+            self._stop_manual_association_watch()
+            if self._applied_interaction is not None:
+                self._confirm_applied_interaction(
+                    reason="next_utterance_started_without_undo",
+                    hide_overlay=False,
+                )
+            self._ignore_asr_updates_until_next_start = False
+            self._latest_asr_session_id = 0
+            self._utterance_active = True
+            self._speech_start_target = self._capture_desktop_reference()
+            self._transcript_text = "正在聆听…"
+            self._transcript_mode = ""
+            self._transcript_final = False
+            self._transcript_visible = True
+            self._hide_overlay_timer.stop()
+            self._set_interaction_state("listening")
+            self.transcriptChanged.emit()
+            self.interactionChanged.emit()
+            if self._recognition_enabled:
+                self._set_status("正在聆听", "Esc 可随时取消本句", "listening")
+            return
+        if summary.startswith("[ASR] END"):
+            self._utterance_active = False
+            if self._interaction_state == "listening":
+                if not self._transcript_text.strip() or self._transcript_text == "正在聆听…":
+                    self._transcript_text = "正在识别本句…"
+                self._set_interaction_state("processing")
+                self.transcriptChanged.emit()
+                self.interactionChanged.emit()
+            return
         if summary.startswith("正在连接设备"):
             self._set_status("正在连接设备", summary, "starting")
         elif summary.startswith("正在验证 Ring"):
@@ -1881,7 +2830,16 @@ class AppController(QObject):
     ) -> None:
         if self._status_kind == "stopping":
             return
+        if int(session_id) in self._cancelled_asr_session_ids:
+            return
+        if self._ignore_asr_updates_until_next_start:
+            if session_id:
+                self._cancelled_asr_session_ids.add(int(session_id))
+            return
+        if session_id:
+            self._latest_asr_session_id = int(session_id)
         if is_final:
+            self._utterance_active = False
             self._suspend_recognition_for_interaction()
         # A review is modal at the interaction layer even though its overlay
         # never steals focus.  Stray proximity activations must not replace the
@@ -1907,6 +2865,52 @@ class AppController(QObject):
         if not text:
             if is_final:
                 self._append_log("本段语音已结束，但没有识别出文字")
+                failed_mode = self._session_input_modes.get(
+                    int(session_id), self._input_mode
+                )
+                failed_target = self._session_targets.get(
+                    int(session_id), self._speech_start_target
+                )
+                try:
+                    self._modification_dataset.record_application(
+                        action="no_result",
+                        session_id=int(session_id),
+                        mode=failed_mode,
+                        application=(
+                            failed_target.process_name or failed_target.window_title
+                            if failed_target is not None
+                            else ""
+                        ),
+                        target_key=self._association_target_key(failed_target),
+                    )
+                except BaseException as exc:
+                    self._append_log(f"空识别状态保存失败：{exc}")
+                failed_member = self._record_association_failure(
+                    session_id=int(session_id),
+                    target=failed_target,
+                    mode=failed_mode,
+                    status="未识别",
+                )
+                self._start_manual_association_watch(
+                    failed_target, failed_member
+                )
+                if session_id:
+                    self._session_input_modes.pop(int(session_id), None)
+                    self._session_routing_modes.pop(int(session_id), None)
+                    self._session_targets.pop(int(session_id), None)
+                self._speech_start_target = None
+                self._transcript_text = "未识别到文字"
+                self._transcript_mode = ""
+                self._transcript_final = True
+                self._transcript_visible = True
+                self._set_interaction_state("no_result")
+                self.transcriptChanged.emit()
+                self.interactionChanged.emit()
+                self._hide_overlay_timer.start(1500)
+                if self._recognition_enabled:
+                    self._set_status(
+                        "自动监听中", "未识别到文字，等待下一段语音", "running"
+                    )
                 self._resume_recognition_after_interaction()
             return
         normalized_session_id = int(session_id)
@@ -1919,7 +2923,9 @@ class AppController(QObject):
             )
             if normalized_session_id not in self._session_targets:
                 self._session_targets[normalized_session_id] = (
-                    self._capture_desktop_reference()
+                    self._speech_start_target
+                    if self._speech_start_target is not None
+                    else self._capture_desktop_reference()
                 )
         else:
             mode = self._input_mode
@@ -2019,6 +3025,10 @@ class AppController(QObject):
         was_processing = self.textProcessing
         self._pending_mode_routes.add(request_id)
         self._pending_mode_route_contexts[request_id] = _PendingModeRoute(target)
+        try:
+            self._modification_dataset.record_routing_request(request)
+        except BaseException as exc:
+            self._append_log(f"输入类型路由数据保存失败：{exc}")
         if not was_processing:
             self.textProcessingChanged.emit()
         self._transcript_text = f"正在自动判断听写或指令…\n{text}"
@@ -2034,6 +3044,13 @@ class AppController(QObject):
         if self._recognition_enabled:
             self._set_status("正在判断输入类型", "大模型正在区分听写或编辑指令", "starting")
         self._text_processing_worker.submit_routing(request)
+        self._prepare_auto_candidates(
+            request_id,
+            int(session_id),
+            text,
+            target,
+            normalize_input_mode(fallback_mode),
+        )
 
     @Slot(object)
     def _apply_input_mode_routed(self, result: object) -> None:
@@ -2045,10 +3062,12 @@ class AppController(QObject):
         context = self._pending_mode_route_contexts.pop(
             result.request_id, _PendingModeRoute()
         )
-        if not self.textProcessing:
-            self.textProcessingChanged.emit()
         if self._quitting or self._status_kind == "stopping":
             return
+        try:
+            self._modification_dataset.record_routing_result(result)
+        except BaseException as exc:
+            self._append_log(f"输入类型路由结果保存失败：{exc}")
         label = "编辑指令" if result.mode == INPUT_MODE_EDIT else "听写"
         self._transcript_mode = result.mode
         self.transcriptChanged.emit()
@@ -2063,12 +3082,111 @@ class AppController(QObject):
             self._append_log(
                 f"自动路由判断完成：{label}（耗时 {result.latency_s:.3f}s）"
             )
-        self._dispatch_completed_text(
-            result.raw_text,
-            result.session_id,
-            result.mode,
-            context.target,
+        self._start_auto_candidates(result, context.target)
+
+    def _prepare_auto_candidates(
+        self,
+        route_id: int,
+        session_id: int,
+        raw_text: str,
+        target: DesktopTargetRef | None,
+        fallback_mode: str,
+    ) -> None:
+        """Start routing-independent candidates while classification runs."""
+        interaction = _AutoInteraction(
+            route_id=route_id,
+            session_id=session_id,
+            raw_text=raw_text,
+            target=target,
+            selected_mode=normalize_input_mode(fallback_mode),
+            routed_at=0.0,
         )
+        self._active_auto_interaction = interaction
+        # The ASR final is always a complete, immediately usable dictation
+        # candidate. Optional LLM cleanup may replace it if it finishes inside
+        # the short correction window, but must never delay injection.
+        interaction.results[INPUT_MODE_DICTATION] = TextProcessingResult(
+            request_id=0,
+            session_id=session_id,
+            mode=INPUT_MODE_DICTATION,
+            raw_text=raw_text,
+            final_text=raw_text,
+            latency_s=0.0,
+            used_llm=False,
+        )
+        if target is None:
+            interaction.candidate_errors[INPUT_MODE_EDIT] = (
+                "没有锁定外部文本框，无法按编辑指令执行"
+            )
+        else:
+            try:
+                interaction.snapshot = self._desktop_target_adapter().capture_text(
+                    target
+                )
+                validate_edit_target_text(interaction.snapshot.text)
+                self._log_edit_target_snapshot(interaction.snapshot)
+            except BaseException as exc:
+                interaction.candidate_errors[INPUT_MODE_EDIT] = str(exc)
+
+        for mode in (INPUT_MODE_DICTATION, INPUT_MODE_EDIT):
+            if mode == INPUT_MODE_DICTATION and not self._llm_enabled:
+                continue
+            if mode == INPUT_MODE_EDIT and interaction.snapshot is None:
+                continue
+            self._submit_text_processing(
+                raw_text,
+                session_id,
+                mode,
+                target_text=(
+                    interaction.snapshot.text
+                    if mode == INPUT_MODE_EDIT and interaction.snapshot is not None
+                    else ""
+                ),
+                target=target,
+                snapshot=(interaction.snapshot if mode == INPUT_MODE_EDIT else None),
+                auto_route_id=route_id,
+                update_overlay=False,
+            )
+
+        interaction.preparing = False
+
+    def _start_auto_candidates(
+        self,
+        route: InputModeRoutingResult,
+        target: DesktopTargetRef | None,
+    ) -> None:
+        """Select one of the two candidates already running for this utterance."""
+        interaction = self._active_auto_interaction
+        if interaction is None or interaction.route_id != route.request_id:
+            # Compatibility for callers that deliver a route result directly.
+            self._prepare_auto_candidates(
+                route.request_id,
+                route.session_id,
+                route.raw_text,
+                target,
+                route.mode,
+            )
+            interaction = self._active_auto_interaction
+        if interaction is None:
+            return
+        selected = normalize_input_mode(route.mode)
+        interaction.selected_mode = selected
+        interaction.classified = True
+        interaction.routed_at = time.monotonic()
+
+        label = "指令" if selected == INPUT_MODE_EDIT else "听写"
+        self._transcript_mode = selected
+        self._transcript_text = f"已判断为{label}，正在准备结果…"
+        self._transcript_final = False
+        self._transcript_visible = True
+        self._set_interaction_state("processing")
+        self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._hide_overlay_timer.stop()
+        if selected in interaction.results or selected in interaction.candidate_errors:
+            self._present_auto_selection(target)
+        if not self.textProcessing:
+            self.textProcessingChanged.emit()
 
     def _reject_edit_request(self, message: str) -> None:
         self._transcript_text = message
@@ -2092,12 +3210,13 @@ class AppController(QObject):
         target_text: str = "",
         target: DesktopTargetRef | None = None,
         snapshot: DesktopTextSnapshot | None = None,
+        auto_route_id: int = 0,
+        update_overlay: bool = True,
     ) -> None:
         normalized_mode = normalize_input_mode(mode)
         if normalized_mode != INPUT_MODE_EDIT and not self._llm_enabled:
             self._append_log("输入模式已跳过文本大模型，直接采用 ASR 最终结果")
-            self._commit_input_text(
-                TextProcessingResult(
+            immediate_result = TextProcessingResult(
                     request_id=0,
                     session_id=int(session_id),
                     mode=normalized_mode,
@@ -2105,9 +3224,11 @@ class AppController(QObject):
                     final_text=text,
                     latency_s=0.0,
                     used_llm=False,
-                ),
-                target,
-            )
+                )
+            if auto_route_id:
+                self._accept_auto_candidate(auto_route_id, immediate_result, target)
+            else:
+                self._commit_input_text(immediate_result, target)
             return
         self._text_request_id += 1
         request_id = self._text_request_id
@@ -2146,16 +3267,24 @@ class AppController(QObject):
         self._pending_interactions[request_id] = _PendingInteraction(
             target=target,
             snapshot=snapshot,
+            auto_route_id=int(auto_route_id),
         )
+        try:
+            self._modification_dataset.record_text_request(request)
+        except BaseException as exc:
+            self._append_log(f"统一交互 LLM 输入保存失败：{exc}")
+        if auto_route_id and self._active_auto_interaction is not None:
+            self._active_auto_interaction.request_ids[normalized_mode] = request_id
         if not was_processing:
             self.textProcessingChanged.emit()
         label = "修改" if normalized_mode == INPUT_MODE_EDIT else "输入"
-        self._transcript_text = f"{label}处理中…\n{text}"
-        self._transcript_final = False
-        self._transcript_visible = True
-        self._set_interaction_state("processing")
-        self.transcriptChanged.emit()
-        self._hide_overlay_timer.stop()
+        if update_overlay:
+            self._transcript_text = f"{label}处理中…\n{text}"
+            self._transcript_final = False
+            self._transcript_visible = True
+            self._set_interaction_state("processing")
+            self.transcriptChanged.emit()
+            self._hide_overlay_timer.stop()
         self._append_log(f"已提交大模型{label}处理：{text}")
         if self._recognition_enabled:
             self._set_status("正在处理文本", f"大模型正在处理{label}内容", "starting")
@@ -2175,13 +3304,14 @@ class AppController(QObject):
             self.textProcessingChanged.emit()
         if self._quitting or self._status_kind == "stopping":
             return
-        if result.mode == INPUT_MODE_EDIT:
-            try:
-                self._modification_dataset.record_llm_result(
-                    result.request_id, result
-                )
-            except BaseException as exc:
-                self._append_log(f"修改数据 LLM 分支保存失败：{exc}")
+        try:
+            self._modification_dataset.record_llm_result(
+                result.request_id, result
+            )
+        except BaseException as exc:
+            self._append_log(f"统一交互 LLM 结果保存失败：{exc}")
+        else:
+            self._refresh_voice_history_entries()
         label = "修改" if result.mode == INPUT_MODE_EDIT else "输入"
         parsed_edit_response: object = None
         if result.model_output:
@@ -2203,7 +3333,11 @@ class AppController(QObject):
             self._append_log(
                 f"大模型{label}处理失败：{result.error}"
             )
-            if result.mode == INPUT_MODE_EDIT:
+            # Auto routing deliberately computes both candidates before the
+            # classifier finishes.  Cache failures just like successes; an
+            # unselected edit failure must never open a review (or expose the
+            # correction control) before classification has completed.
+            if result.mode == INPUT_MODE_EDIT and not context.auto_route_id:
                 if context.snapshot is None:
                     try:
                         self._modification_dataset.abandon_request(
@@ -2231,6 +3365,11 @@ class AppController(QObject):
                     f"大模型输入处理完成（{result.latency_s:.2f}s）："
                     f"{result.final_text}"
                 )
+        if context.auto_route_id:
+            self._accept_auto_candidate(
+                context.auto_route_id, result, context.target
+            )
+            return
         if result.mode == INPUT_MODE_EDIT:
             if context.snapshot is None:
                 try:
@@ -2261,6 +3400,174 @@ class AppController(QObject):
             return
         self._commit_input_text(result, context.target)
 
+    def _accept_auto_candidate(
+        self,
+        route_id: int,
+        result: TextProcessingResult,
+        target: DesktopTargetRef | None,
+    ) -> None:
+        interaction = self._active_auto_interaction
+        if interaction is None or interaction.route_id != int(route_id):
+            return
+        interaction.results[result.mode] = result
+        if (
+            result.mode == interaction.selected_mode
+            and not interaction.preparing
+            and interaction.classified
+        ):
+            self._present_auto_selection(target)
+
+    def _present_auto_selection(
+        self, target: DesktopTargetRef | None = None
+    ) -> None:
+        interaction = self._active_auto_interaction
+        if interaction is None:
+            return
+        mode = interaction.selected_mode
+        error = interaction.candidate_errors.get(mode, "")
+        if error:
+            self._transcript_mode = mode
+            label = "指令" if mode == INPUT_MODE_EDIT else "听写"
+            self._transcript_text = (
+                f"{label}无法执行：{error}\nTab 切换类型 · Esc 取消"
+            )
+            self._transcript_final = True
+            self._set_interaction_state("error")
+            self.transcriptChanged.emit()
+            self.interactionChanged.emit()
+            return
+        result = interaction.results.get(mode)
+        if result is None:
+            label = "指令" if mode == INPUT_MODE_EDIT else "听写"
+            self._transcript_mode = mode
+            self._transcript_text = f"已切换为{label}，候选结果正在完成…"
+            self._transcript_final = False
+            self._set_interaction_state("processing")
+            self.transcriptChanged.emit()
+            self.interactionChanged.emit()
+            return
+        if mode == INPUT_MODE_DICTATION:
+            self._pending_dictation_result = (
+                result,
+                target if target is not None else interaction.target,
+            )
+            self._transcript_mode = mode
+            self._transcript_text = result.final_text or result.raw_text
+            self._transcript_final = True
+            self._set_interaction_state("processing")
+            self.transcriptChanged.emit()
+            self.interactionChanged.emit()
+            elapsed_ms = int(
+                max(0.0, time.monotonic() - interaction.routed_at) * 1000
+            )
+            remaining_ms = max(0, _DICTATION_CORRECTION_GRACE_MS - elapsed_ms)
+            if remaining_ms:
+                self._dictation_commit_timer.start(remaining_ms)
+            else:
+                self._commit_pending_dictation()
+            return
+
+        snapshot = interaction.snapshot
+        if snapshot is None:
+            return
+        parsed: object = None
+        if result.model_output:
+            try:
+                parsed = json.loads(result.model_output)
+            except (TypeError, json.JSONDecodeError):
+                pass
+        if result.error or result.final_text == result.target_text:
+            self._begin_failed_edit_review(
+                replace(
+                    result,
+                    error=result.error or "大模型未找到可可靠执行的修改",
+                ),
+                snapshot,
+            )
+            return
+        self._begin_edit_review(
+            result,
+            snapshot,
+            allow_empty=_is_explicit_emptying_edit_response(
+                parsed, result.target_text
+            ),
+        )
+
+    @Slot()
+    def _commit_pending_dictation(self) -> None:
+        pending = self._pending_dictation_result
+        if pending is None:
+            return
+        self._pending_dictation_result = None
+        result, target = pending
+        self._finish_auto_interaction(INPUT_MODE_DICTATION)
+        self._commit_input_text(result, target)
+
+    @Slot()
+    def switchCurrentInputMode(self) -> None:
+        """Use the already-running alternate interpretation for this utterance."""
+        interaction = self._active_auto_interaction
+        if interaction is None:
+            return
+        self._dictation_commit_timer.stop()
+        self._pending_dictation_result = None
+        self._stop_edit_auto_confirm()
+        if self._edit_review is not None:
+            self._edit_review = None
+            self._edit_preview_html = ""
+        previous_mode = interaction.selected_mode
+        interaction.selected_mode = (
+            INPUT_MODE_DICTATION
+            if interaction.selected_mode == INPUT_MODE_EDIT
+            else INPUT_MODE_EDIT
+        )
+        try:
+            self._modification_dataset.record_mode_correction(
+                interaction.session_id,
+                previous_mode=previous_mode,
+                corrected_mode=interaction.selected_mode,
+            )
+        except BaseException as exc:
+            self._append_log(f"输入类型纠正数据保存失败：{exc}")
+        self._transcript_mode = interaction.selected_mode
+        self._append_log(
+            "用户纠正本句类型为："
+            + ("编辑指令" if interaction.selected_mode == INPUT_MODE_EDIT else "听写")
+        )
+        self.interactionChanged.emit()
+        self._present_auto_selection(interaction.target)
+
+    def _finish_auto_interaction(self, used_mode: str) -> None:
+        interaction = self._active_auto_interaction
+        if interaction is None:
+            return
+        for mode, request_id in tuple(interaction.request_ids.items()):
+            if request_id in self._pending_text_requests:
+                self._pending_text_requests.discard(request_id)
+                self._pending_interactions.pop(request_id, None)
+                cancel_request = getattr(
+                    self._text_processing_worker, "cancel_request", None
+                )
+                if callable(cancel_request):
+                    cancel_request(request_id)
+            if mode == INPUT_MODE_EDIT and mode != used_mode:
+                try:
+                    self._modification_dataset.abandon_request(
+                        request_id, "alternate mode was not selected"
+                    )
+                except BaseException:
+                    pass
+        if used_mode != INPUT_MODE_EDIT and interaction.snapshot is not None:
+            try:
+                self._desktop_target_adapter().release_selection(
+                    interaction.snapshot.target
+                )
+            except BaseException:
+                pass
+        self._active_auto_interaction = None
+        self.interactionChanged.emit()
+        self.textProcessingChanged.emit()
+
     @Slot(object)
     def _apply_llm_trace_collected(self, trace: object) -> None:
         if not isinstance(trace, LLMTraceCollection):
@@ -2285,12 +3592,19 @@ class AppController(QObject):
             self._append_log("文本处理完成，但没有可注入的文字")
             self._resume_recognition_after_interaction()
             return
+        if normalize_input_mode(result.mode) == INPUT_MODE_DICTATION:
+            self._copy_text_to_clipboard(final_text)
+        # Stage2 normally locks the target before the overlay appears. If that
+        # first capture raced a focus transition, make one last attempt at the
+        # actual commit point instead of silently discarding valid dictation.
+        if self._desktop_output and target is None:
+            target = self._capture_desktop_reference()
         self._transcript_text = final_text
         self._transcript_final = True
         self._transcript_visible = True
         self._set_interaction_state("applied")
         self.transcriptChanged.emit()
-        self._hide_overlay_timer.start(1800)
+        self._hide_overlay_timer.stop()
         applied = False
         detail = ""
         if not self._desktop_output:
@@ -2309,15 +3623,86 @@ class AppController(QObject):
             fallback = f"大模型处理失败，已回退 ASR 原文：{result.error}"
             detail = f"{detail}；{fallback}" if detail else fallback
         status = "已注入" if applied else "未注入"
+        try:
+            self._modification_dataset.record_application(
+                action="applied" if applied else "apply_failed",
+                session_id=int(result.session_id),
+                request_id=int(result.request_id),
+                mode=INPUT_MODE_DICTATION,
+                application=(
+                    target.process_name or target.window_title
+                    if target is not None
+                    else ""
+                ),
+                target_key=self._association_target_key(target),
+                candidate_text=final_text,
+                final_text=final_text if applied else None,
+                method="automatic",
+                error=None if applied else detail,
+            )
+        except BaseException as exc:
+            self._append_log(f"听写应用事件保存失败：{exc}")
+        applied_interaction = None
+        if applied and target is not None:
+            applied_interaction = _AppliedInteraction(
+                mode=INPUT_MODE_DICTATION,
+                target=target,
+                session_id=int(result.session_id),
+                request_id=int(result.request_id),
+                raw_text=str(result.raw_text or ""),
+                applied_text=final_text,
+            )
+        if not applied:
+            self._applied_interaction = None
+            self._transcript_text = f"{final_text}\n{detail}"
+            self._set_interaction_state("error")
+            self.transcriptChanged.emit()
+            self.interactionChanged.emit()
+            self._hide_overlay_timer.start(3500)
         self._record_history(
             f"输入 · {status}",
             raw=result.raw_text,
             result=final_text if result.used_llm else "",
             detail=detail,
         )
+        if applied_interaction is not None:
+            self._show_applied_interaction(
+                applied_interaction,
+                message="听写已应用到原文本框",
+            )
+            return
         if self._recognition_enabled:
             self._set_status("自动监听中", "输入完成，等待下一段语音", "running")
         self._resume_recognition_after_interaction()
+
+    def _copy_text_to_clipboard(self, text: str) -> None:
+        """Keep every committed dictation available for manual paste."""
+        value = str(text or "")
+        try:
+            from .clipboard import QtClipboardBridge
+
+            clipboard = QtClipboardBridge()
+            last_error: BaseException | None = None
+            for attempt in range(3):
+                try:
+                    clipboard.set_text(value)
+                    deadline = time.monotonic() + 0.25
+                    while time.monotonic() < deadline:
+                        if clipboard.text() == value:
+                            self._append_log("听写结果已复制到剪贴板")
+                            return
+                        time.sleep(0.01)
+                except BaseException as exc:
+                    last_error = exc
+                if attempt < 2:
+                    time.sleep(0.03)
+            if last_error is not None:
+                raise RuntimeError(str(last_error)) from last_error
+            raise RuntimeError("剪贴板读回内容与本次听写不一致")
+        except BaseException as exc:
+            # Clipboard failure must not prevent the independent desktop
+            # injection attempt.
+            self._append_log(f"听写结果复制到剪贴板失败：{exc}")
 
     def _begin_edit_review(
         self,
@@ -2353,13 +3738,18 @@ class AppController(QObject):
         review_lines = [f"修改指令：{result.raw_text}"]
         if not proposed:
             review_lines.append("⚠ 确认后将清空目标文本框")
-        review_lines.append("Enter 确认  ·  Esc 取消")
+        review_lines.append("Enter 立即应用  ·  Esc 取消")
         self._transcript_text = "\n".join(review_lines)
         self._transcript_final = True
         self._transcript_visible = True
         self._hide_overlay_timer.stop()
         self._set_interaction_state("review")
         self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._edit_auto_confirm_deadline = (
+            time.monotonic() + _EDIT_AUTO_CONFIRM_MS / 1000.0
+        )
+        self._edit_auto_confirm_timer.start()
         self.interactionChanged.emit()
         self._record_history(
             "修改 · 等待确认",
@@ -2387,6 +3777,7 @@ class AppController(QObject):
         result: TextProcessingResult,
         snapshot: DesktopTextSnapshot,
     ) -> None:
+        self._stop_edit_auto_confirm()
         error = str(result.error or "大模型没有返回可用的修改结果").strip()
         try:
             self._modification_dataset.record_llm_failure(
@@ -2404,11 +3795,16 @@ class AppController(QObject):
             failure_error=error,
         )
         self._edit_preview_html = ""
+        recovery_hint = (
+            "Tab 改为听写 · Esc 取消"
+            if self.modeCorrectionAvailable
+            else "Esc 取消"
+        )
         self._transcript_text = "\n".join(
             (
                 "大模型修改失败，原文本保持不变",
                 error,
-                "Esc 取消",
+                recovery_hint,
             )
         )
         self._transcript_final = True
@@ -2426,7 +3822,11 @@ class AppController(QObject):
         if self._recognition_enabled:
             self._set_status(
                 "大模型修改失败",
-                "原文本未改变；请取消本次修改",
+                (
+                    "原文本未改变；可按 Tab 改为听写，或按 Esc 取消"
+                    if self.modeCorrectionAvailable
+                    else "原文本未改变；请按 Esc 取消本次修改"
+                ),
                 "error",
             )
 
@@ -2435,7 +3835,8 @@ class AppController(QObject):
         review = self._edit_review
         if review is None or review.failure_error:
             return
-        self._clear_feedback_reason()
+        application_method = self._edit_confirm_method
+        self._stop_edit_auto_confirm()
         try:
             adapter = self._desktop_target_adapter()
             adapter.replace(review.snapshot, review.proposed_text)
@@ -2454,6 +3855,7 @@ class AppController(QObject):
                     review, fallback=review.proposed_text
                 )
         except BaseException as exc:
+            self._finish_auto_interaction(INPUT_MODE_EDIT)
             self._record_history("修改 · 应用失败", detail=str(exc))
             try:
                 self._modification_dataset.feedback(
@@ -2477,14 +3879,43 @@ class AppController(QObject):
             )
         except BaseException as exc:
             self._append_log(f"修改数据确认反馈保存失败：{exc}")
+        try:
+            self._modification_dataset.record_application(
+                action="applied",
+                session_id=int(review.session_id),
+                request_id=int(review.request_id),
+                mode=INPUT_MODE_EDIT,
+                application=(
+                    review.snapshot.target.process_name
+                    or review.snapshot.target.window_title
+                ),
+                target_key=self._association_target_key(review.snapshot.target),
+                before_text=review.snapshot.text,
+                candidate_text=review.proposed_text,
+                final_text=final_text,
+                method=application_method,
+            )
+        except BaseException as exc:
+            self._append_log(f"修改应用事件保存失败：{exc}")
         self._record_history(
             "修改 · 已应用",
             raw=review.instruction,
             result=review.proposed_text,
             detail=f"已替换 {review.snapshot.target.window_title or '外部文本框'}",
         )
-        self._finish_edit_review(
-            message="修改已应用到原文本框", state="applied", hide_ms=2200
+        applied_interaction = _AppliedInteraction(
+            mode=INPUT_MODE_EDIT,
+            target=review.snapshot.target,
+            session_id=int(review.session_id),
+            request_id=int(review.request_id),
+            raw_text=str(review.instruction or ""),
+            applied_text=str(final_text),
+            original_snapshot=review.snapshot,
+        )
+        self._finish_auto_interaction(INPUT_MODE_EDIT)
+        self._show_applied_interaction(
+            applied_interaction,
+            message="修改已应用到原文本框",
         )
 
     def _verify_macos_edit_text(self, review: _EditReview) -> str:
@@ -2495,7 +3926,7 @@ class AppController(QObject):
             actual = snapshot.text
         finally:
             adapter.release_selection(review.snapshot.target)
-        if actual != review.proposed_text:
+        if not macos_texts_equivalent(actual, review.proposed_text):
             raise RuntimeError(
                 "外部文本框回读结果与修改预览不一致，系统没有确认替换成功"
             )
@@ -2506,11 +3937,17 @@ class AppController(QObject):
         review = self._edit_review
         if review is None:
             return
-        self._clear_feedback_reason()
-        feedback_saved = False
-        final_text, manually_corrected = self._read_back_edit_text(
-            review, fallback=review.snapshot.text
-        )
+        self._stop_edit_auto_confirm()
+        # A failed edit never changed the target, so reading the external
+        # control again adds no information and can block cancellation when
+        # that window/control disappeared in the meantime.
+        if review.failure_error:
+            final_text = review.snapshot.text
+            manually_corrected = False
+        else:
+            final_text, manually_corrected = self._read_back_edit_text(
+                review, fallback=review.snapshot.text
+            )
         try:
             self._modification_dataset.feedback(
                 review.request_id,
@@ -2518,98 +3955,68 @@ class AppController(QObject):
                 final_text=final_text,
                 manually_corrected=manually_corrected,
             )
-            feedback_saved = True
         except BaseException as exc:
             self._append_log(f"修改数据取消反馈保存失败：{exc}")
-        self._desktop_target_adapter().release_selection(review.snapshot.target)
+        try:
+            self._modification_dataset.record_application(
+                action="cancelled",
+                session_id=int(review.session_id),
+                request_id=int(review.request_id),
+                mode=INPUT_MODE_EDIT,
+                application=(
+                    review.snapshot.target.process_name
+                    or review.snapshot.target.window_title
+                ),
+                target_key=self._association_target_key(review.snapshot.target),
+                before_text=review.snapshot.text,
+                candidate_text=review.proposed_text,
+                final_text=final_text,
+                method="explicit_user",
+            )
+        except BaseException as exc:
+            self._append_log(f"修改取消事件保存失败：{exc}")
+        failed_member = self._record_association_failure(
+            session_id=int(review.session_id),
+            target=review.snapshot.target,
+            mode=INPUT_MODE_EDIT,
+            status="已取消",
+        )
+        self._start_manual_association_watch(
+            review.snapshot.target, failed_member, baseline=final_text
+        )
+        try:
+            self._desktop_target_adapter().release_selection(
+                review.snapshot.target
+            )
+        except BaseException as exc:
+            # Releasing a stale target is best-effort.  It must never leave the
+            # UI in a modal review state or prevent recognition from resuming.
+            self._append_log(f"取消修改时释放目标失败：{exc}")
         self._record_history("修改 · 已取消", raw=review.instruction)
+        self._finish_auto_interaction(INPUT_MODE_EDIT)
         self._finish_edit_review(
             message="已取消，本次修改没有执行", state="cancelled", hide_ms=2200
         )
-        if feedback_saved:
-            if review.failure_error:
-                self._mark_automatic_llm_failure_reason(
-                    review.request_id, "cancel"
-                )
-            else:
-                self._offer_feedback_reason(review.request_id, "cancel")
-
-    def _mark_automatic_llm_failure_reason(
-        self, request_id: int, action: str
-    ) -> None:
-        try:
-            saved = self._modification_dataset.annotate_feedback_reason(
-                request_id,
-                action,
-                "llm_error",
-                input_method="automatic",
-            )
-        except BaseException as exc:
-            self._append_log(f"大模型失败原因自动保存失败：{exc}")
-            return
-        if saved:
-            self._append_log(
-                "已自动标记本次取消原因："
-                f"{FEEDBACK_REASON_LABELS['llm_error']}"
-            )
-
-    @Slot(str)
-    def selectFeedbackReason(
-        self, reason_code: str, input_method: str = "keyboard"
-    ) -> None:
-        pending = self._pending_feedback_reason
-        if pending is None:
-            return
-        normalized_reason = str(reason_code).strip().lower()
-        try:
-            saved = self._modification_dataset.annotate_feedback_reason(
-                pending.request_id,
-                pending.action,
-                normalized_reason,
-                input_method=input_method,
-            )
-        except BaseException as exc:
-            self._append_log(f"修改失败原因保存失败：{exc}")
-            saved = False
-        if saved:
-            label = FEEDBACK_REASON_LABELS.get(normalized_reason, normalized_reason)
-            self._append_log(f"已标记本次取消原因：{label}")
-        self._clear_feedback_reason()
-
-    def _offer_feedback_reason(self, request_id: int, action: str) -> None:
-        # Always create a short, renderable gap before showing the next prompt.
-        self._pending_feedback_reason = _PendingFeedbackReason(
-            request_id=int(request_id), action=str(action)
-        )
-        self._feedback_reason_timer.stop()
-        self._feedback_reason_reveal_timer.stop()
-        self._feedback_reason_visible = False
-        self.feedbackReasonChanged.emit()
-        self._feedback_reason_reveal_timer.start()
 
     @Slot()
-    def _reveal_feedback_reason(self) -> None:
-        if self._pending_feedback_reason is None:
+    def _tick_edit_auto_confirm(self) -> None:
+        if self._edit_review is None or self._edit_review.failure_error:
+            self._stop_edit_auto_confirm()
             return
-        self._feedback_reason_visible = True
-        self._feedback_reason_timer.start()
-        self.feedbackReasonChanged.emit()
+        if time.monotonic() >= self._edit_auto_confirm_deadline:
+            self._edit_confirm_method = "automatic"
+            try:
+                self.confirmEdit()
+            finally:
+                self._edit_confirm_method = "manual"
+            return
+        self.interactionChanged.emit()
 
-    @Slot()
-    def _clear_feedback_reason(self) -> None:
-        had_feedback_reason = (
-            self._pending_feedback_reason is not None
-            or self._feedback_reason_visible
-        )
-        if not had_feedback_reason:
-            self._feedback_reason_timer.stop()
-            self._feedback_reason_reveal_timer.stop()
-            return
-        self._pending_feedback_reason = None
-        self._feedback_reason_visible = False
-        self._feedback_reason_timer.stop()
-        self._feedback_reason_reveal_timer.stop()
-        self.feedbackReasonChanged.emit()
+    def _stop_edit_auto_confirm(self) -> None:
+        self._edit_auto_confirm_timer.stop()
+        if self._edit_auto_confirm_deadline:
+            self._edit_auto_confirm_deadline = 0.0
+            self.interactionChanged.emit()
 
     def _read_back_edit_text(
         self, review: _EditReview, *, fallback: str
@@ -2628,6 +4035,7 @@ class AppController(QObject):
             self._append_log(f"最终文本回读失败，采用已知文本：{exc}")
             return fallback, False
 
+    @Slot(str)
     def dispatchVoiceAction(self, action: str) -> None:
         """Thread-safe entry used by keyboard hooks and future Ring gestures."""
         self._voiceActionRequested.emit(str(action))
@@ -2642,15 +4050,14 @@ class AppController(QObject):
         elif action == ACTION_CONFIRM:
             self.confirmEdit()
         elif action == ACTION_CANCEL:
-            self.cancelEdit()
-        elif action == ACTION_REASON_ASR_ERROR:
-            self.selectFeedbackReason("asr_error")
-        elif action == ACTION_REASON_LLM_ERROR:
-            self.selectFeedbackReason("llm_error")
-        elif action == ACTION_REASON_OTHER:
-            self.selectFeedbackReason("other")
+            self.cancelCurrentUtterance()
+        elif action == ACTION_SWITCH_MODE:
+            self.switchCurrentInputMode()
+        elif action == ACTION_UNDO:
+            self.undoLastApplied()
 
     def _finish_edit_review(self, *, message: str, state: str, hide_ms: int) -> None:
+        self._stop_edit_auto_confirm()
         self._edit_review = None
         self._edit_preview_html = ""
         self._transcript_text = message
@@ -2663,6 +4070,318 @@ class AppController(QObject):
         self._append_log(message)
         if self._recognition_enabled:
             self._set_status("自动监听中", message, "running")
+        self._resume_recognition_after_interaction()
+
+    def _show_applied_interaction(
+        self,
+        interaction: _AppliedInteraction,
+        *,
+        message: str,
+    ) -> None:
+        """Expose a five-second undo window and recommend links immediately."""
+        self._stop_edit_auto_confirm()
+        self._edit_review = None
+        self._edit_preview_html = ""
+        self._applied_interaction = interaction
+        self._transcript_mode = interaction.mode
+        self._transcript_text = str(message)
+        self._transcript_final = True
+        self._transcript_visible = True
+        self._set_interaction_state("applied")
+        self._hide_overlay_timer.stop()
+        self._record_association_success(interaction)
+        self._start_undo_window()
+        self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._append_log(message + "；5 秒内可在浮窗中撤回")
+        if self._recognition_enabled:
+            self._set_status("自动监听中", "结果已应用，5 秒内可撤回", "running")
+        self._resume_recognition_after_interaction()
+
+    def _start_undo_window(self) -> None:
+        self._undo_deadline = time.monotonic() + 5.0
+        self._undo_display_seconds = 5
+        self._undo_window_timer.start()
+
+    def _stop_undo_window(self) -> None:
+        self._undo_window_timer.stop()
+        self._undo_deadline = 0.0
+        self._undo_display_seconds = 0
+
+    @Slot()
+    def _tick_undo_window(self) -> None:
+        if self._applied_interaction is None or self._undo_deadline <= 0:
+            self._stop_undo_window()
+            return
+        remaining = self._undo_deadline - time.monotonic()
+        if remaining <= 0:
+            self._confirm_applied_interaction(
+                reason="undo_window_expired",
+                hide_overlay=True,
+            )
+            return
+        seconds = max(1, int(math.ceil(remaining)))
+        if seconds != self._undo_display_seconds:
+            self._undo_display_seconds = seconds
+            self.interactionChanged.emit()
+
+    def _confirm_applied_interaction(
+        self, *, reason: str, hide_overlay: bool
+    ) -> None:
+        interaction = self._applied_interaction
+        if interaction is None:
+            self._stop_undo_window()
+            return
+        self._stop_undo_window()
+        try:
+            self._modification_dataset.record_acceptance(
+                accepted=True,
+                session_id=interaction.session_id,
+                request_id=interaction.request_id,
+                strength="explicit" if reason == "association_accepted" else "implicit",
+                reason=reason,
+            )
+        except BaseException as exc:
+            self._append_log(f"成功确认状态保存失败：{exc}")
+        self._applied_interaction = None
+        self._provisional_association_recommendations.clear()
+        self.interactionChanged.emit()
+        if hide_overlay and self._interaction_state == "applied":
+            self._hide_transcript()
+        if self._recognition_enabled:
+            self._set_status("自动监听中", "结果已确认，等待下一段语音", "running")
+
+    def _retract_applied_recommendations(self) -> None:
+        recommendations = list(self._provisional_association_recommendations)
+        if not recommendations:
+            return
+        recommendation_ids = {
+            item.recommendation_id for item in recommendations
+        }
+        if (
+            self._association_recommendation is not None
+            and self._association_recommendation.recommendation_id
+            in recommendation_ids
+        ):
+            self._association_recommendation = None
+            self._association_detail_visible = False
+        self._association_queue = deque(
+            item
+            for item in self._association_queue
+            if item.recommendation_id not in recommendation_ids
+        )
+        if self._association_recommendation is None and self._association_queue:
+            self._association_recommendation = self._association_queue.popleft()
+        if self._smart_association_enabled:
+            self._association_coordinator.restore_failures(recommendations)
+        self._provisional_association_recommendations.clear()
+        self.associationChanged.emit()
+
+    @Slot()
+    def undoLastApplied(self) -> None:
+        """Undo the last text operation and treat it as a cancelled result."""
+        interaction = self._applied_interaction
+        if interaction is None:
+            return
+        self._hide_overlay_timer.stop()
+        try:
+            adapter = self._desktop_target_adapter()
+            if interaction.original_snapshot is not None:
+                # Edit mode replaces the whole field, so restoring the captured
+                # pre-edit snapshot is deterministic and does not depend on an
+                # application's undo-stack implementation.
+                adapter.replace(
+                    DesktopTextSnapshot(
+                        interaction.target,
+                        interaction.applied_text,
+                    ),
+                    interaction.original_snapshot.text,
+                )
+            else:
+                # Dictation inserts at the active caret. Native Undo is the only
+                # general cross-application way to remove that exact insertion.
+                adapter.undo(interaction.target)
+        except BaseException as exc:
+            self._transcript_text = f"撤回失败：{exc}"
+            self._transcript_final = True
+            self._transcript_visible = True
+            self._set_interaction_state("error")
+            self.transcriptChanged.emit()
+            self.interactionChanged.emit()
+            self._append_log(f"撤回上次结果失败：{exc}")
+            return
+
+        self._stop_undo_window()
+        self._retract_applied_recommendations()
+        self._applied_interaction = None
+        mode_label = "修改" if interaction.mode == INPUT_MODE_EDIT else "听写"
+        self._transcript_mode = interaction.mode
+        self._transcript_text = f"已撤回上次{mode_label}"
+        self._transcript_final = True
+        self._transcript_visible = True
+        self._set_interaction_state("cancelled")
+        self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._hide_overlay_timer.start(1800)
+        self._record_history(
+            f"{mode_label} · 已撤回",
+            raw=interaction.raw_text,
+        )
+        self._append_log(f"用户已撤回上次{mode_label}结果")
+        if interaction.request_id > 0:
+            try:
+                self._modification_dataset.feedback(
+                    interaction.request_id,
+                    "cancel",
+                    final_text=(
+                        interaction.original_snapshot.text
+                        if interaction.original_snapshot is not None
+                        else ""
+                    ),
+                )
+            except BaseException as exc:
+                self._append_log(f"撤回反馈保存失败：{exc}")
+        try:
+            self._modification_dataset.record_application(
+                action="undone",
+                session_id=int(interaction.session_id),
+                request_id=int(interaction.request_id),
+                mode=interaction.mode,
+                application=(
+                    interaction.target.process_name
+                    or interaction.target.window_title
+                ),
+                target_key=self._association_target_key(interaction.target),
+                before_text=(
+                    interaction.applied_text
+                    if interaction.mode == INPUT_MODE_EDIT
+                    else None
+                ),
+                candidate_text=interaction.applied_text,
+                final_text=(
+                    interaction.original_snapshot.text
+                    if interaction.original_snapshot is not None
+                    else None
+                ),
+                method="explicit_user",
+            )
+        except BaseException as exc:
+            self._append_log(f"撤回事件保存失败：{exc}")
+        failed_member = self._record_association_failure(
+            session_id=interaction.session_id,
+            target=interaction.target,
+            mode=interaction.mode,
+            status="已撤回",
+        )
+        self._start_manual_association_watch(
+            interaction.target,
+            failed_member,
+            baseline=(
+                interaction.original_snapshot.text
+                if interaction.original_snapshot is not None
+                else None
+            ),
+        )
+        if self._recognition_enabled:
+            self._set_status("自动监听中", "已撤回，等待下一段语音", "running")
+
+    @Slot()
+    def cancelCurrentUtterance(self) -> None:
+        """Cancel one utterance at any stage without stopping recognition."""
+        if not self.interactionCanCancel:
+            return
+        cancelled_session_id = self._latest_asr_session_id
+        cancelled_mode = self._transcript_mode or self._input_mode
+        cancelled_target = self._session_targets.get(
+            int(cancelled_session_id), self._speech_start_target
+        )
+        if self._edit_review is None:
+            try:
+                self._modification_dataset.record_application(
+                    action="cancelled",
+                    session_id=int(cancelled_session_id),
+                    mode=cancelled_mode,
+                    application=(
+                        cancelled_target.process_name or cancelled_target.window_title
+                        if cancelled_target is not None
+                        else ""
+                    ),
+                    target_key=self._association_target_key(cancelled_target),
+                    method="explicit_user",
+                )
+            except BaseException as exc:
+                self._append_log(f"本句取消事件保存失败：{exc}")
+            failed_member = self._record_association_failure(
+                session_id=int(cancelled_session_id),
+                target=cancelled_target,
+                mode=cancelled_mode,
+                status="已取消",
+            )
+            self._start_manual_association_watch(
+                cancelled_target, failed_member
+            )
+        self._cancel_utterance_event.set()
+        self._ignore_asr_updates_until_next_start = True
+        if self._latest_asr_session_id:
+            self._cancelled_asr_session_ids.add(self._latest_asr_session_id)
+        self._utterance_active = False
+        self._dictation_commit_timer.stop()
+        self._pending_dictation_result = None
+        self._stop_edit_auto_confirm()
+
+        # Preserve the established edit feedback contract when cancellation
+        # happens at the preview, while still ending the whole auto interaction.
+        if self._edit_review is not None:
+            self.cancelEdit()
+            return
+
+        was_processing = self.textProcessing
+        for request_id in tuple(
+            self._pending_text_requests | self._pending_mode_routes
+        ):
+            cancel_request = getattr(
+                self._text_processing_worker, "cancel_request", None
+            )
+            if callable(cancel_request):
+                cancel_request(request_id)
+            try:
+                self._modification_dataset.abandon_request(
+                    request_id, "utterance cancelled by user"
+                )
+            except BaseException:
+                pass
+        interaction = self._active_auto_interaction
+        if interaction is not None and interaction.snapshot is not None:
+            try:
+                self._desktop_target_adapter().release_selection(
+                    interaction.snapshot.target
+                )
+            except BaseException:
+                pass
+        self._pending_text_requests.clear()
+        self._pending_interactions.clear()
+        self._pending_mode_routes.clear()
+        self._pending_mode_route_contexts.clear()
+        self._active_auto_interaction = None
+        self._session_input_modes.clear()
+        self._session_routing_modes.clear()
+        self._session_targets.clear()
+        self._speech_start_target = None
+        if was_processing:
+            self.textProcessingChanged.emit()
+        self._transcript_mode = ""
+        self._edit_preview_html = ""
+        self._transcript_text = "已取消，等待下一句话"
+        self._transcript_final = True
+        self._transcript_visible = True
+        self._set_interaction_state("cancelled")
+        self.transcriptChanged.emit()
+        self.interactionChanged.emit()
+        self._hide_overlay_timer.start(1200)
+        self._record_history("本句 · 已取消")
+        self._append_log("用户已取消当前语句；旧识别和文本处理结果将被忽略")
+        if self._recognition_enabled:
+            self._set_status("自动监听中", "已取消，等待下一段语音", "running")
         self._resume_recognition_after_interaction()
 
     def _desktop_target_adapter(self):
@@ -2723,7 +4442,8 @@ class AppController(QObject):
             return None
         try:
             return self._desktop_target_adapter().capture_reference()
-        except BaseException:
+        except BaseException as exc:
+            self._append_log(f"锁定外部文本框失败：{exc}")
             return None
 
     def _set_interaction_state(self, state: str) -> None:
@@ -2759,7 +4479,10 @@ class AppController(QObject):
         self._append_log(f"修改目标已读取：{title}（{len(text)} 个字符）")
 
     def _cancel_pending_text_processing(self) -> None:
-        self._clear_feedback_reason()
+        self._dictation_commit_timer.stop()
+        self._pending_dictation_result = None
+        self._stop_edit_auto_confirm()
+        self._applied_interaction = None
         had_pending = bool(self._pending_text_requests or self._pending_mode_routes)
         for request_id in tuple(self._pending_text_requests):
             try:
@@ -2782,6 +4505,7 @@ class AppController(QObject):
         self._pending_interactions.clear()
         self._pending_mode_routes.clear()
         self._pending_mode_route_contexts.clear()
+        self._active_auto_interaction = None
         self._session_routing_modes.clear()
         self._session_targets.clear()
         if had_pending:
@@ -2908,6 +4632,7 @@ class AppController(QObject):
             streaming_sensevoice_repo=repo,
             funasr_nano_repo=funasr_repo,
             funasr_nano_hotwords=self._funasr_hotwords,
+            asr_gain_db=self._asr_gain_db,
             asr_api_key=(
                 self._asr_api_key.strip()
                 if self._asr_backend == "volcengine"

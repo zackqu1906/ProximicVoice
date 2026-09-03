@@ -49,7 +49,8 @@ trigger. This is detector-event inactivity, not RMS silence and not a second VAD
 Defaults:
 
 ```text
-pre-roll                 1.50 s
+pre-roll                 1.00 s
+ASR input gain            0.00 dB
 Stage2 reject count      2
 Stage1 inactivity        1.25 s
 minimum utterance        0.40 s
@@ -66,15 +67,25 @@ but its whole audio tail is not useful to ASR. The session controller therefore
 cuts the submitted waveform at the first reject's Stage2 endpoint. This reduces
 far-speech / ambient tail contamination.
 
-## Why the 1.5 s pre-roll stays
+## Why the 1.0 s pre-roll stays
 
 The first Stage2 decision arrives only after the 0.5 s delay. Starting waveform
 capture at the ACTIVATE event would lose the beginning of the command. The
-controller keeps the latest 1.5 s of the original 16 kHz Ring waveform and prepends
+controller keeps the latest 1.0 s of the original 16 kHz Ring waveform and prepends
 it when a new session starts.
 
 This never changes ProxiMic input. ProxiMic still performs its own 16 kHz -> 8 kHz
-path internally; ASR receives the untouched 16 kHz utterance.
+path internally; ASR keeps the 16 kHz timing and receives only the optional
+downstream gain described below.
+
+## ASR-only input gain
+
+The desktop app applies its adjustable ASR gain only after ProxiMic has evaluated
+the original Ring waveform. The enhanced 16 kHz waveform is then shared by the
+ASR backend and voice history, so replayed history matches what recognition heard.
+The UI defaults to 0 dB and permits 0 through +12 dB. For quiet speech, +6 dB is
+a useful first trial; excessive gain can clip loud speech and reduce recognition
+quality.
 
 ## ASR workers are asynchronous
 

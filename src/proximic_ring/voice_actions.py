@@ -21,9 +21,8 @@ ACTION_INPUT = "input"
 ACTION_EDIT = "edit"
 ACTION_CONFIRM = "confirm"
 ACTION_CANCEL = "cancel"
-ACTION_REASON_ASR_ERROR = "reason_asr_error"
-ACTION_REASON_LLM_ERROR = "reason_llm_error"
-ACTION_REASON_OTHER = "reason_other"
+ACTION_SWITCH_MODE = "switch_mode"
+ACTION_UNDO = "undo"
 
 
 if os.name == "nt":
@@ -61,28 +60,23 @@ class WindowsVoiceActionHotkeys:
     }
     _REVIEW_ACTIONS = {
         0x0D: ACTION_CONFIRM,    # Enter while a review is visible
-        0x1B: ACTION_CANCEL,     # Escape while a review is visible
     }
-    _FEEDBACK_REASON_ACTIONS = {
-        0x41: ACTION_REASON_ASR_ERROR,  # Alt+A
-        0x4C: ACTION_REASON_LLM_ERROR,  # Alt+L
-        0x4F: ACTION_REASON_OTHER,      # Alt+O
-    }
-
     def __init__(
         self,
         on_action: Callable[[str], None],
         *,
         is_review_active: Callable[[], bool] | None = None,
-        is_feedback_reason_active: Callable[[], bool] | None = None,
+        is_interaction_active: Callable[[], bool] | None = None,
+        is_mode_correction_active: Callable[[], bool] | None = None,
         on_error: Callable[[str], None] = print,
     ) -> None:
         if os.name != "nt":
             raise RuntimeError("全局语音动作快捷键目前仅支持 Windows")
         self._on_action = on_action
         self._is_review_active = is_review_active or (lambda: False)
-        self._is_feedback_reason_active = (
-            is_feedback_reason_active or (lambda: False)
+        self._is_interaction_active = is_interaction_active or (lambda: False)
+        self._is_mode_correction_active = (
+            is_mode_correction_active or (lambda: False)
         )
         self._on_error = on_error
         self._ready = threading.Event()
@@ -129,7 +123,8 @@ class WindowsVoiceActionHotkeys:
                         key,
                         alt_down=self._alt_down(user32),
                         review_active=self._is_review_active(),
-                        feedback_reason_active=self._is_feedback_reason_active(),
+                        interaction_active=self._is_interaction_active(),
+                        correction_active=self._is_mode_correction_active(),
                     )
                     if is_up:
                         was_consumed = key in self._pressed_actions
@@ -182,18 +177,21 @@ class WindowsVoiceActionHotkeys:
         *,
         alt_down: bool,
         review_active: bool,
-        feedback_reason_active: bool,
+        interaction_active: bool = False,
+        correction_active: bool = False,
     ) -> str | None:
-        if alt_down and feedback_reason_active:
-            reason_action = cls._FEEDBACK_REASON_ACTIONS.get(int(key))
-            if reason_action is not None:
-                return reason_action
         if alt_down:
             action = cls._ALT_ACTIONS.get(int(key))
             if action is not None:
                 return action
         if review_active:
-            return cls._REVIEW_ACTIONS.get(int(key))
+            review_action = cls._REVIEW_ACTIONS.get(int(key))
+            if review_action is not None:
+                return review_action
+        if correction_active and int(key) == 0x09:  # Tab
+            return ACTION_SWITCH_MODE
+        if (interaction_active or review_active) and int(key) == 0x1B:  # Escape
+            return ACTION_CANCEL
         return None
 
     @staticmethod
@@ -245,6 +243,7 @@ class MacOSVoiceActionHotkeys:
     """Consume edit confirmation keys while another macOS app has focus."""
 
     KEY_RETURN = 36
+    KEY_TAB = 48
     KEY_ESCAPE = 53
     KEY_KEYPAD_ENTER = 76
 
@@ -253,6 +252,8 @@ class MacOSVoiceActionHotkeys:
         on_action: Callable[[str], None],
         *,
         is_review_active: Callable[[], bool] | None = None,
+        is_interaction_active: Callable[[], bool] | None = None,
+        is_mode_correction_active: Callable[[], bool] | None = None,
         on_error: Callable[[str], None] = print,
         quartz: object | None = None,
         core_foundation: object | None = None,
@@ -271,6 +272,10 @@ class MacOSVoiceActionHotkeys:
         self._core_foundation = core_foundation
         self._on_action = on_action
         self._is_review_active = is_review_active or (lambda: False)
+        self._is_interaction_active = is_interaction_active or (lambda: False)
+        self._is_mode_correction_active = (
+            is_mode_correction_active or (lambda: False)
+        )
         self._on_error = on_error
         self._ready = threading.Event()
         self._failed: str | None = None
@@ -290,12 +295,19 @@ class MacOSVoiceActionHotkeys:
             raise RuntimeError(self._failed)
 
     @classmethod
-    def _action_for_key(cls, key_code: int, *, review_active: bool) -> str | None:
-        if not review_active:
-            return None
-        if int(key_code) in (cls.KEY_RETURN, cls.KEY_KEYPAD_ENTER):
+    def _action_for_key(
+        cls,
+        key_code: int,
+        *,
+        review_active: bool,
+        interaction_active: bool = False,
+        correction_active: bool = False,
+    ) -> str | None:
+        if review_active and int(key_code) in (cls.KEY_RETURN, cls.KEY_KEYPAD_ENTER):
             return ACTION_CONFIRM
-        if int(key_code) == cls.KEY_ESCAPE:
+        if correction_active and int(key_code) == cls.KEY_TAB:
+            return ACTION_SWITCH_MODE
+        if (interaction_active or review_active) and int(key_code) == cls.KEY_ESCAPE:
             return ACTION_CANCEL
         return None
 
@@ -321,13 +333,20 @@ class MacOSVoiceActionHotkeys:
                     if repeat_field is not None and quartz.CGEventGetIntegerValueField(
                         event, repeat_field
                     ):
-                        return None if self._is_review_active() else event
+                        active = (
+                            self._is_review_active()
+                            or self._is_interaction_active()
+                            or self._is_mode_correction_active()
+                        )
+                        return None if active else event
                     key_code = quartz.CGEventGetIntegerValueField(
                         event, quartz.kCGKeyboardEventKeycode
                     )
                     action = self._action_for_key(
                         int(key_code),
                         review_active=self._is_review_active(),
+                        interaction_active=self._is_interaction_active(),
+                        correction_active=self._is_mode_correction_active(),
                     )
                     if action is None:
                         return event

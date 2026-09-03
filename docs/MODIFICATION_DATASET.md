@@ -28,27 +28,10 @@ LLM 没有返回可用编辑结果时，错误会立即保存在该 Attempt 的 
 `active`，界面持续显示具体错误，并只允许用户取消，不会因提示超时而直接把
 Episode 标为 abandoned。
 
-用户在这个已知 LLM 失败状态选择取消时，会自动附加
-`failure_reason.code = "llm_error"` 和 `input_method = "automatic"`，然后把 Episode
-结束为 cancelled。
+用户在这个已知 LLM 失败状态选择取消时，Episode 结束为 cancelled。系统不再要求
+用户选择取消或撤回原因；失败类型由已有的 ASR、LLM 和应用结果字段在离线处理时推导。
 
 确认或取消后，UI 会重新读取目标控件中的真实文本。回读值与已知候选/原文不同
 时，Episode 的 `manually_corrected` 为 `true`。每段音频只与自身 Attempt 配对。
-
-`cancel` 按下后，右侧会显示 10 秒的可选失败原因提示：
-
-- `Alt+A`：`asr_error`，语音识别错误；
-- `Alt+L`：`llm_error`，大模型理解错误；
-- `Alt+O`：`other`，用户想法变化、没说好等其他原因。
-
-主操作会先实时写入 `attempt.json`。用户在提示有效期内选择原因后，程序再把
-`failure_reason`（包含 `code`、显示标签、选择时间和输入方式）原子回写到对应的
-cancel 事件。超时或在选择前执行下一次 confirm/cancel 时，不写任何原因
-字段；训练数据不得把这种未标注情况解释成“其他”。这些设备无关的原因动作以后可
-直接由 Ring 手势接口触发。
-
-如果上一条原因提示仍可见时又产生新的 cancel，控制器会立即丢弃旧的待绑定对象，
-改为绑定最新 Attempt；提示窗先隐藏 180 ms 再显示，新的 10 秒选择期从重新显示后开始。
-因此视觉上可以明确感知提示已经刷新，原因也不会写入上一条 Attempt。
 
 训练集构建时应只用同一个 Attempt 的 `audio_raw.wav` 和 ASR final。

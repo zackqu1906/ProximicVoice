@@ -9,6 +9,7 @@ from typing import Callable
 import numpy as np
 
 from ..factory import ASRBackendSettings
+from ..funasr_compat import prepare_funasr_runtime
 
 
 def _macos_cpu_chunk_size(device: str) -> int:
@@ -119,6 +120,12 @@ class StreamingSenseVoiceASR:
 
     @staticmethod
     def _load_external_class(repo_path: Path | None):
+        prepare_funasr_runtime()
+        # The upstream FunASR package normally scans and imports every model at
+        # startup.  Packaged builds intentionally contain only these runtime
+        # registrations, so load them explicitly and deterministically.
+        importlib.import_module("funasr.frontends.wav_frontend")
+        importlib.import_module("funasr.tokenizer.sentencepiece_tokenizer")
         if repo_path is not None:
             if not repo_path.is_dir():
                 raise FileNotFoundError(f"streaming-sensevoice repo not found: {repo_path}")
@@ -190,10 +197,11 @@ class StreamingSenseVoiceASR:
             self._last_text = ""
             return ""
 
-        if self.final_redecode:
+        if self.final_redecode or not self._last_text:
             # Re-run the controller's trimmed final utterance from a clean state.
-            # Partial text is provisional; this final pass corrects any reject
-            # confirmation tail that may already have reached the live stream.
+            # Also use this path in low-latency mode when a short utterance
+            # produced no partial at all; otherwise finish() could return an
+            # empty final and the desktop would have nothing to inject.
             self._model.reset()
             self._last_text = ""
             text = self._run(final_audio, is_last=True)

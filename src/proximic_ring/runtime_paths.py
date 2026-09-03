@@ -68,6 +68,10 @@ def configure_runtime_environment() -> None:
         os.environ.setdefault(name, str(path))
         Path(os.environ[name]).expanduser().mkdir(parents=True, exist_ok=True)
 
+    # Packaging keeps Material plus Qt's Basic fallback and deliberately omits
+    # the unrelated platform/alternate Qt Quick Controls style bundles.
+    os.environ.setdefault("QT_QUICK_CONTROLS_STYLE", "Material")
+
     opus_directories = [resource_root() / "opus"]
     if not is_frozen():
         opus_directories.append(resource_root() / ".runtime" / "opus" / "lib")

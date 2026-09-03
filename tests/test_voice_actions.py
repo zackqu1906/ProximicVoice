@@ -1,33 +1,37 @@
 from proximic_ring.voice_actions import (
     ACTION_CONFIRM,
-    ACTION_REASON_ASR_ERROR,
-    ACTION_REASON_LLM_ERROR,
-    ACTION_REASON_OTHER,
+    ACTION_CANCEL,
+    ACTION_SWITCH_MODE,
+    ACTION_UNDO,
     MacOSVoiceActionHotkeys,
     WindowsVoiceActionHotkeys,
 )
 import proximic_ring.voice_actions as voice_actions_module
 
 
-def _action(key: int, *, alt: bool = True, review: bool = False, reason: bool = False):
+def _action(
+    key: int,
+    *,
+    alt: bool = True,
+    review: bool = False,
+    interaction: bool = False,
+    correction: bool = False,
+):
     return WindowsVoiceActionHotkeys._action_for_key(
         key,
         alt_down=alt,
         review_active=review,
-        feedback_reason_active=reason,
+        interaction_active=interaction,
+        correction_active=correction,
     )
 
 
-def test_failure_reason_shortcuts_only_capture_keys_while_prompt_is_active():
-    assert _action(0x41, reason=True) == ACTION_REASON_ASR_ERROR
-    assert _action(0x4C, reason=True) == ACTION_REASON_LLM_ERROR
-    assert _action(0x4F, reason=True) == ACTION_REASON_OTHER
-    assert _action(0x41, reason=False) is None
-    assert _action(0x4C, alt=False, reason=True) is None
-
-
-def test_review_key_still_works_while_failure_reason_prompt_is_visible():
-    assert _action(0x0D, alt=False, review=True, reason=True) == ACTION_CONFIRM
+def test_cancel_and_mode_correction_only_capture_during_an_interaction():
+    assert ACTION_UNDO == "undo"
+    assert _action(0x1B, alt=False, interaction=True) == ACTION_CANCEL
+    assert _action(0x09, alt=False, correction=True) == ACTION_SWITCH_MODE
+    assert _action(0x1B, alt=False) is None
+    assert _action(0x09, alt=False) is None
 
 
 def test_macos_review_keys_only_act_while_review_is_visible():
@@ -35,6 +39,11 @@ def test_macos_review_keys_only_act_while_review_is_visible():
     assert action(36, review_active=True) == ACTION_CONFIRM
     assert action(76, review_active=True) == ACTION_CONFIRM
     assert action(53, review_active=True) == "cancel"
+    assert (
+        action(48, review_active=False, correction_active=True)
+        == ACTION_SWITCH_MODE
+    )
+    assert action(53, review_active=False, interaction_active=True) == ACTION_CANCEL
     assert action(36, review_active=False) is None
     assert action(0, review_active=True) is None
 

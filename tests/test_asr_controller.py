@@ -16,6 +16,28 @@ class ImmediateWorker:
         self.closed = True
 
 
+class StreamingRecorder:
+    def __init__(self):
+        self.started = []
+        self.fed = []
+        self.ended = []
+
+    def start(self, audio):
+        self.started.append(np.asarray(audio).copy())
+
+    def feed(self, audio):
+        self.fed.append(np.asarray(audio).copy())
+
+    def end(self, audio):
+        self.ended.append(np.asarray(audio).copy())
+
+    def abort(self):
+        return None
+
+    def close(self):
+        return None
+
+
 def activate_event(sample_index: int):
     t = sample_index / 16_000
     return Stage2Event(
@@ -105,6 +127,51 @@ def test_first_activate_starts_repeated_activate_keeps_session_and_two_rejects_e
     np.testing.assert_allclose(out[320:640], b)
 
 
+def test_streaming_sink_receives_exactly_the_same_cropped_audio_as_history():
+    sink = StreamingRecorder()
+    gate = make_gate(sink, stage1_inactivity_s=1.0)
+
+    a = np.full(320, 0.10, dtype=np.float32)
+    b = np.full(320, 0.20, dtype=np.float32)
+    c = np.full(320, 0.30, dtype=np.float32)
+    d = np.full(320, 0.40, dtype=np.float32)
+    e = np.full(320, 0.50, dtype=np.float32)
+
+    gate.process(a, [])
+    gate.process(b, [activate_event(640)])
+    gate.process(c, [])
+    gate.process(d, [reject_event(1280)])
+
+    # The first-reject block stays provisional until endpoint confirmation.
+    streamed_before_end = np.concatenate(sink.started + sink.fed)
+    assert streamed_before_end.size == 3 * 320
+
+    gate.process(e, [reject_event(1600)])
+
+    assert len(sink.ended) == 1
+    streamed = np.concatenate(sink.started + sink.fed)
+    np.testing.assert_array_equal(streamed, sink.ended[0])
+    assert streamed.size == 4 * 320
+    np.testing.assert_allclose(streamed[-320:], d)
+
+
+def test_streaming_sink_flushes_held_audio_when_reject_is_cancelled():
+    sink = StreamingRecorder()
+    gate = make_gate(sink, stage1_inactivity_s=1.0)
+    block = np.full(320, 0.2, dtype=np.float32)
+
+    gate.process(block, [activate_event(320)])
+    gate.process(block, [reject_event(640)])
+    assert sum(item.size for item in sink.started + sink.fed) == 320
+
+    gate.process(block, [activate_event(960)])
+    assert sum(item.size for item in sink.started + sink.fed) == 3 * 320
+
+    gate.flush()
+    streamed = np.concatenate(sink.started + sink.fed)
+    np.testing.assert_array_equal(streamed, sink.ended[0])
+
+
 def test_activate_after_one_reject_cancels_pending_end():
     worker = ImmediateWorker()
     gate = make_gate(worker, stage1_inactivity_s=1.0)
@@ -188,6 +255,24 @@ def test_abort_discards_active_utterance_on_device_disconnect():
     assert not gate.active
     assert worker.items == []
     assert worker.closed
+
+
+def test_user_cancel_discards_only_current_utterance_and_accepts_the_next_one():
+    worker = ImmediateWorker()
+    gate = make_gate(worker, pre_roll_s=0.02, stage1_inactivity_s=1.0)
+    cancelled = np.full(320, 0.2, dtype=np.float32)
+    next_utterance = np.full(320, 0.8, dtype=np.float32)
+    gate.process(cancelled, [activate_event(320)])
+
+    gate.discard_current()
+    assert not gate.active
+    assert worker.items == []
+
+    # Detector and controller clocks both restart after cancellation.
+    gate.process(next_utterance, [activate_event(320)])
+    gate.flush()
+    assert len(worker.items) == 1
+    np.testing.assert_allclose(worker.items[0], next_utterance)
 
 
 def test_pause_reset_flushes_and_discards_old_pre_roll_and_sample_clock():

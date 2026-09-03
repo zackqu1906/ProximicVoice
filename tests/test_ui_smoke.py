@@ -138,6 +138,197 @@ def test_macos_edit_does_not_report_success_without_verified_replacement(
     assert "修改 · 已应用" not in controller.sessionHistoryText
 
 
+def test_macos_edit_accepts_equivalent_line_endings_and_unicode(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication, QSettings
+
+    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.ui.controller import AppController, _EditReview
+
+    _app = QCoreApplication.instance() or QCoreApplication(["mac-edit-normalization"])
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    monkeypatch.setattr(sys, "platform", "darwin")
+    controller = AppController()
+    controller._text_processing_worker.close(wait=True)
+    controller._accessibility_timer.stop()
+    target = DesktopTargetRef(0, 0, "测试编辑器", process_id=4321)
+
+    class NormalizingTarget:
+        def replace(self, snapshot, text):
+            return None
+
+        def capture_text(self, captured_target):
+            return DesktopTextSnapshot(captured_target, "第一行\r\nCafe\u0301")
+
+        def release_selection(self, captured_target):
+            return None
+
+    controller._desktop_target = NormalizingTarget()
+    controller._edit_review = _EditReview(
+        request_id=1000,
+        session_id=1,
+        instruction="整理一下",
+        proposed_text="第一行\nCaf\u00e9",
+        snapshot=DesktopTextSnapshot(target, "原文"),
+    )
+    controller._set_interaction_state("review")
+
+    controller.confirmEdit()
+
+    assert controller.reviewPending is False
+    assert controller.interactionState == "applied"
+    assert "修改 · 已应用" in controller.sessionHistoryText
+
+
+def test_applied_dictation_and_edit_stay_visible_until_undo(
+    tmp_path, monkeypatch, request
+):
+    pytest.importorskip("PySide6")
+    from PySide6.QtCore import QCoreApplication, QSettings
+
+    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.text_processing import TextProcessingResult
+    from proximic_ring.ui.controller import AppController, _EditReview
+
+    _app = QCoreApplication.instance() or QCoreApplication(["applied-undo"])
+    QSettings.setDefaultFormat(QSettings.IniFormat)
+    QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    controller = AppController()
+    request.addfinalizer(controller._close_voice_history)
+    controller._text_processing_worker.close(wait=True)
+    controller._accessibility_timer.stop()
+    monkeypatch.setattr(controller, "_copy_text_to_clipboard", lambda _text: None)
+    target = DesktopTargetRef(10, 20, "测试编辑器", process_id=30)
+
+    class FakeDesktopTarget:
+        def __init__(self):
+            self.current_text = "原始文本"
+            self.injected: list[str] = []
+            self.undone: list[DesktopTargetRef] = []
+            self.replaced: list[str] = []
+
+        def inject(self, captured_target, text):
+            assert captured_target == target
+            self.injected.append(text)
+
+        def undo(self, captured_target):
+            assert captured_target == target
+            self.undone.append(captured_target)
+
+        def replace(self, snapshot, text):
+            assert snapshot.target == target
+            assert snapshot.text == self.current_text
+            self.current_text = text
+            self.replaced.append(text)
+
+        def capture_text(self, captured_target):
+            assert captured_target == target
+            return DesktopTextSnapshot(target, self.current_text)
+
+        def release_selection(self, captured_target):
+            assert captured_target == target
+
+    desktop_target = FakeDesktopTarget()
+    controller._desktop_target = desktop_target
+    controller._desktop_output = True
+
+    controller._commit_input_text(
+        TextProcessingResult(
+            request_id=101,
+            session_id=11,
+            mode="dictation",
+            raw_text="一段听写",
+            final_text="一段听写。",
+            latency_s=0.1,
+            used_llm=True,
+        ),
+        target,
+    )
+
+    assert desktop_target.injected == ["一段听写。"]
+    assert controller.transcriptVisible is True
+    assert controller.interactionState == "applied"
+    assert controller.undoAvailable is True
+    assert controller.interactionCanCancel is False
+    assert controller._hide_overlay_timer.isActive() is False
+
+    controller.undoLastApplied()
+
+    assert desktop_target.undone == [target]
+    assert controller.undoAvailable is False
+    assert controller.interactionState == "cancelled"
+    assert "听写 · 已撤回" in controller.sessionHistoryText
+
+    controller._hide_overlay_timer.stop()
+    controller._edit_review = _EditReview(
+        request_id=102,
+        session_id=12,
+        instruction="改正式一点",
+        proposed_text="正式文本",
+        snapshot=DesktopTextSnapshot(target, "原始文本"),
+    )
+    controller._set_interaction_state("review")
+
+    controller.confirmEdit()
+
+    assert desktop_target.current_text == "正式文本"
+    assert controller.reviewPending is False
+    assert controller.transcriptVisible is True
+    assert controller.interactionState == "applied"
+    assert controller.undoAvailable is True
+    assert controller.interactionCanCancel is False
+    assert controller._hide_overlay_timer.isActive() is False
+
+    controller.undoLastApplied()
+
+    assert desktop_target.current_text == "原始文本"
+    assert desktop_target.replaced == ["正式文本", "原始文本"]
+    assert controller.undoAvailable is False
+    assert controller.interactionState == "cancelled"
+    assert controller.associationRecommendationVisible is False
+    assert "修改 · 已撤回" in controller.sessionHistoryText
+
+
+def test_voice_history_can_reveal_audio_file_and_reject_outside_path(
+    tmp_path, monkeypatch
+):
+    pytest.importorskip("PySide6")
+
+    from proximic_ring.ui import controller as controller_module
+    from proximic_ring.ui.controller import (
+        _open_voice_history_location,
+        _resolve_voice_history_path,
+    )
+
+    audio_path = tmp_path / "voice_history" / "entry" / "utterance.wav"
+    audio_path.parent.mkdir(parents=True)
+    audio_path.write_bytes(b"RIFF")
+    resolved = _resolve_voice_history_path(
+        str(audio_path), tmp_path / "voice_history"
+    )
+    opened: list[list[str]] = []
+    monkeypatch.setattr(controller_module.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        controller_module.subprocess,
+        "Popen",
+        lambda command: opened.append(list(command)),
+    )
+
+    _open_voice_history_location(resolved)
+
+    assert opened == [["open", "-R", str(audio_path.resolve())]]
+
+    outside_path = tmp_path / "outside.wav"
+    outside_path.write_bytes(b"RIFF")
+    with pytest.raises(ValueError):
+        _resolve_voice_history_path(
+            str(outside_path), tmp_path / "voice_history"
+        )
+
+
 def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     tmp_path,
 ):
@@ -198,6 +389,8 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
 
     controller._apply_runtime_update("这是一段要输入的话。", True, "", 701)
     assert len(routed) == 1
+    assert len(submitted) == 1
+    assert submitted[0].mode == "edit"
     assert routed[0].settings.enabled is True
     assert controller.transcriptMode == ""
     assert "自动路由判断开始" in controller.logText
@@ -212,6 +405,10 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
         )
     )
     assert controller.transcriptMode == "dictation"
+    assert controller.modeCorrectionAvailable is True
+    assert desktop_target.injected == []
+    controller._dictation_commit_timer.stop()
+    controller._commit_pending_dictation()
     assert desktop_target.injected == ["这是一段要输入的话。"]
     assert "自动路由判断完成：听写（耗时 0.234s）" in controller.logText
 
@@ -227,9 +424,9 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
         )
     )
     assert controller.transcriptMode == "edit"
-    assert len(submitted) == 1
-    assert submitted[0].mode == "edit"
-    assert submitted[0].target_text == "已有文本。"
+    assert len(submitted) == 2
+    assert submitted[1].mode == "edit"
+    assert submitted[1].target_text == "已有文本。"
     assert "自动路由判断完成：编辑指令（耗时 0.125s）" in controller.logText
     assert re.search(
         r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] 自动路由判断完成",
@@ -291,7 +488,9 @@ def test_qml_customer_window_loads(tmp_path):
     app = QApplication.instance() or QApplication(["ui-test", "-platform", "offscreen"])
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
+    QSettings("ProxiMic", "ProxiMic Voice").remove("asr/gainDb")
     controller = AppController()
+    controller.smartAssociationEnabled = False
     controller._llm_enabled = True
     controller._input_routing_mode = "manual"
     controller._llm_provider = "local"
@@ -385,6 +584,7 @@ def test_qml_customer_window_loads(tmp_path):
     audio_encoding_combo = window.findChild(QObject, "audioEncodingCombo")
     device_combo = window.findChild(QObject, "asrDeviceCombo")
     asr_api_key_field = window.findChild(QObject, "asrApiKeyField")
+    asr_gain_slider = window.findChild(QObject, "asrGainSlider")
     asr_hotwords_field = window.findChild(QObject, "asrHotwordsField")
     gpu_install_button = window.findChild(QObject, "gpuInstallButton")
     dictation_mode_button = window.findChild(QObject, "dictationModeButton")
@@ -401,11 +601,32 @@ def test_qml_customer_window_loads(tmp_path):
     llm_model_field = window.findChild(QObject, "llmModelField")
     llm_api_key_field = window.findChild(QObject, "llmApiKeyField")
     voice_history_list = window.findChild(QObject, "voiceHistoryList")
+    voice_history_card = window.findChild(QQuickItem, "voiceHistoryCard")
     confirm_edit_button = window.findChild(QObject, "confirmEditButton")
     cancel_edit_button = window.findChild(QObject, "cancelEditButton")
+    cancel_utterance_button = window.findChild(QObject, "cancelUtteranceButton")
+    switch_mode_button = window.findChild(QObject, "switchModeButton")
+    overlay_confirm_button = window.findChild(QObject, "overlayConfirmButton")
+    undo_applied_button = window.findChild(QObject, "undoAppliedButton")
+    smart_association_switch = window.findChild(QObject, "smartAssociationSwitch")
+    association_center_button = window.findChild(
+        QObject, "openAssociationCenterButton"
+    )
+    association_recommendation = window.findChild(
+        QObject, "associationRecommendationOverlay"
+    )
+    association_details = window.findChild(QObject, "associationDetailsWindow")
+    association_center = window.findChild(QObject, "associationCenterWindow")
+    create_association_button = window.findChild(
+        QObject, "createAssociationButton"
+    )
+    commit_association_button = window.findChild(
+        QObject, "commitAssociationButton"
+    )
     edit_preview_text = window.findChild(QObject, "editPreviewText")
-    feedback_reason_overlay = window.findChild(QObject, "feedbackReasonOverlay")
     log_area = window.findChild(QObject, "logArea")
+    runtime_log_button = window.findChild(QObject, "runtimeLogButton")
+    runtime_log_dialog = window.findChild(QObject, "runtimeLogDialog")
     primary_connection_button = window.findChild(QObject, "primaryConnectionButton")
     secondary_connection_button = window.findChild(QObject, "secondaryConnectionButton")
     assert picker is not None and picker.property("visible") is True
@@ -419,6 +640,20 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.audioEncoding == "adpcm"
     assert device_combo is not None
     assert asr_api_key_field is not None
+    assert asr_gain_slider is not None
+    assert smart_association_switch is not None
+    assert association_center_button is not None
+    assert association_center_button.property("text") == "数据关联中心"
+    assert association_recommendation is not None
+    assert association_details is not None
+    assert association_center is not None
+    assert create_association_button is not None
+    assert commit_association_button is not None
+    assert association_recommendation.property("visible") is False
+    assert association_details.property("visible") is False
+    assert association_center.property("visible") is False
+    assert controller.asrGainDb == 0.0
+    assert asr_gain_slider.property("value") == 0.0
     assert device_combo.property("count") == len(controller.computeDevices)
     assert asr_hotwords_field is not None
     assert gpu_install_button is not None
@@ -427,9 +662,11 @@ def test_qml_customer_window_loads(tmp_path):
     assert edit_mode_button is not None
     assert dictation_llm_button is not None
     assert voice_input_card is not None
-    assert feedback_reason_overlay is not None
-    assert controller.feedbackReasonVisible is False
-    assert controller.feedbackReasonAvailable is False
+    assert cancel_utterance_button is not None
+    assert switch_mode_button is not None
+    assert overlay_confirm_button is not None
+    assert undo_applied_button is not None
+    assert controller.associationRecommendationVisible is False
     assert controller.llmEnabled is True
     QMetaObject.invokeMethod(picker, "close")
     QTest.qWait(300)
@@ -477,6 +714,8 @@ def test_qml_customer_window_loads(tmp_path):
     assert llm_model_field is not None
     assert llm_api_key_field is not None
     assert voice_history_list is not None
+    assert voice_history_card is not None
+    assert voice_history_card.property("height") >= 250
     controller._voice_history_entries = [
         {
             "displayTime": "16:30:00",
@@ -498,7 +737,12 @@ def test_qml_customer_window_loads(tmp_path):
     voice_play_button = current_voice_item.findChild(
         QQuickItem, "voiceHistoryPlayButton"
     )
+    voice_location_button = current_voice_item.findChild(
+        QQuickItem, "voiceHistoryOpenLocationButton"
+    )
     assert voice_play_button is not None
+    assert voice_location_button is not None
+    assert voice_location_button.property("text") == "打开位置"
     assert voice_play_button.property("text") == "播放录音"
     assert voice_play_button.property("width") >= 88
     assert voice_play_button.property("contentItem").property("text") == "播放录音"
@@ -506,6 +750,14 @@ def test_qml_customer_window_loads(tmp_path):
     assert cancel_edit_button is not None
     assert edit_preview_text is not None
     assert log_area is not None
+    assert runtime_log_button is not None
+    assert runtime_log_dialog is not None
+    assert runtime_log_dialog.property("visible") is False
+    QMetaObject.invokeMethod(runtime_log_dialog, "open")
+    app.processEvents()
+    assert runtime_log_dialog.property("visible") is True
+    QMetaObject.invokeMethod(runtime_log_dialog, "close")
+    app.processEvents()
     assert log_area.property("font").pixelSize() == 14
     controller._apply_runtime_status("最新日志")
     app.processEvents()
@@ -544,11 +796,14 @@ def test_qml_customer_window_loads(tmp_path):
     assert dictation_llm_button.property("visible") is True
     controller.llmApiKey = "ark-ui-key"
     controller.asrApiKey = "speech-ui-key"
+    controller.asrGainDb = 4.0
     app.processEvents()
     assert llm_api_key_field.property("text") == "ark-ui-key"
     assert asr_api_key_field.property("text") == "speech-ui-key"
+    assert asr_gain_slider.property("value") == 4.0
     assert controller._settings.value("llm/apiKey") == "ark-ui-key"
     assert controller._settings.value("asr/volcengineApiKey") == "speech-ui-key"
+    assert float(controller._settings.value("asr/gainDb")) == 4.0
     controller.llmProvider = "volcengine"
     app.processEvents()
     assert llm_api_key_field.property("visible") is True
@@ -596,6 +851,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert asr_api_key_field.property("visible") is True
     runtime_settings = controller._runtime_settings()
     assert runtime_settings.asr_api_key == "speech-ui-key"
+    assert runtime_settings.asr_gain_db == 4.0
     assert runtime_settings.to_namespace().asr_option == [
         "volcengine.api_key=speech-ui-key"
     ]
@@ -621,6 +877,7 @@ def test_qml_customer_window_loads(tmp_path):
     runtime_settings = controller._runtime_settings()
     assert runtime_settings.funasr_nano_hotwords == controller.asrHotwords
     assert runtime_settings.to_namespace().asr_option == [
+        "funasr_nano.final_redecode=false",
         "funasr_nano.hotwords=ProxiMic,豆包,瑞幸,张三"
     ]
     assert settings_recorder.values["asr/funasrNanoHotwords"] == (
@@ -791,28 +1048,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.interactionState == "cancelled"
     QTest.qWait(220)
     assert confirm_edit_button.property("visible") is False
-    assert controller.feedbackReasonVisible is True
-    assert controller.feedbackReasonAvailable is True
-    assert feedback_reason_overlay.property("visible") is True
-    assert controller.feedbackReasonPrompt == "刚才为什么取消？"
-    controller._apply_voice_action("reason_asr_error")
-    app.processEvents()
-    assert controller.feedbackReasonVisible is False
-    assert feedback_reason_overlay.property("visible") is False
-    assert "已标记本次取消原因：语音识别错误" in controller.logText
-
-    # Replacing an unanswered cancellation prompt must have a rendered gap.
-    controller._offer_feedback_reason(900, "cancel")
-    QTest.qWait(220)
-    assert controller.feedbackReasonVisible is True
-    controller._offer_feedback_reason(901, "cancel")
-    assert controller.feedbackReasonAvailable is True
-    assert controller.feedbackReasonVisible is False
-    assert feedback_reason_overlay.property("visible") is False
-    QTest.qWait(220)
-    assert controller.feedbackReasonVisible is True
-    assert controller._pending_feedback_reason.request_id == 901
-    controller._clear_feedback_reason()
+    assert controller.associationRecommendationVisible is False
 
     controller._apply_runtime_update("改得简洁正式", True, "", 44)
     next_request = submitted[2]
@@ -853,8 +1089,7 @@ def test_qml_customer_window_loads(tmp_path):
     )
     controller.cancelEdit()
     QTest.qWait(220)
-    assert controller.feedbackReasonVisible is True
-    assert controller.feedbackReasonPrompt == "刚才为什么取消？"
+    assert controller.associationRecommendationVisible is False
     assert desktop_target.current_text == "正式的新文本。"
     assert desktop_target.released[-1] == target_ref
     assert "修改 · 已取消" in controller.sessionHistoryText
@@ -881,7 +1116,6 @@ def test_qml_customer_window_loads(tmp_path):
     assert "确认后将清空目标文本框" in controller.transcriptText
     assert desktop_target.current_text == "正式的新文本。"
     controller.confirmEdit()
-    assert controller.feedbackReasonVisible is False
     assert desktop_target.current_text == ""
     assert desktop_target.replaced[-1] == ""
     assert controller.reviewPending is False
@@ -911,8 +1145,8 @@ def test_qml_customer_window_loads(tmp_path):
     assert desktop_target.current_text == "不得意外清空。"
 
     # An LLM edit failure remains actionable instead of briefly flashing and
-    # abandoning the Episode. Retrying automatically records the known cause
-    # and creates the next Attempt in the same Episode.
+    # abandoning the Episode. Cancelling records the action without asking the
+    # user to classify its cause.
     desktop_target.current_text = "大模型失败时保留的原文。"
     controller._apply_runtime_update("把原文改得更清楚", True, "", 60)
     failed_request = submitted[6]
@@ -959,10 +1193,7 @@ def test_qml_customer_window_loads(tmp_path):
     assert controller.reviewPending is False
     assert controller.interactionState == "cancelled"
     failed_attempt = json.loads(failed_attempt_path.read_text(encoding="utf-8"))
-    cancel_reason = failed_attempt["feedback"][-1]["failure_reason"]
-    assert cancel_reason["code"] == "llm_error"
-    assert cancel_reason["input_method"] == "automatic"
-    assert "已自动标记本次取消原因：大模型理解错误" in controller.logText
+    assert "failure_reason" not in failed_attempt["feedback"][-1]
 
     controller._apply_runtime_update("改得简洁清楚", True, "", 61)
     recovered_request = submitted[7]
@@ -1021,9 +1252,7 @@ def test_qml_customer_window_loads(tmp_path):
     unchanged_attempt = json.loads(
         unchanged_attempt_path.read_text(encoding="utf-8")
     )
-    cancel_reason = unchanged_attempt["feedback"][-1]["failure_reason"]
-    assert cancel_reason["code"] == "llm_error"
-    assert cancel_reason["input_method"] == "automatic"
+    assert "failure_reason" not in unchanged_attempt["feedback"][-1]
 
     submitted_before_oversized_capture = len(submitted)
     desktop_target.current_text = "页面内容" * (MAX_EDIT_TARGET_CHARS // 4 + 1)

@@ -1,10 +1,53 @@
 import struct
 import threading
 import time
+from types import SimpleNamespace
 
 import numpy as np
 
 from proximic_ring.audio.ring import RingAudioSource
+
+
+def test_imu_callback_is_normalized_and_failure_does_not_poison_audio():
+    import asyncio
+
+    rows = []
+    source = RingAudioSource(imu_observer=rows.append, imu_hz=50)
+
+    class WorkingSession:
+        async def imu_on(self, **kwargs):
+            assert kwargs["gyro_hz"] == 50
+            assert kwargs["accel_hz"] == 50
+            assert kwargs["frames_per_packet"] == 10
+            kwargs["on_sample"](
+                SimpleNamespace(
+                    sample_index=12,
+                    packet_seq=3,
+                    uptime_ms=456.5,
+                    accel_ms2=(1.0, 2.0, 3.0),
+                    gyro_dps=(4.0, 5.0, 6.0),
+                    raw=(1, 2, 3, 4, 5, 6),
+                )
+            )
+
+    asyncio.run(source._start_imu_best_effort(WorkingSession()))
+
+    assert source.error is None
+    assert source.imu_error is None
+    assert source.imu_samples_received == 1
+    assert rows[0]["device_uptime_ms"] == 456.5
+    assert rows[0]["accel_ms2"] == [1.0, 2.0, 3.0]
+    assert rows[0]["gyro_dps"] == [4.0, 5.0, 6.0]
+    assert isinstance(rows[0]["host_monotonic_ns"], int)
+
+    class FailingSession:
+        async def imu_on(self, **_kwargs):
+            raise RuntimeError("unsupported firmware")
+
+    failed = RingAudioSource(imu_observer=rows.append)
+    asyncio.run(failed._start_imu_best_effort(FailingSession()))
+    assert failed.error is None
+    assert str(failed.imu_error) == "unsupported firmware"
 
 
 def test_ring_pcm_callback_becomes_float32_audio():

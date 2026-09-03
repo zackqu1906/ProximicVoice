@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import os
 import sys
@@ -9,6 +10,7 @@ from typing import Any, Callable
 import numpy as np
 
 from ..factory import ASRBackendSettings
+from ..funasr_compat import prepare_funasr_runtime
 
 
 DEFAULT_MODEL = "FunAudioLLM/Fun-ASR-Nano-2512"
@@ -139,6 +141,18 @@ class FunASRNanoStreamingASR:
         self._last_text = ""
 
     def _load_external_class(self, model_py: Path):
+        prepare_funasr_runtime()
+        # Register only the components referenced by Fun-ASR-Nano's config.
+        # Importing streaming_sensevoice.sensevoice supplies the shared
+        # SenseVoiceEncoderSmall without pulling FunASR's alternate model tree.
+        for module_name in (
+            "funasr.frontends.wav_frontend",
+            "funasr.models.llm_asr.adaptor",
+            "funasr.tokenizer.hf_tokenizer",
+            "funasr.tokenizer.whisper_tokenizer",
+            "streaming_sensevoice.sensevoice",
+        ):
+            importlib.import_module(module_name)
         # model.py imports its sibling tools package, so the repository root
         # must be first on sys.path while the external implementation loads.
         module_name = "_proximic_external_funasr_nano_model"

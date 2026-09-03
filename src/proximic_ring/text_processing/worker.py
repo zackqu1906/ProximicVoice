@@ -26,7 +26,7 @@ class _WarmupTask:
 
 
 class TextProcessingWorker:
-    """Serialize LLM requests away from the real-time ASR and BLE threads."""
+    """Run independent routing/candidate requests away from real-time audio."""
 
     def __init__(
         self,
@@ -45,13 +45,23 @@ class TextProcessingWorker:
         self._queue: queue.SimpleQueue[
             TextProcessingRequest | InputModeRoutingRequest | _WarmupTask | None
         ] = queue.SimpleQueue()
-        self._thread = threading.Thread(
-            target=self._run,
-            name="ProxiMicTextProcessing",
-            daemon=True,
-        )
         self._closed = threading.Event()
-        self._thread.start()
+        self._cancelled_request_ids: set[int] = set()
+        self._cancel_lock = threading.Lock()
+        self._shutdown_lock = threading.Lock()
+        self._active_workers = 3
+        self._threads = [
+            threading.Thread(
+                target=self._run,
+                name=f"ProxiMicTextProcessing-{index + 1}",
+                daemon=True,
+            )
+            for index in range(self._active_workers)
+        ]
+        # Kept for compatibility with diagnostics that inspect the old field.
+        self._thread = self._threads[0]
+        for thread in self._threads:
+            thread.start()
 
     def submit(self, request: TextProcessingRequest) -> None:
         if self._closed.is_set():
@@ -68,24 +78,55 @@ class TextProcessingWorker:
             return
         self._queue.put(request)
 
+    def cancel_request(self, request_id: int) -> None:
+        """Suppress a queued/running request's result.
+
+        A blocking HTTP inference cannot always be force-killed safely, so the
+        UI invalidates it immediately while the other workers remain free to
+        process the next utterance.
+        """
+        with self._cancel_lock:
+            self._cancelled_request_ids.add(int(request_id))
+
+    def _is_cancelled(self, request_id: int) -> bool:
+        with self._cancel_lock:
+            return int(request_id) in self._cancelled_request_ids
+
+    def _consume_cancelled(self, request_id: int) -> bool:
+        """Return and forget cancellation once a request is fully discarded."""
+        with self._cancel_lock:
+            normalized = int(request_id)
+            if normalized not in self._cancelled_request_ids:
+                return False
+            self._cancelled_request_ids.remove(normalized)
+            return True
+
     def close(self, *, wait: bool = False) -> None:
         if self._closed.is_set():
             return
         self._closed.set()
-        self._queue.put(None)
-        if wait and threading.current_thread() is not self._thread:
-            self._thread.join(timeout=2.0)
+        for _thread in self._threads:
+            self._queue.put(None)
+        if wait:
+            for thread in self._threads:
+                if threading.current_thread() is not thread:
+                    thread.join(timeout=2.0)
 
     def _run(self) -> None:
         while True:
             request = self._queue.get()
             if request is None:
-                close_processor = getattr(self._processor, "close", None)
-                if callable(close_processor):
-                    try:
-                        close_processor()
-                    except BaseException:
-                        pass
+                close_processor = False
+                with self._shutdown_lock:
+                    self._active_workers -= 1
+                    close_processor = self._active_workers == 0
+                if close_processor:
+                    close = getattr(self._processor, "close", None)
+                    if callable(close):
+                        try:
+                            close()
+                        except BaseException:
+                            pass
                 return
             if isinstance(request, _WarmupTask):
                 started = time.perf_counter()
@@ -105,6 +146,8 @@ class TextProcessingWorker:
                             return
                 continue
             if isinstance(request, InputModeRoutingRequest):
+                if self._consume_cancelled(request.request_id):
+                    continue
                 started = time.perf_counter()
                 error = None
                 model_output = ""
@@ -134,11 +177,15 @@ class TextProcessingWorker:
                     model_output=model_output,
                 )
                 if self._on_routing_result is not None:
+                    if self._consume_cancelled(request.request_id):
+                        continue
                     try:
                         self._on_routing_result(result)
                     except BaseException:
                         if self._closed.is_set():
                             return
+                continue
+            if self._consume_cancelled(request.request_id):
                 continue
             started = time.perf_counter()
             error = None
@@ -159,7 +206,11 @@ class TextProcessingWorker:
                         winner_branch,
                         trace_request_id=trace_request_id,
                     ):
-                        if self._on_trace is None or self._closed.is_set():
+                        if (
+                            self._on_trace is None
+                            or self._closed.is_set()
+                            or self._is_cancelled(trace_request_id)
+                        ):
                             return
                         self._on_trace(
                             LLMTraceCollection(
@@ -236,6 +287,8 @@ class TextProcessingWorker:
                 episode_id=request.episode_id,
                 attempt_id=request.attempt_id,
             )
+            if self._consume_cancelled(request.request_id):
+                continue
             try:
                 self._on_result(result)
             except BaseException:
