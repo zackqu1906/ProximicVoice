@@ -44,7 +44,7 @@ ASR_GAIN_DB_MAX = 12.0
 ASR_GAIN_DB_DEFAULT = 0.0
 IMU_SAMPLE_RATE_HZ = 50
 IMU_BUFFER_SECONDS = 45.0
-IMU_SYNC_MARGIN_MS = 300.0
+IMU_LEAD_IN_MS = 300.0
 
 
 class _ImuSampleBuffer:
@@ -71,39 +71,78 @@ class _ImuSampleBuffer:
             ) < cutoff_ns:
                 self._rows.popleft()
 
-    def slice_for_audio(
-        self,
-        audio_duration_s: float,
-        *,
-        end_monotonic_ns: int | None = None,
-    ) -> tuple[list[dict], dict]:
-        end_ns = int(end_monotonic_ns or time.monotonic_ns())
-        duration_ns = max(0, int(float(audio_duration_s) * 1_000_000_000))
-        margin_ns = int(IMU_SYNC_MARGIN_MS * 1_000_000)
-        audio_start_ns = end_ns - duration_ns
-        lower_ns = audio_start_ns - margin_ns
-        upper_ns = end_ns + margin_ns
-        with self._lock:
-            selected = [
-                dict(row)
-                for row in self._rows
-                if lower_ns <= int(row["host_monotonic_ns"]) <= upper_ns
-            ]
-
-        for row in selected:
-            row["relative_to_audio_start_ms"] = round(
-                (int(row["host_monotonic_ns"]) - audio_start_ns) / 1_000_000,
-                3,
-            )
-
+    @staticmethod
+    def _device_clock_offset_ms(rows: list[dict]) -> float | None:
+        """Map Ring uptime to host time using the last sample of each BLE packet."""
+        packet_tails: dict[int, dict] = {}
+        fallback: list[dict] = []
+        for row in rows:
+            if "device_uptime_ms" not in row or "host_monotonic_ns" not in row:
+                continue
+            fallback.append(row)
+            packet_seq = row.get("packet_seq")
+            if packet_seq is None:
+                continue
+            key = int(packet_seq)
+            current = packet_tails.get(key)
+            if current is None or float(row["device_uptime_ms"]) > float(
+                current["device_uptime_ms"]
+            ):
+                packet_tails[key] = row
+        anchors = list(packet_tails.values()) or fallback
+        if not anchors:
+            return None
         offsets = [
             int(row["host_monotonic_ns"]) / 1_000_000
             - float(row["device_uptime_ms"])
-            for row in selected
+            for row in anchors
         ]
-        clock_offset_ms = float(np.median(offsets)) if offsets else None
+        return float(np.median(offsets))
+
+    def slice_for_audio(
+        self,
+        *,
+        audio_start_monotonic_ns: int,
+        audio_end_monotonic_ns: int,
+    ) -> tuple[list[dict], dict]:
+        start_ms = int(audio_start_monotonic_ns) / 1_000_000
+        end_ms = int(audio_end_monotonic_ns) / 1_000_000
+        lower_ms = start_ms - IMU_LEAD_IN_MS
+        with self._lock:
+            buffered = [dict(row) for row in self._rows]
+        clock_offset_ms = self._device_clock_offset_ms(buffered)
+        alignment_method = (
+            "device_uptime_packet_tail_v2"
+            if clock_offset_ms is not None
+            else "host_receive_fallback_v2" if buffered else "unavailable"
+        )
+        aligned: list[tuple[dict, float]] = []
+        for row in buffered:
+            if clock_offset_ms is not None and row.get("device_uptime_ms") is not None:
+                sample_host_ms = float(row["device_uptime_ms"]) + clock_offset_ms
+            else:
+                alignment_method = "host_receive_fallback_v2"
+                sample_host_ms = int(row["host_monotonic_ns"]) / 1_000_000
+            if lower_ms <= sample_host_ms <= end_ms:
+                aligned.append((row, sample_host_ms))
+
+        selected: list[dict] = []
+        for row, sample_host_ms in aligned:
+            compact = {
+                "relative_to_audio_start_ms": round(sample_host_ms - start_ms, 3),
+            }
+            if row.get("accel_ms2") is not None:
+                compact["accel_ms2"] = row["accel_ms2"]
+            if row.get("gyro_dps") is not None:
+                compact["gyro_dps"] = row["gyro_dps"]
+            selected.append(compact)
+
         sample_indexes = sorted(
-            {int(row["sample_index"]) for row in selected}
+            {
+                int(row["sample_index"])
+                for row, _sample_host_ms in aligned
+                if row.get("sample_index") is not None
+            }
         )
         dropped_samples = 0
         if len(sample_indexes) >= 2:
@@ -113,12 +152,8 @@ class _ImuSampleBuffer:
             )
         return selected, {
             "sample_rate_hz": self.sample_rate_hz,
-            "clock_offset_ms": clock_offset_ms,
             "dropped_samples": dropped_samples,
-            "sync_method": "host_monotonic_receive_window_v1",
-            "sync_margin_ms": IMU_SYNC_MARGIN_MS,
-            "audio_duration_ms": round(float(audio_duration_s) * 1000, 3),
-            "audio_end_monotonic_ns": end_ns,
+            "alignment_method": alignment_method,
         }
 
 
@@ -314,6 +349,7 @@ class RecognitionRuntime:
         on_disconnected: Callable[[], None],
         on_started: Callable[[], None],
         on_push_to_talk: Callable[[bool], None] | None = None,
+        on_session_started: Callable[[int], None] | None = None,
         on_raw_audio: Callable[[int, object], None] | None = None,
         on_raw_imu: Callable[[int, object, dict], None] | None = None,
     ) -> None:
@@ -341,14 +377,24 @@ class RecognitionRuntime:
         source_close_lock = threading.Lock()
 
         def publish_raw_utterance(session_id: int, audio_16k: object) -> None:
+            audio = np.asarray(audio_16k, dtype=np.float32).reshape(-1)
+            duration_ns = int(audio.size * 1_000_000_000 / 16_000)
+            controller_start_ns = getattr(
+                controller, "audio_start_monotonic_ns", None
+            )
+            audio_start_ns = int(
+                controller_start_ns
+                if controller_start_ns is not None
+                else time.monotonic_ns() - duration_ns
+            )
+            audio_end_ns = audio_start_ns + duration_ns
             if on_raw_audio is not None:
                 on_raw_audio(session_id, audio_16k)
             if on_raw_imu is None or imu_buffer is None:
                 return
-            audio = np.asarray(audio_16k, dtype=np.float32).reshape(-1)
             rows, metadata = imu_buffer.slice_for_audio(
-                audio.size / 16_000.0,
-                end_monotonic_ns=time.monotonic_ns(),
+                audio_start_monotonic_ns=audio_start_ns,
+                audio_end_monotonic_ns=audio_end_ns,
             )
             imu_error = getattr(source, "imu_error", None)
             metadata["collection_error"] = (
@@ -423,6 +469,7 @@ class RecognitionRuntime:
                     if on_raw_audio is not None or on_raw_imu is not None
                     else None
                 ),
+                raw_session_start_observer=on_session_started,
             )
             if source.error is not None:
                 raise RuntimeError(str(source.error)) from source.error
@@ -437,6 +484,10 @@ class RecognitionRuntime:
                 block = source.read(320)
                 if block is None:
                     break
+                block_end_monotonic_ns = int(
+                    getattr(source, "last_read_end_monotonic_ns", 0)
+                    or time.monotonic_ns()
+                )
 
                 if (
                     cancel_utterance_event is not None
@@ -476,7 +527,9 @@ class RecognitionRuntime:
                     if isinstance(event, Stage2Event):
                         on_state(format_event(event))
                 controller.process(
-                    apply_asr_gain(block, self.settings.asr_gain_db), events
+                    apply_asr_gain(block, self.settings.asr_gain_db),
+                    events,
+                    block_end_monotonic_ns=block_end_monotonic_ns,
                 )
 
             if recognition_was_enabled and not disconnect_event.is_set():

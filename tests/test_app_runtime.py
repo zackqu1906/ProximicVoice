@@ -31,14 +31,46 @@ def test_imu_buffer_slices_samples_and_preserves_sync_metadata():
             }
         )
 
-    rows, metadata = buffer.slice_for_audio(1.0, end_monotonic_ns=end_ns)
+    rows, metadata = buffer.slice_for_audio(
+        audio_start_monotonic_ns=4_000_000_000,
+        audio_end_monotonic_ns=end_ns,
+    )
 
-    assert [row["sample_index"] for row in rows] == [0, 1, 2]
+    assert len(rows) == 3
+    assert set(rows[0]) == {"relative_to_audio_start_ms"}
     assert rows[0]["relative_to_audio_start_ms"] == -100.0
     assert rows[-1]["relative_to_audio_start_ms"] == 800.0
     assert metadata["sample_rate_hz"] == 50
-    assert metadata["clock_offset_ms"] == 100.0
-    assert metadata["sync_method"] == "host_monotonic_receive_window_v1"
+    assert metadata["alignment_method"] == "device_uptime_packet_tail_v2"
+
+
+def test_imu_alignment_uses_packet_tail_and_writes_only_training_fields():
+    buffer = _ImuSampleBuffer(sample_rate_hz=50, buffer_seconds=10.0)
+    for index, device_ms in enumerate((800.0, 900.0)):
+        buffer.append(
+            {
+                "host_monotonic_ns": 1_000_000_000 + index,
+                "device_uptime_ms": device_ms,
+                "sample_index": index,
+                "packet_seq": 7,
+                "accel_ms2": [1.0, 2.0, 3.0],
+                "gyro_dps": [4.0, 5.0, 6.0],
+                "raw": [1, 2, 3, 4, 5, 6],
+            }
+        )
+
+    rows, _metadata = buffer.slice_for_audio(
+        audio_start_monotonic_ns=900_000_000,
+        audio_end_monotonic_ns=1_100_000_000,
+    )
+
+    assert rows[0]["relative_to_audio_start_ms"] == 0.0
+    assert rows[1]["relative_to_audio_start_ms"] == 100.0
+    assert set(rows[0]) == {
+        "relative_to_audio_start_ms",
+        "accel_ms2",
+        "gyro_dps",
+    }
 
 
 def test_runtime_defaults_only_enable_windows_desktop_features():
@@ -110,7 +142,7 @@ def test_runtime_applies_gain_after_detector_and_before_session_controller(
         def reset(self):
             return None
 
-        def process(self, block, _events):
+        def process(self, block, _events, **_kwargs):
             seen["controller"] = np.asarray(block).copy()
 
         def flush(self):
@@ -349,7 +381,7 @@ def test_ui_runtime_reports_stage2_decisions_to_the_log(monkeypatch):
         def reset(self):
             return None
 
-        def process(self, _block, _events):
+        def process(self, _block, _events, **_kwargs):
             return None
 
         def flush(self):
@@ -422,7 +454,7 @@ def test_ui_runtime_cancels_current_utterance_without_disabling_next_audio(
         def reset(self):
             events.append("controller-reset")
 
-        def process(self, _block, _events):
+        def process(self, _block, _events, **_kwargs):
             events.append("next-block-processed")
 
         def flush(self):

@@ -1,6 +1,11 @@
 import numpy as np
 
 from proximic_ring.asr.controller import DirectASRSessionController, ProximityASRController
+from proximic_ring.asr.session_sink import (
+    CompletedUtteranceSessionSink,
+    RawAudioObserverSessionSink,
+    SessionFanout,
+)
 from proximic_ring.events import Stage1Event, Stage2Event
 
 
@@ -125,6 +130,23 @@ def test_first_activate_starts_repeated_activate_keeps_session_and_two_rejects_e
     assert out.size == 4 * 320
     np.testing.assert_allclose(out[:320], a)
     np.testing.assert_allclose(out[320:640], b)
+
+
+def test_audio_start_clock_points_to_first_pre_roll_sample():
+    worker = ImmediateWorker()
+    gate = make_gate(worker, pre_roll_s=0.04, stage1_inactivity_s=1.0)
+    block = np.full(320, 0.2, dtype=np.float32)
+
+    gate.process(block, [], block_end_monotonic_ns=1_000_000_000)
+    gate.process(
+        block,
+        [activate_event(640)],
+        block_end_monotonic_ns=1_020_000_000,
+    )
+
+    # Two 20 ms blocks are the complete pre-roll, so WAV sample zero is 40 ms
+    # before the block that carried the Stage2 activation finished.
+    assert gate.audio_start_monotonic_ns == 980_000_000
 
 
 def test_streaming_sink_receives_exactly_the_same_cropped_audio_as_history():
@@ -273,6 +295,28 @@ def test_user_cancel_discards_only_current_utterance_and_accepts_the_next_one():
     gate.flush()
     assert len(worker.items) == 1
     np.testing.assert_allclose(worker.items[0], next_utterance)
+
+
+def test_user_cancel_persists_raw_audio_but_does_not_submit_it_to_asr():
+    worker = ImmediateWorker()
+    observed = []
+    sink = SessionFanout([
+        RawAudioObserverSessionSink(
+            lambda session_id, audio: observed.append((session_id, audio))
+        ),
+        CompletedUtteranceSessionSink(worker),
+    ])
+    gate = make_gate(sink, pre_roll_s=0.02, stage1_inactivity_s=1.0)
+    cancelled = np.full(320, 0.2, dtype=np.float32)
+
+    gate.process(cancelled, [activate_event(320)])
+    start_ns = gate.audio_start_monotonic_ns
+    gate.discard_current()
+
+    assert start_ns is not None
+    assert worker.items == []
+    assert observed[0][0] == 1
+    np.testing.assert_array_equal(observed[0][1], cancelled)
 
 
 def test_pause_reset_flushes_and_discards_old_pre_roll_and_sample_clock():

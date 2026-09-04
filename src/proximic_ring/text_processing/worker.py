@@ -284,8 +284,6 @@ class TextProcessingWorker:
                 model_output=model_output,
                 llm_branches=tuple(llm_branches),
                 winner_branch=winner_branch,
-                episode_id=request.episode_id,
-                attempt_id=request.attempt_id,
             )
             if self._consume_cancelled(request.request_id):
                 continue

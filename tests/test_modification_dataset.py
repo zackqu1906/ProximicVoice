@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import replace
 import json
+from pathlib import Path
+import re
 from types import SimpleNamespace
 import threading
 import time
@@ -83,133 +85,154 @@ def _result(request_id: int, session_id: int, candidate: str, winner: str):
     )
 
 
-def test_confirm_persists_one_complete_training_attempt_and_retry_is_rejected(tmp_path):
+def test_application_and_acceptance_persist_without_feedback_prompt(tmp_path):
     collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
     first_audio = np.linspace(-0.25, 0.25, 1600, dtype=np.float32)
     collector.record_audio(1, first_audio)
     collector.record_asr_update(_update(1, "改得", final=False))
     collector.record_asr_update(_update(1, "改得更正式", final=True))
-    episode_id, first_attempt = collector.begin_attempt(
+    request = TextProcessingRequest(
         request_id=10,
         session_id=1,
+        mode="edit",
+        raw_text="改得更正式",
         target_text="原文。",
-        application="editor.exe",
-        provider="local",
-        model="qwen.gguf",
+        settings=LLMSettings(enabled=True, provider="local", model="qwen.gguf"),
     )
+    collector.record_text_request(request)
     collector.record_llm_result(10, _result(10, 1, "正式文本。", "fragment"))
-    collector.feedback(
-        10,
-        "confirm",
-        final_text="用户修正后的正式文本。",
-        manually_corrected=True,
+    collector.record_application(
+        action="applied",
+        session_id=1,
+        request_id=10,
+        mode="edit",
+        before_text="原文。",
+        candidate_text="正式文本。",
+        final_text="正式文本。",
+        method="automatic",
     )
-    first_attempt_path = (
-        tmp_path
-        / "dataset"
-        / "anonymous-1"
-        / episode_id
-        / first_attempt
-        / "attempt.json"
+    collector.record_acceptance(
+        accepted=True,
+        request_id=10,
+        strength="implicit",
+        reason="successful_application",
     )
-    episode_dir = tmp_path / "dataset" / "anonymous-1" / episode_id
-    episode = json.loads((episode_dir / "episode.json").read_text(encoding="utf-8"))
-    assert episode["attempt_ids"] == ["attempt_001"]
-    assert episode["final_status"] == "completed"
-    assert episode["final_user_text"] == "用户修正后的正式文本。"
-    assert episode["manually_corrected"] is True
-
-    first_dir = episode_dir / "attempt_001"
-    with wave.open(str(first_dir / "audio_raw.wav"), "rb") as audio_file:
+    interaction_dir = next(collector.interactions_root.iterdir())
+    assert re.fullmatch(
+        r"interaction_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{3}",
+        interaction_dir.name,
+    )
+    with wave.open(str(interaction_dir / "audio.wav"), "rb") as audio_file:
         assert audio_file.getframerate() == 16_000
         assert audio_file.getnchannels() == 1
         assert audio_file.getnframes() == first_audio.size
-    interaction_audio = next(
-        (collector.interactions_root).glob("*/audio.wav")
-    )
-    assert (first_dir / "audio_raw.wav").samefile(interaction_audio)
     asr_rows = [
         json.loads(line)
-        for line in (first_dir / "asr_updates.jsonl").read_text(encoding="utf-8").splitlines()
+        for line in (interaction_dir / "asr_updates.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
     ]
     assert [row["kind"] for row in asr_rows] == ["partial", "final"]
     assert asr_rows[-1]["text"] == "改得更正式"
-    branch_rows = [
-        json.loads(line)
-        for line in (first_dir / "llm_branches.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
+    record = json.loads((interaction_dir / "record.json").read_text(encoding="utf-8"))
+    branch_rows = record["llm"]["requests"][0]["branches"]
     assert {row["branch"] for row in branch_rows} == {"fragment", "full"}
     assert all(row["candidate_text"] for row in branch_rows)
-    first_meta = json.loads((first_dir / "attempt.json").read_text(encoding="utf-8"))
-    assert first_meta["feedback"][0]["action"] == "confirm"
-    assert "preview_dwell_ms" in first_meta["feedback"][0]
-    assert first_meta["llm"]["winner_branch"] == "fragment"
+    assert record["feedback"] == []
+    assert record["llm"]["requests"][0]["winner_branch"] == "fragment"
+    assert record["outcome"]["status"] == "applied"
+    assert record["outcome"]["final_text"] == "正式文本。"
+    assert record["outcome"]["accepted"] is True
+    history_entry = collector.load_entries()[0]
+    assert history_entry["recordPath"] == str(interaction_dir / "record.json")
+    assert Path(history_entry["audioPath"]).parent == Path(
+        history_entry["recordPath"]
+    ).parent
+    assert {path.name for path in collector.user_root.iterdir()} == {"interactions"}
     with pytest.raises(ValueError, match="unsupported feedback action"):
         collector.feedback(10, "retry")
 
 
 def test_cancel_records_objective_action_without_reason_prompt_data(tmp_path):
     collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
-    episode_id, attempt_id = collector.begin_attempt(
+    request = TextProcessingRequest(
         request_id=20,
         session_id=2,
+        mode="edit",
+        raw_text="取消这次修改",
         target_text="原文。",
-        application="editor.exe",
-        provider="local",
-        model="qwen.gguf",
+        settings=LLMSettings(enabled=True, provider="local", model="qwen.gguf"),
     )
+    collector.record_text_request(request)
     collector.feedback(20, "cancel", final_text="原文。")
-    attempt_path = (
-        tmp_path
-        / "dataset"
-        / "anonymous-1"
-        / episode_id
-        / attempt_id
-        / "attempt.json"
+    record_path = next(collector.interactions_root.glob("*/record.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["feedback"][-1]["action"] == "cancel"
+    assert "failure_reason" not in record["feedback"][-1]
+    assert record["outcome"]["status"] == "cancel"
+    assert not any(
+        path.name.startswith("ep_") for path in collector.user_root.iterdir()
     )
-    attempt = json.loads(attempt_path.read_text(encoding="utf-8"))
-    assert attempt["feedback"][-1]["action"] == "cancel"
-    assert "failure_reason" not in attempt["feedback"][-1]
     assert not hasattr(collector, "annotate_feedback_reason")
 
 
-def test_slow_branch_trace_can_fill_attempt_after_winner_is_available(tmp_path):
+def test_early_cancel_keeps_audio_and_imu_visible_without_asr_final(tmp_path):
+    saved = []
+    collector = ModificationDatasetCollector(
+        tmp_path / "dataset", "anonymous-1", on_saved=saved.append
+    )
+    collector.begin_session(21)
+    collector.record_application(action="cancelled", session_id=21, mode="dictation")
+    collector.record_audio(21, np.zeros(800, dtype=np.float32))
+    collector.record_imu_samples(
+        21,
+        [{"relative_to_audio_start_ms": 0.0}],
+        sample_rate_hz=50,
+        alignment_method="test-clock",
+    )
+
+    record_path = next(collector.interactions_root.glob("*/record.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["asr"]["final_recorded"] is False
+    assert record["audio"]["available"] is True
+    assert record["imu"]["sample_count"] == 1
+    assert (record_path.parent / "audio.wav").is_file()
+    assert (record_path.parent / "imu.jsonl").is_file()
+    entry = collector.load_entries()[0]
+    assert entry["recognized"] is False
+    assert entry["hasImu"] is True
+    assert entry["dataSummary"] == "音频已保存 · IMU 1 条"
+    assert saved[-1]["hasImu"] is True
+
+
+def test_slow_branch_trace_updates_the_same_interaction(tmp_path):
     collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
-    episode_id, attempt_id = collector.begin_attempt(
+    request = TextProcessingRequest(
         request_id=30,
         session_id=3,
+        mode="edit",
+        raw_text="改得更正式",
         target_text="原文。",
-        application="editor.exe",
-        provider="local",
-        model="qwen.gguf",
+        settings=LLMSettings(enabled=True, provider="local", model="qwen.gguf"),
     )
+    collector.record_text_request(request)
     completed = _result(30, 3, "正式文本。", "fragment")
     collector.record_llm_result(30, replace(completed, llm_branches=()))
-    branch_path = (
-        tmp_path
-        / "dataset"
-        / "anonymous-1"
-        / episode_id
-        / attempt_id
-        / "llm_branches.jsonl"
-    )
-    assert branch_path.read_text(encoding="utf-8") == ""
+    record_path = next(collector.interactions_root.glob("*/record.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["llm"]["requests"][0]["branches"] == []
 
     collector.record_llm_branches(
         30,
         completed.llm_branches,
         completed.winner_branch,
     )
-    branch_rows = [
-        json.loads(line)
-        for line in branch_path.read_text(encoding="utf-8").splitlines()
-    ]
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    request_record = record["llm"]["requests"][0]
+    branch_rows = request_record["branches"]
     assert {row["branch"] for row in branch_rows} == {"fragment", "full"}
-    attempt = json.loads(
-        (branch_path.parent / "attempt.json").read_text(encoding="utf-8")
-    )
-    assert attempt["llm"]["winner_branch"] == "fragment"
-    assert "branches_collected_at" in attempt["llm"]
+    assert request_record["winner_branch"] == "fragment"
+    assert "branches_collected_at" in request_record
 
 
 def test_unified_interaction_collects_history_llm_outcome_reason_and_imu(tmp_path):
@@ -274,7 +297,7 @@ def test_unified_interaction_collects_history_llm_outcome_reason_and_imu(tmp_pat
             {"timestamp_ms": 10, "ax": 0.1, "ay": 0.2, "az": 1.0},
         ],
         sample_rate_hz=100,
-        clock_offset_ms=2.5,
+        alignment_method="device_uptime_packet_tail_v2",
     )
 
     assert len(saved) == 1
@@ -292,6 +315,13 @@ def test_unified_interaction_collects_history_llm_outcome_reason_and_imu(tmp_pat
     assert record["near_field"]["stage2_threshold"] == 0.7
     assert record["near_field"]["detector_decision"] == "activate"
     assert record["imu"]["sample_count"] == 2
+    assert record["imu"] == {
+        "samples_file": "imu.jsonl",
+        "sample_count": 2,
+        "sample_rate_hz": 100,
+        "dropped_samples": 0,
+        "alignment_method": "device_uptime_packet_tail_v2",
+    }
     assert (record_path.parent / "imu.jsonl").is_file()
 
 
@@ -339,6 +369,10 @@ def test_llm_association_index_links_rejected_and_manual_chosen_result(tmp_path)
     result_id = collector.record_manual_result(
         interaction_ids[-1], text="人工写出的正式文本", mode="edit"
     )
+    assert re.fullmatch(
+        r"manual-result_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{6}",
+        result_id,
+    )
     group_id = collector.create_association(
         kind="llm",
         subtype="edit_preference",
@@ -351,9 +385,17 @@ def test_llm_association_index_links_rejected_and_manual_chosen_result(tmp_path)
     )
     group = collector.load_associations()[0]
     assert group["association_id"] == group_id
+    assert re.fullmatch(
+        r"dpo-link_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{6}",
+        group_id,
+    )
     assert group["source"] == "manual_association_center"
     assert group["chosen"]["result_id"] == result_id
     assert [item["request_id"] for item in group["rejected"]] == [101, 102]
+    for reference in [group["chosen"], *group["rejected"]]:
+        record_path = collector.user_root / reference["record_path"]
+        assert record_path.is_file()
+        assert record_path.parent.name == reference["interaction_id"]
 
 
 def test_asr_association_index_points_to_all_original_interactions(tmp_path):
@@ -380,9 +422,17 @@ def test_asr_association_index_points_to_all_original_interactions(tmp_path):
     )
     group = collector.load_associations()[0]
     assert group["association_id"] == group_id
+    assert re.fullmatch(
+        r"asr-link_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{6}",
+        group_id,
+    )
     assert group["kind"] == "asr"
     assert group["chosen"]["interaction_id"] == reference_id
     assert group["member_interaction_ids"] == [reference_id, *failed_ids]
+    for reference in [group["chosen"], *group["rejected"]]:
+        record_path = collector.user_root / reference["record_path"]
+        assert record_path.is_file()
+        assert record_path.parent.name == reference["interaction_id"]
     for interaction_id in group["member_interaction_ids"]:
         record = json.loads(
             (collector.interactions_root / interaction_id / "record.json").read_text(
@@ -390,6 +440,12 @@ def test_asr_association_index_points_to_all_original_interactions(tmp_path):
             )
         )
         assert group_id in record["association_ids"]
+        roles = {
+            item["role"]
+            for item in record["association_memberships"]
+            if item["association_id"] == group_id
+        }
+        assert roles == ({"chosen"} if interaction_id == reference_id else {"rejected"})
     assert collector.association_index_path.is_file()
 
 
@@ -546,13 +602,30 @@ def test_unchanged_branch_cannot_beat_a_later_executable_edit():
 
 def test_raw_audio_observer_sink_keeps_controller_waveform_unchanged():
     observed = []
+    started = []
     sink = RawAudioObserverSessionSink(
-        lambda session_id, audio: observed.append((session_id, audio))
+        lambda session_id, audio: observed.append((session_id, audio)),
+        on_start=started.append,
     )
     raw = np.array([-0.5, 0.25], dtype=np.float32)
     sink.start(raw[:1])
     sink.feed(raw[1:])
     sink.end(raw)
+
+    assert observed[0][0] == 1
+    assert started == [1]
+    np.testing.assert_array_equal(observed[0][1], raw)
+
+
+def test_raw_audio_observer_sink_persists_cancelled_waveform():
+    observed = []
+    sink = RawAudioObserverSessionSink(
+        lambda session_id, audio: observed.append((session_id, audio))
+    )
+    raw = np.array([-0.25, 0.5], dtype=np.float32)
+
+    sink.start(raw[:1])
+    sink.discard(raw)
 
     assert observed[0][0] == 1
     np.testing.assert_array_equal(observed[0][1], raw)

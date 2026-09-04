@@ -19,7 +19,6 @@ if os.name == "nt":
 
 ACTION_INPUT = "input"
 ACTION_EDIT = "edit"
-ACTION_CONFIRM = "confirm"
 ACTION_CANCEL = "cancel"
 ACTION_SWITCH_MODE = "switch_mode"
 ACTION_UNDO = "undo"
@@ -54,30 +53,29 @@ class WindowsVoiceActionHotkeys:
     WM_QUIT = 0x0012
     PM_NOREMOVE = 0x0000
     VK_MENU = 0x12
+    VK_CONTROL = 0x11
+    VK_SHIFT = 0x10
     _ALT_ACTIONS = {
         0x31: ACTION_INPUT,      # Alt+1
         0x32: ACTION_EDIT,       # Alt+2
-    }
-    _REVIEW_ACTIONS = {
-        0x0D: ACTION_CONFIRM,    # Enter while a review is visible
     }
     def __init__(
         self,
         on_action: Callable[[str], None],
         *,
-        is_review_active: Callable[[], bool] | None = None,
         is_interaction_active: Callable[[], bool] | None = None,
         is_mode_correction_active: Callable[[], bool] | None = None,
+        is_undo_active: Callable[[], bool] | None = None,
         on_error: Callable[[str], None] = print,
     ) -> None:
         if os.name != "nt":
             raise RuntimeError("全局语音动作快捷键目前仅支持 Windows")
         self._on_action = on_action
-        self._is_review_active = is_review_active or (lambda: False)
         self._is_interaction_active = is_interaction_active or (lambda: False)
         self._is_mode_correction_active = (
             is_mode_correction_active or (lambda: False)
         )
+        self._is_undo_active = is_undo_active or (lambda: False)
         self._on_error = on_error
         self._ready = threading.Event()
         self._thread_id = 0
@@ -122,9 +120,11 @@ class WindowsVoiceActionHotkeys:
                     action = self._action_for_key(
                         key,
                         alt_down=self._alt_down(user32),
-                        review_active=self._is_review_active(),
+                        control_down=self._key_down(user32, self.VK_CONTROL),
+                        shift_down=self._key_down(user32, self.VK_SHIFT),
                         interaction_active=self._is_interaction_active(),
                         correction_active=self._is_mode_correction_active(),
+                        undo_active=self._is_undo_active(),
                     )
                     if is_up:
                         was_consumed = key in self._pressed_actions
@@ -168,7 +168,11 @@ class WindowsVoiceActionHotkeys:
             self._thread_id = 0
 
     def _alt_down(self, user32) -> bool:
-        return bool(user32.GetAsyncKeyState(self.VK_MENU) & 0x8000)
+        return self._key_down(user32, self.VK_MENU)
+
+    @staticmethod
+    def _key_down(user32, key: int) -> bool:
+        return bool(user32.GetAsyncKeyState(int(key)) & 0x8000)
 
     @classmethod
     def _action_for_key(
@@ -176,21 +180,21 @@ class WindowsVoiceActionHotkeys:
         key: int,
         *,
         alt_down: bool,
-        review_active: bool,
+        control_down: bool = False,
+        shift_down: bool = False,
         interaction_active: bool = False,
         correction_active: bool = False,
+        undo_active: bool = False,
     ) -> str | None:
         if alt_down:
             action = cls._ALT_ACTIONS.get(int(key))
             if action is not None:
                 return action
-        if review_active:
-            review_action = cls._REVIEW_ACTIONS.get(int(key))
-            if review_action is not None:
-                return review_action
         if correction_active and int(key) == 0x09:  # Tab
             return ACTION_SWITCH_MODE
-        if (interaction_active or review_active) and int(key) == 0x1B:  # Escape
+        if undo_active and control_down and not shift_down and int(key) == 0x5A:
+            return ACTION_UNDO
+        if interaction_active and int(key) == 0x1B:  # Escape
             return ACTION_CANCEL
         return None
 
@@ -240,26 +244,25 @@ class WindowsVoiceActionHotkeys:
 
 
 class MacOSVoiceActionHotkeys:
-    """Consume edit confirmation keys while another macOS app has focus."""
+    """Consume active-utterance and result-correction shortcuts on macOS."""
 
-    KEY_RETURN = 36
     KEY_TAB = 48
     KEY_ESCAPE = 53
-    KEY_KEYPAD_ENTER = 76
+    KEY_Z = 6
 
     def __init__(
         self,
         on_action: Callable[[str], None],
         *,
-        is_review_active: Callable[[], bool] | None = None,
         is_interaction_active: Callable[[], bool] | None = None,
         is_mode_correction_active: Callable[[], bool] | None = None,
+        is_undo_active: Callable[[], bool] | None = None,
         on_error: Callable[[str], None] = print,
         quartz: object | None = None,
         core_foundation: object | None = None,
     ) -> None:
         if sys.platform != "darwin":
-            raise RuntimeError("macOS 全局编辑确认键仅支持 macOS")
+            raise RuntimeError("macOS 全局语音交互快捷键仅支持 macOS")
         if quartz is None:
             import Quartz as quartz_module
 
@@ -271,11 +274,11 @@ class MacOSVoiceActionHotkeys:
         self._quartz = quartz
         self._core_foundation = core_foundation
         self._on_action = on_action
-        self._is_review_active = is_review_active or (lambda: False)
         self._is_interaction_active = is_interaction_active or (lambda: False)
         self._is_mode_correction_active = (
             is_mode_correction_active or (lambda: False)
         )
+        self._is_undo_active = is_undo_active or (lambda: False)
         self._on_error = on_error
         self._ready = threading.Event()
         self._failed: str | None = None
@@ -290,7 +293,7 @@ class MacOSVoiceActionHotkeys:
         )
         self._thread.start()
         if not self._ready.wait(timeout=3.0):
-            raise RuntimeError("安装 macOS 全局编辑确认键超时")
+            raise RuntimeError("安装 macOS 全局语音交互快捷键超时")
         if self._failed:
             raise RuntimeError(self._failed)
 
@@ -299,15 +302,22 @@ class MacOSVoiceActionHotkeys:
         cls,
         key_code: int,
         *,
-        review_active: bool,
+        command_down: bool = False,
+        shift_down: bool = False,
         interaction_active: bool = False,
         correction_active: bool = False,
+        undo_active: bool = False,
     ) -> str | None:
-        if review_active and int(key_code) in (cls.KEY_RETURN, cls.KEY_KEYPAD_ENTER):
-            return ACTION_CONFIRM
         if correction_active and int(key_code) == cls.KEY_TAB:
             return ACTION_SWITCH_MODE
-        if (interaction_active or review_active) and int(key_code) == cls.KEY_ESCAPE:
+        if (
+            undo_active
+            and command_down
+            and not shift_down
+            and int(key_code) == cls.KEY_Z
+        ):
+            return ACTION_UNDO
+        if interaction_active and int(key_code) == cls.KEY_ESCAPE:
             return ACTION_CANCEL
         return None
 
@@ -334,19 +344,26 @@ class MacOSVoiceActionHotkeys:
                         event, repeat_field
                     ):
                         active = (
-                            self._is_review_active()
-                            or self._is_interaction_active()
+                            self._is_interaction_active()
                             or self._is_mode_correction_active()
+                            or self._is_undo_active()
                         )
                         return None if active else event
                     key_code = quartz.CGEventGetIntegerValueField(
                         event, quartz.kCGKeyboardEventKeycode
                     )
+                    flags = int(quartz.CGEventGetFlags(event))
                     action = self._action_for_key(
                         int(key_code),
-                        review_active=self._is_review_active(),
+                        command_down=bool(
+                            flags & int(quartz.kCGEventFlagMaskCommand)
+                        ),
+                        shift_down=bool(
+                            flags & int(quartz.kCGEventFlagMaskShift)
+                        ),
                         interaction_active=self._is_interaction_active(),
                         correction_active=self._is_mode_correction_active(),
+                        undo_active=self._is_undo_active(),
                     )
                     if action is None:
                         return event
@@ -356,7 +373,7 @@ class MacOSVoiceActionHotkeys:
                     return None
                 except BaseException as exc:
                     self._on_error(
-                        f"[voice-actions] macOS 编辑确认键处理失败：{exc}"
+                        f"[voice-actions] macOS 语音交互快捷键处理失败：{exc}"
                     )
                     return event
 

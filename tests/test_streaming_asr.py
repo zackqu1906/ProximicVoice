@@ -223,6 +223,32 @@ def test_streaming_worker_aborts_lost_feed_and_reconnects_on_next_start():
     assert updates[1].is_final
 
 
+def test_streaming_worker_discards_session_without_final_and_can_restart():
+    updates = []
+
+    class CancellableBackend(FakeStreamingBackend):
+        def __init__(self):
+            super().__init__()
+            self.aborted = 0
+
+        def abort(self):
+            self.aborted += 1
+            self.parts = []
+
+    backend = CancellableBackend()
+    worker = StreamingASRWorker(backend, on_update=updates.append)
+
+    worker.start(np.ones(160, dtype=np.float32))
+    worker.discard(np.ones(160, dtype=np.float32))
+    worker.start(np.ones(80, dtype=np.float32))
+    worker.end(np.ones(80, dtype=np.float32))
+    worker.close()
+
+    assert backend.aborted == 1
+    assert backend.started == 2
+    assert [update.text for update in updates if update.is_final] == ["final=80"]
+
+
 def test_third_party_adapter_uses_external_api_and_redecodes_trimmed_final(monkeypatch):
     calls = []
 

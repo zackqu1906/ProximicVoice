@@ -16,6 +16,7 @@ class SessionSink(Protocol):
     def start(self, initial_audio_16k: np.ndarray) -> None: ...
     def feed(self, audio_16k: np.ndarray) -> None: ...
     def end(self, final_audio_16k: np.ndarray) -> None: ...
+    def discard(self, captured_audio_16k: np.ndarray) -> None: ...
     def abort(self) -> None: ...
     def close(self) -> None: ...
 
@@ -37,6 +38,11 @@ class CompletedUtteranceSessionSink:
         if x.size:
             self.sink.submit(x)
 
+    def discard(self, captured_audio_16k: np.ndarray) -> None:
+        # A completed-utterance backend has not received any audio yet, so
+        # cancelling the current session requires no backend action.
+        del captured_audio_16k
+
     def abort(self) -> None:
         abort = getattr(self.sink, "abort", None)
         if callable(abort):
@@ -49,19 +55,32 @@ class CompletedUtteranceSessionSink:
 class RawAudioObserverSessionSink:
     """Publish the same Controller-trimmed waveform consumed by ASR."""
 
-    def __init__(self, observer: Callable[[int, np.ndarray], None]) -> None:
+    def __init__(
+        self,
+        observer: Callable[[int, np.ndarray], None],
+        *,
+        on_start: Callable[[int], None] | None = None,
+    ) -> None:
         self.observer = observer
+        self.on_start = on_start
         self._session_id = 0
 
     def start(self, initial_audio_16k: np.ndarray) -> None:
         del initial_audio_16k
         self._session_id += 1
+        if self.on_start is not None:
+            self.on_start(self._session_id)
 
     def feed(self, audio_16k: np.ndarray) -> None:
         del audio_16k
 
     def end(self, final_audio_16k: np.ndarray) -> None:
         audio = np.asarray(final_audio_16k, dtype=np.float32).reshape(-1).copy()
+        self.observer(self._session_id, audio)
+
+    def discard(self, captured_audio_16k: np.ndarray) -> None:
+        """Persist cancelled audio for datasets without treating it as ASR final."""
+        audio = np.asarray(captured_audio_16k, dtype=np.float32).reshape(-1).copy()
         self.observer(self._session_id, audio)
 
     def abort(self) -> None:
@@ -90,6 +109,12 @@ class SessionFanout:
     def end(self, final_audio_16k: np.ndarray) -> None:
         for sink in self.sinks:
             sink.end(final_audio_16k)
+
+    def discard(self, captured_audio_16k: np.ndarray) -> None:
+        for sink in self.sinks:
+            discard = getattr(sink, "discard", None)
+            if callable(discard):
+                discard(captured_audio_16k)
 
     def abort(self) -> None:
         for sink in self.sinks:

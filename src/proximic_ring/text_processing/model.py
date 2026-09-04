@@ -110,8 +110,6 @@ class TextProcessingRequest:
     raw_text: str
     settings: LLMSettings
     target_text: str = ""
-    episode_id: str = ""
-    attempt_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -166,5 +164,3 @@ class TextProcessingResult:
     model_output: str = ""
     llm_branches: tuple[LLMBranchTrace, ...] = ()
     winner_branch: str = ""
-    episode_id: str = ""
-    attempt_id: str = ""

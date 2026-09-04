@@ -1,30 +1,39 @@
-"""Unified per-utterance interaction collection with edit compatibility views."""
+"""Unified per-utterance interaction and association collection."""
 
 from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
 import json
-import os
 from pathlib import Path
 import re
 import shutil
 import threading
-import time
-import uuid
 import wave
 
 import numpy as np
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 PROMPT_VERSION = "edit-race-v1"
 _MAX_PENDING_SESSIONS = 8
-_FEEDBACK_ACTIONS = {"confirm", "cancel", "apply_failed", "abandoned"}
+_FEEDBACK_ACTIONS = {"cancel", "apply_failed", "abandoned"}
+_CURRENT_INTERACTION_ID = re.compile(
+    r"^interaction_\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}-\d{3}(?:_\d{2})?$"
+)
 
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+
+
+def _local_interaction_stamp(occurred_at: str) -> str:
+    """Format an ISO timestamp as a readable local wall-clock folder suffix."""
+    try:
+        instant = datetime.fromisoformat(str(occurred_at)).astimezone()
+    except (TypeError, ValueError):
+        instant = datetime.now().astimezone()
+    return instant.strftime("%Y-%m-%d_%H-%M-%S-%f")[:-3]
 
 
 def _json_value(value):
@@ -36,13 +45,7 @@ def _json_value(value):
 
 
 class ModificationDatasetCollector:
-    """Thread-safe unified interaction persistence.
-
-    The historical class name is kept so existing installations and callers do
-    not break.  The source of truth is now one InteractionRecord per ASR
-    session.  Episode/Attempt files remain as lightweight compatibility views
-    for existing edit tooling and point back to that InteractionRecord.
-    """
+    """Thread-safe persistence for one InteractionRecord per ASR session."""
 
     def __init__(
         self,
@@ -50,7 +53,6 @@ class ModificationDatasetCollector:
         user_id: str,
         *,
         on_saved=None,
-        legacy_history_root: str | Path | None = None,
     ) -> None:
         self.root = Path(root)
         self.user_id = str(user_id).strip()
@@ -60,9 +62,6 @@ class ModificationDatasetCollector:
         self.interactions_root = self.user_root / "interactions"
         self.association_index_path = self.user_root / "associations.jsonl"
         self._on_saved = on_saved
-        self.legacy_history_root = (
-            Path(legacy_history_root) if legacy_history_root is not None else None
-        )
         self._lock = threading.RLock()
         self._pending_audio: dict[int, np.ndarray] = {}
         self._pending_asr: dict[int, list[dict]] = {}
@@ -71,13 +70,9 @@ class ModificationDatasetCollector:
         self._request_interactions: dict[int, str] = {}
         self._routing_interactions: dict[int, str] = {}
         self._published_interactions: set[str] = set()
-        self._session_attempts: dict[int, list[tuple[str, str]]] = {}
-        self._active_episode_id: str | None = None
-        self._request_attempts: dict[int, tuple[str, str]] = {}
-        self._preview_started: dict[tuple[str, str], float] = {}
 
     def reset_runtime(self) -> None:
-        """Drop unbound callbacks and close an interrupted Episode."""
+        """Drop in-memory request/session bindings from an interrupted run."""
         with self._lock:
             self._pending_audio.clear()
             self._pending_asr.clear()
@@ -85,16 +80,124 @@ class ModificationDatasetCollector:
             self._session_interactions.clear()
             self._request_interactions.clear()
             self._routing_interactions.clear()
-            self._session_attempts.clear()
-            if self._active_episode_id is not None:
-                self._finalize_episode_locked(
-                    self._active_episode_id,
-                    status="abandoned",
-                    final_text=self._episode_data(self._active_episode_id).get(
-                        "final_user_text", ""
-                    ),
-                    manually_corrected=False,
-                )
+
+    def begin_session(self, session_id: int) -> str:
+        """Create the interaction as soon as ProxiMic activates.
+
+        This gives an early user cancellation a stable interaction to label,
+        even when the ASR backend has not emitted its first partial yet.
+        """
+        session_id = int(session_id)
+        if session_id <= 0:
+            return ""
+        with self._lock:
+            return self._ensure_interaction_locked(session_id)
+
+    def record_near_field_label(
+        self,
+        session_id: int,
+        *,
+        label: str,
+        source: str,
+    ) -> None:
+        normalized = str(label).strip().lower()
+        if normalized not in {"positive", "negative"}:
+            raise ValueError("near-field label must be positive or negative")
+        session_id = int(session_id)
+        if session_id <= 0:
+            return
+        with self._lock:
+            interaction_id = self._ensure_interaction_locked(session_id)
+            record = self._interaction_data(interaction_id)
+            occurred_at = _utc_now()
+            record.setdefault("near_field", {}).update(
+                {
+                    "training_label": normalized,
+                    "label_source": str(source),
+                    "label_recorded_at": occurred_at,
+                }
+            )
+            record["updated_at"] = occurred_at
+            self._write_json(self._interaction_path(interaction_id), record)
+            self._append_event_locked(
+                interaction_id,
+                {
+                    "type": "model_label",
+                    "model": "near_field",
+                    "label": normalized,
+                    "source": str(source),
+                    "occurred_at": occurred_at,
+                },
+            )
+
+    def record_asr_label(
+        self,
+        session_id: int,
+        *,
+        label: str,
+        source: str,
+    ) -> None:
+        normalized = str(label).strip().lower()
+        if normalized not in {"positive", "negative"}:
+            raise ValueError("ASR label must be positive or negative")
+        session_id = int(session_id)
+        if session_id <= 0:
+            return
+        with self._lock:
+            interaction_id = self._ensure_interaction_locked(session_id)
+            record = self._interaction_data(interaction_id)
+            occurred_at = _utc_now()
+            record.setdefault("asr", {}).update(
+                {
+                    "training_label": normalized,
+                    "label_source": str(source),
+                    "label_recorded_at": occurred_at,
+                }
+            )
+            record["updated_at"] = occurred_at
+            self._write_json(self._interaction_path(interaction_id), record)
+            self._append_event_locked(
+                interaction_id,
+                {
+                    "type": "model_label",
+                    "model": "asr",
+                    "label": normalized,
+                    "source": str(source),
+                    "occurred_at": occurred_at,
+                },
+            )
+
+    def record_mode_acceptance(self, session_id: int, *, mode: str) -> None:
+        """Record the routed mode as an implicit positive after application."""
+        session_id = int(session_id)
+        if session_id <= 0:
+            return
+        with self._lock:
+            interaction_id = self._ensure_interaction_locked(session_id)
+            record = self._interaction_data(interaction_id)
+            occurred_at = _utc_now()
+            record.setdefault("mode", {}).update(
+                {
+                    "selected": str(mode),
+                    "training_label": "positive",
+                    "negative_mode": "",
+                    "label_source": "implicit_application",
+                    "label_recorded_at": occurred_at,
+                }
+            )
+            record["updated_at"] = occurred_at
+            self._write_json(self._interaction_path(interaction_id), record)
+            self._append_event_locked(
+                interaction_id,
+                {
+                    "type": "model_label",
+                    "model": "input_mode",
+                    "label": "positive",
+                    "mode": str(mode),
+                    "source": "implicit_application",
+                    "occurred_at": occurred_at,
+                },
+            )
 
     def record_audio(self, session_id: int, audio_16k: np.ndarray) -> None:
         session_id = int(session_id)
@@ -107,7 +210,6 @@ class ModificationDatasetCollector:
                 self._pending_audio[session_id] = audio
             else:
                 self._write_interaction_audio_locked(interaction_id, audio)
-                self._link_attempt_audio_locked(session_id, interaction_id)
                 self._publish_history_locked(interaction_id)
             self._prune_pending_locked()
 
@@ -167,11 +269,10 @@ class ModificationDatasetCollector:
         samples,
         *,
         sample_rate_hz: float | None = None,
-        clock_offset_ms: float | None = None,
         dropped_samples: int = 0,
-        metadata: dict | None = None,
+        alignment_method: str = "",
     ) -> None:
-        """Append synchronized raw IMU samples for future weighted fusion."""
+        """Append audio-aligned IMU samples for future weighted fusion."""
         session_id = int(session_id)
         if session_id <= 0:
             return
@@ -187,111 +288,18 @@ class ModificationDatasetCollector:
                 "samples_file": path.name,
                 "sample_count": len(existing) + len(rows),
                 "sample_rate_hz": sample_rate_hz,
-                "clock_offset_ms": clock_offset_ms,
                 "dropped_samples": max(0, int(dropped_samples)),
-                "feature_version": None,
-            }
-            if metadata:
-                record["imu"]["capture"] = _json_value(dict(metadata))
-            record["updated_at"] = _utc_now()
-            self._write_json(self._interaction_path(interaction_id), record)
-
-    def begin_attempt(
-        self,
-        *,
-        request_id: int,
-        session_id: int,
-        target_text: str,
-        application: str,
-        provider: str,
-        model: str,
-        prompt_version: str = PROMPT_VERSION,
-    ) -> tuple[str, str]:
-        with self._lock:
-            interaction_id = self._ensure_interaction_locked(int(session_id))
-            episode_id = self._active_episode_id
-            if episode_id is None:
-                episode_id = self._new_id("ep")
-                self._active_episode_id = episode_id
-                self._write_json(
-                    self._episode_path(episode_id),
-                    {
-                        "schema_version": SCHEMA_VERSION,
-                        "episode_id": episode_id,
-                        "anonymous_user_id": self.user_id,
-                        "created_at": _utc_now(),
-                        "updated_at": _utc_now(),
-                        "attempt_ids": [],
-                        "original_target_text": str(target_text),
-                        "final_user_text": "",
-                        "final_status": "active",
-                        "manually_corrected": False,
-                    },
-                )
-            episode = self._episode_data(episode_id)
-            attempt_id = f"attempt_{len(episode['attempt_ids']) + 1:03d}"
-            episode["attempt_ids"].append(attempt_id)
-            episode["updated_at"] = _utc_now()
-            self._write_json(self._episode_path(episode_id), episode)
-
-            updates = list(self._pending_asr.get(int(session_id), []))
-            final_update = next(
-                (row for row in reversed(updates) if row["kind"] == "final"), {}
-            )
-            attempt = {
-                "schema_version": SCHEMA_VERSION,
-                "interaction_id": interaction_id,
-                "episode_id": episode_id,
-                "attempt_id": attempt_id,
-                "request_id": int(request_id),
-                "asr_session_id": int(session_id),
-                "created_at": _utc_now(),
-                "updated_at": _utc_now(),
-                "mode": "edit",
-                "target_text": str(target_text),
-                "application": str(application),
-                "asr": {
-                    "backend": final_update.get("backend", ""),
-                    "model": final_update.get("model", ""),
-                    "final_text": final_update.get("text", ""),
-                    "latency_ms": final_update.get("latency_ms"),
-                    "audio_duration_ms": final_update.get("audio_duration_ms"),
-                    "error": final_update.get("error"),
-                },
-                "llm": {
-                    "provider": str(provider),
-                    "model": str(model),
-                    "prompt_version": str(prompt_version),
-                    "winner_branch": "",
-                },
-                "candidate_text": "",
-                "feedback": [],
-                "status": "processing",
-            }
-            attempt_dir = self._attempt_dir(episode_id, attempt_id)
-            attempt_dir.mkdir(parents=True, exist_ok=True)
-            self._write_json(attempt_dir / "attempt.json", attempt)
-            self._write_jsonl(attempt_dir / "asr_updates.jsonl", updates)
-            self._write_jsonl(attempt_dir / "llm_branches.jsonl", [])
-            self._request_attempts[int(request_id)] = (episode_id, attempt_id)
-            self._request_interactions[int(request_id)] = interaction_id
-            self._session_attempts.setdefault(int(session_id), []).append(
-                (episode_id, attempt_id)
-            )
-            self._link_attempt_audio_locked(int(session_id), interaction_id)
-            record = self._interaction_data(interaction_id)
-            record["mode"]["selected"] = "edit"
-            record["target"] = {
-                "application": str(application),
-                "original_text": str(target_text),
-            }
-            record["legacy_edit"] = {
-                "episode_id": episode_id,
-                "attempt_id": attempt_id,
+                "alignment_method": str(alignment_method),
             }
             record["updated_at"] = _utc_now()
             self._write_json(self._interaction_path(interaction_id), record)
-            return episode_id, attempt_id
+            self._publish_history_locked(
+                interaction_id,
+                force=(
+                    str(record.get("outcome", {}).get("status", ""))
+                    == "cancelled"
+                ),
+            )
 
     def record_routing_request(self, request) -> None:
         from .text_processing.prompts import INPUT_MODE_ROUTER_PROMPT
@@ -403,37 +411,7 @@ class ModificationDatasetCollector:
 
     def record_llm_result(self, request_id: int, result) -> None:
         with self._lock:
-            reference = self._request_attempts.get(int(request_id))
             branches = [_json_value(item) for item in getattr(result, "llm_branches", ())]
-            if reference is not None:
-                episode_id, attempt_id = reference
-                attempt_path = self._attempt_dir(episode_id, attempt_id) / "attempt.json"
-                attempt = self._read_json(attempt_path)
-                if branches:
-                    self._write_jsonl(
-                        self._attempt_dir(episode_id, attempt_id)
-                        / "llm_branches.jsonl",
-                        branches,
-                    )
-                    attempt["llm"]["branches_collected_at"] = _utc_now()
-                attempt["llm"]["winner_branch"] = str(
-                    getattr(result, "winner_branch", "") or ""
-                )
-                attempt["llm"]["latency_ms"] = round(
-                    float(getattr(result, "latency_s", 0.0)) * 1000, 3
-                )
-                attempt["candidate_text"] = str(
-                    getattr(result, "final_text", "") or ""
-                )
-                attempt["llm_error"] = getattr(result, "error", None)
-                attempt["status"] = (
-                    "preview" if not attempt["llm_error"] else "failed"
-                )
-                attempt["updated_at"] = _utc_now()
-                self._write_json(attempt_path, attempt)
-                if not attempt["llm_error"]:
-                    self._preview_started[reference] = time.perf_counter()
-
             interaction_id = self._request_interactions.get(int(request_id))
             if interaction_id is None:
                 interaction_id = self._session_interactions.get(
@@ -476,25 +454,9 @@ class ModificationDatasetCollector:
     ) -> None:
         """Finish the slow branch trace without changing the UI result."""
         with self._lock:
-            reference = self._request_attempts.get(int(request_id))
             rows = [_json_value(item) for item in tuple(branches or ())]
             if not rows:
                 return
-            if reference is not None:
-                episode_id, attempt_id = reference
-                self._write_jsonl(
-                    self._attempt_dir(episode_id, attempt_id)
-                    / "llm_branches.jsonl",
-                    rows,
-                )
-                attempt_path = (
-                    self._attempt_dir(episode_id, attempt_id) / "attempt.json"
-                )
-                attempt = self._read_json(attempt_path)
-                attempt["llm"]["winner_branch"] = str(winner_branch or "")
-                attempt["llm"]["branches_collected_at"] = _utc_now()
-                attempt["updated_at"] = _utc_now()
-                self._write_json(attempt_path, attempt)
             interaction_id = self._request_interactions.get(int(request_id))
             if interaction_id is not None:
                 self._update_llm_request_locked(
@@ -510,18 +472,6 @@ class ModificationDatasetCollector:
     def record_llm_failure(self, request_id: int, error: str) -> None:
         """Persist a semantic failure discovered after a valid LLM response."""
         with self._lock:
-            reference = self._request_attempts.get(int(request_id))
-            if reference is not None:
-                episode_id, attempt_id = reference
-                attempt_path = (
-                    self._attempt_dir(episode_id, attempt_id) / "attempt.json"
-                )
-                attempt = self._read_json(attempt_path)
-                attempt["llm_error"] = str(error)
-                attempt["status"] = "failed"
-                attempt["updated_at"] = _utc_now()
-                self._preview_started.pop(reference, None)
-                self._write_json(attempt_path, attempt)
             interaction_id = self._request_interactions.get(int(request_id))
             if interaction_id is not None:
                 self._update_llm_request_locked(
@@ -543,67 +493,12 @@ class ModificationDatasetCollector:
         if normalized_action not in _FEEDBACK_ACTIONS:
             raise ValueError(f"unsupported feedback action: {action}")
         with self._lock:
-            reference = self._request_attempts.get(int(request_id))
-            preview_started = (
-                self._preview_started.pop(reference, None)
-                if reference is not None
-                else None
-            )
-            dwell_ms = None
-            if preview_started is not None:
-                dwell_ms = round(max(0.0, time.perf_counter() - preview_started) * 1000, 3)
             event = {
                 "action": normalized_action,
                 "occurred_at": _utc_now(),
-                "preview_dwell_ms": dwell_ms,
             }
             if error:
                 event["error"] = str(error)
-            if reference is not None:
-                episode_id, attempt_id = reference
-                attempt_path = (
-                    self._attempt_dir(episode_id, attempt_id) / "attempt.json"
-                )
-                attempt = self._read_json(attempt_path)
-                attempt["feedback"].append(event)
-                attempt["status"] = normalized_action
-                attempt["updated_at"] = _utc_now()
-                self._write_json(attempt_path, attempt)
-
-                if normalized_action == "confirm":
-                    self._finalize_episode_locked(
-                        episode_id,
-                        status="completed",
-                        final_text=str(
-                            final_text
-                            if final_text is not None
-                            else attempt["candidate_text"]
-                        ),
-                        manually_corrected=bool(manually_corrected),
-                    )
-                elif normalized_action == "cancel":
-                    self._finalize_episode_locked(
-                        episode_id,
-                        status="cancelled",
-                        final_text=str(
-                            final_text
-                            if final_text is not None
-                            else attempt["target_text"]
-                        ),
-                        manually_corrected=bool(manually_corrected),
-                    )
-                elif normalized_action in {"apply_failed", "abandoned"}:
-                    self._finalize_episode_locked(
-                        episode_id,
-                        status="abandoned",
-                        final_text=str(
-                            final_text
-                            if final_text is not None
-                            else attempt["target_text"]
-                        ),
-                        manually_corrected=bool(manually_corrected),
-                    )
-
             interaction_id = self._request_interactions.get(int(request_id))
             if interaction_id is not None:
                 record = self._interaction_data(interaction_id)
@@ -618,11 +513,9 @@ class ModificationDatasetCollector:
                             str(final_text) if final_text is not None else None
                         ),
                         "manually_corrected": bool(manually_corrected),
-                        # Applying a result is not the same as being satisfied
-                        # with it: the new Undo window can still turn it into a
-                        # strong negative. Acceptance is inferred only when the
-                        # user moves on without undo, or explicitly associates
-                        # a correct result.
+                        # Undo is explicit negative evidence. Successful
+                        # application is recorded separately by
+                        # record_acceptance, without asking for feedback.
                         "accepted": (
                             False if normalized_action == "cancel" else None
                         ),
@@ -718,6 +611,10 @@ class ModificationDatasetCollector:
             record["updated_at"] = occurred_at
             self._write_json(self._interaction_path(interaction_id), record)
             self._append_event_locked(interaction_id, event)
+            self._publish_history_locked(
+                interaction_id,
+                force=str(action) == "cancelled",
+            )
             return interaction_id
 
     def record_acceptance(
@@ -765,14 +662,20 @@ class ModificationDatasetCollector:
     def record_mode_correction(
         self, session_id: int, *, previous_mode: str, corrected_mode: str
     ) -> None:
+        session_id = int(session_id)
+        if session_id <= 0:
+            return
         with self._lock:
-            interaction_id = self._ensure_interaction_locked(int(session_id))
+            interaction_id = self._ensure_interaction_locked(session_id)
             record = self._interaction_data(interaction_id)
             record["mode"].update(
                 {
                     "selected": str(corrected_mode),
                     "user_corrected": True,
+                    "training_label": "positive",
+                    "negative_mode": str(previous_mode),
                     "label_source": "explicit_tab",
+                    "label_recorded_at": _utc_now(),
                 }
             )
             record["updated_at"] = _utc_now()
@@ -866,6 +769,16 @@ class ModificationDatasetCollector:
                 str(item["interaction_id"]) for item in all_refs
             )
         )
+        invalid_ids = [
+            interaction_id
+            for interaction_id in interaction_ids
+            if _CURRENT_INTERACTION_ID.fullmatch(interaction_id) is None
+        ]
+        if invalid_ids:
+            raise ValueError(
+                "association member uses a legacy interaction id: "
+                + ", ".join(invalid_ids)
+            )
         with self._lock:
             records = {
                 interaction_id: self._interaction_data(interaction_id)
@@ -902,6 +815,24 @@ class ModificationDatasetCollector:
                 ids = record.setdefault("association_ids", [])
                 if association_id not in ids:
                     ids.append(association_id)
+                memberships = record.setdefault("association_memberships", [])
+                for role, references in (
+                    ("chosen", [chosen_ref]),
+                    ("rejected", rejected_refs),
+                ):
+                    for reference in references:
+                        if reference["interaction_id"] != interaction_id:
+                            continue
+                        membership = {
+                            "association_id": association_id,
+                            "kind": normalized_kind,
+                            "subtype": str(subtype),
+                            "role": role,
+                            "request_id": int(reference.get("request_id", 0)),
+                            "result_id": str(reference.get("result_id", "")),
+                        }
+                        if membership not in memberships:
+                            memberships.append(membership)
                 record["updated_at"] = _utc_now()
                 self._write_json(self._interaction_path(interaction_id), record)
             return association_id
@@ -933,6 +864,8 @@ class ModificationDatasetCollector:
             reverse=True,
         )
         for path in paths:
+            if _CURRENT_INTERACTION_ID.fullmatch(path.parent.name) is None:
+                continue
             if path.parent.name in used:
                 continue
             try:
@@ -1050,19 +983,14 @@ class ModificationDatasetCollector:
                 reverse=True,
             )
             for path in paths:
+                if _CURRENT_INTERACTION_ID.fullmatch(path.parent.name) is None:
+                    continue
                 try:
                     record = self._read_json(path)
                     entry = self._history_entry(path.parent, record)
                     if entry is not None:
                         rows.append(entry)
                 except (OSError, ValueError, TypeError, KeyError):
-                    continue
-        if self.legacy_history_root is not None and self.legacy_history_root.is_dir():
-            for path in self.legacy_history_root.glob("*/metadata.json"):
-                try:
-                    metadata = self._read_json(path)
-                    rows.append(self._legacy_history_entry(path.parent, metadata))
-                except (OSError, ValueError, TypeError):
                     continue
         rows.sort(key=lambda item: str(item.get("createdAt", "")), reverse=True)
         return rows[: max(0, int(limit))]
@@ -1074,9 +1002,6 @@ class ModificationDatasetCollector:
                 shutil.rmtree(self.user_root)
             self.interactions_root.mkdir(parents=True, exist_ok=True)
             self._published_interactions.clear()
-            if self.legacy_history_root is not None and self.legacy_history_root.exists():
-                shutil.rmtree(self.legacy_history_root)
-                self.legacy_history_root.mkdir(parents=True, exist_ok=True)
 
     def close(self, *, wait: bool = False) -> None:
         del wait
@@ -1100,12 +1025,25 @@ class ModificationDatasetCollector:
             (row for row in reversed(updates) if row.get("kind") == "final"),
             {},
         )
-        recorded_at = str(final_update.get("recorded_at") or _utc_now())
-        stamp = recorded_at.replace("-", "").replace(":", "").replace(".", "")
-        stamp = stamp.replace("+0000", "Z").replace("+00:00", "Z")
-        interaction_id = (
-            f"interaction_{stamp}_{max(0, session_id):06d}_{uuid.uuid4().hex[:8]}"
+        started_at = str(
+            next(
+                (
+                    row.get("recorded_at")
+                    for row in updates
+                    if row.get("recorded_at")
+                ),
+                None,
+            )
+            or _utc_now()
         )
+        base_interaction_id = (
+            f"interaction_{_local_interaction_stamp(started_at)}"
+        )
+        interaction_id = base_interaction_id
+        collision_index = 2
+        while self._interaction_dir(interaction_id).exists():
+            interaction_id = f"{base_interaction_id}_{collision_index:02d}"
+            collision_index += 1
         interaction_dir = self._interaction_dir(interaction_id)
         interaction_dir.mkdir(parents=True, exist_ok=False)
         record = {
@@ -1113,7 +1051,7 @@ class ModificationDatasetCollector:
             "interaction_id": interaction_id,
             "anonymous_user_id": self.user_id,
             "asr_session_id": session_id,
-            "created_at": recorded_at,
+            "created_at": started_at,
             "updated_at": _utc_now(),
             "audio": {
                 "file": "audio.wav",
@@ -1130,14 +1068,16 @@ class ModificationDatasetCollector:
                 "audio_duration_ms": final_update.get("audio_duration_ms"),
                 "error": final_update.get("error"),
                 "final_recorded": bool(final_update),
+                "training_label": None,
+                "label_source": None,
+                "label_recorded_at": None,
             },
             "imu": {
                 "samples_file": None,
                 "sample_count": 0,
                 "sample_rate_hz": None,
-                "clock_offset_ms": None,
                 "dropped_samples": 0,
-                "feature_version": None,
+                "alignment_method": "",
             },
             "near_field": {
                 "audio_score": None,
@@ -1146,6 +1086,9 @@ class ModificationDatasetCollector:
                 "fusion_score": None,
                 "fusion_weights": None,
                 "model_version": None,
+                "training_label": None,
+                "label_source": None,
+                "label_recorded_at": None,
             },
             "mode": {
                 "routing": "manual",
@@ -1154,6 +1097,9 @@ class ModificationDatasetCollector:
                 "selected": "",
                 "user_corrected": False,
                 "label_source": "system",
+                "training_label": None,
+                "negative_mode": "",
+                "label_recorded_at": None,
             },
             "target": {},
             "llm": {"requests": []},
@@ -1166,6 +1112,7 @@ class ModificationDatasetCollector:
                 "manually_corrected": False,
             },
             "association_ids": [],
+            "association_memberships": [],
             "events_file": "events.jsonl",
         }
         self._write_json(self._interaction_path(interaction_id), record)
@@ -1225,29 +1172,15 @@ class ModificationDatasetCollector:
         record["updated_at"] = _utc_now()
         self._write_json(self._interaction_path(interaction_id), record)
 
-    def _link_attempt_audio_locked(
-        self, session_id: int, interaction_id: str
+    def _publish_history_locked(
+        self, interaction_id: str, *, force: bool = False
     ) -> None:
-        source = self._interaction_dir(interaction_id) / "audio.wav"
-        if not source.is_file():
-            return
-        for episode_id, attempt_id in self._session_attempts.get(
-            int(session_id), []
-        ):
-            target = self._attempt_dir(episode_id, attempt_id) / "audio_raw.wav"
-            if target.exists():
-                continue
-            target.parent.mkdir(parents=True, exist_ok=True)
-            try:
-                os.link(source, target)
-            except OSError:
-                shutil.copy2(source, target)
-
-    def _publish_history_locked(self, interaction_id: str) -> None:
-        if interaction_id in self._published_interactions:
+        if interaction_id in self._published_interactions and not force:
             return
         record = self._interaction_data(interaction_id)
-        if not record.get("asr", {}).get("final_recorded"):
+        has_final_asr = bool(record.get("asr", {}).get("final_recorded"))
+        is_cancelled = str(record.get("outcome", {}).get("status", "")) == "cancelled"
+        if not has_final_asr and not is_cancelled:
             return
         entry = self._history_entry(self._interaction_dir(interaction_id), record)
         if entry is None:
@@ -1278,6 +1211,9 @@ class ModificationDatasetCollector:
         except ValueError:
             display_time = recorded_at
         duration_ms = max(0, int(float(audio.get("duration_ms", 0) or 0)))
+        imu = record.get("imu", {})
+        imu_path = interaction_dir / str(imu.get("samples_file") or "imu.jsonl")
+        imu_sample_count = max(0, int(imu.get("sample_count", 0) or 0))
         return {
             "id": str(record.get("interaction_id", interaction_dir.name)),
             "interactionId": str(
@@ -1292,45 +1228,19 @@ class ModificationDatasetCollector:
             "durationSeconds": duration_ms / 1000,
             "durationLabel": f"{duration_ms / 1000:.1f} 秒",
             "audioPath": str(audio_path),
+            "recordPath": str(interaction_dir / "record.json"),
+            "hasImu": imu_path.is_file() and imu_sample_count > 0,
+            "imuSampleCount": imu_sample_count,
+            "dataSummary": (
+                f"音频已保存 · IMU {imu_sample_count} 条"
+                if imu_path.is_file() and imu_sample_count > 0
+                else "音频已保存 · IMU 未采集"
+            ),
             "error": str(asr.get("error", "") or ""),
             "mode": str(record.get("mode", {}).get("selected", "") or ""),
             "outcome": str(record.get("outcome", {}).get("status", "") or ""),
             "candidateText": candidate_text,
             "preferenceEligible": preference_eligible,
-        }
-
-    @staticmethod
-    def _legacy_history_entry(entry_dir: Path, metadata: dict) -> dict:
-        text = str(metadata.get("text", "") or "").strip()
-        recorded_at = str(metadata.get("recorded_at", "") or "")
-        try:
-            display_time = datetime.fromisoformat(recorded_at).astimezone().strftime(
-                "%m-%d %H:%M:%S"
-            )
-        except ValueError:
-            display_time = recorded_at
-        duration_ms = max(
-            0, int(float(metadata.get("audio_duration_ms", 0) or 0))
-        )
-        return {
-            "id": str(metadata.get("id", entry_dir.name)),
-            "interactionId": "",
-            "createdAt": recorded_at,
-            "displayTime": display_time,
-            "text": text or "（未识别出文字）",
-            "recognized": bool(text),
-            "backend": str(metadata.get("backend", "") or ""),
-            "model": str(metadata.get("model", "") or ""),
-            "durationSeconds": duration_ms / 1000,
-            "durationLabel": f"{duration_ms / 1000:.1f} 秒",
-            "audioPath": str(
-                entry_dir / str(metadata.get("audio_file", "utterance.wav"))
-            ),
-            "error": str(metadata.get("error", "") or ""),
-            "mode": "",
-            "outcome": "legacy",
-            "candidateText": text,
-            "preferenceEligible": False,
         }
 
     @staticmethod
@@ -1476,43 +1386,14 @@ class ModificationDatasetCollector:
 
     @staticmethod
     def _new_id(prefix: str) -> str:
-        stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
-        return f"{prefix}_{stamp}_{uuid.uuid4().hex[:8]}"
-
-    def _episode_dir(self, episode_id: str) -> Path:
-        return self.user_root / episode_id
-
-    def _episode_path(self, episode_id: str) -> Path:
-        return self._episode_dir(episode_id) / "episode.json"
-
-    def _attempt_dir(self, episode_id: str, attempt_id: str) -> Path:
-        return self._episode_dir(episode_id) / attempt_id
-
-    def _episode_data(self, episode_id: str) -> dict:
-        return self._read_json(self._episode_path(episode_id))
+        stamp = datetime.now().astimezone().strftime("%Y-%m-%d_%H-%M-%S-%f")
+        return f"{prefix}_{stamp}"
 
     def _prune_pending_locked(self) -> None:
         session_ids = sorted(set(self._pending_audio) | set(self._pending_asr))
         for session_id in session_ids[:-_MAX_PENDING_SESSIONS]:
             self._pending_audio.pop(session_id, None)
             self._pending_asr.pop(session_id, None)
-
-    def _finalize_episode_locked(
-        self,
-        episode_id: str,
-        *,
-        status: str,
-        final_text: str,
-        manually_corrected: bool,
-    ) -> None:
-        episode = self._episode_data(episode_id)
-        episode["final_user_text"] = str(final_text)
-        episode["final_status"] = str(status)
-        episode["manually_corrected"] = bool(manually_corrected)
-        episode["updated_at"] = _utc_now()
-        self._write_json(self._episode_path(episode_id), episode)
-        if self._active_episode_id == episode_id:
-            self._active_episode_id = None
 
     @staticmethod
     def _read_json(path: Path) -> dict:

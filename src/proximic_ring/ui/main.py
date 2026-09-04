@@ -51,9 +51,12 @@ def main(argv: list[str] | None = None) -> int:
 
             voice_action_hotkeys = WindowsVoiceActionHotkeys(
                 controller.dispatchVoiceAction,
-                is_review_active=lambda: controller.reviewPending,
                 is_interaction_active=lambda: controller.interactionCanCancel,
-                is_mode_correction_active=lambda: controller.modeCorrectionAvailable,
+                is_mode_correction_active=lambda: (
+                    controller.modeCorrectionAvailable
+                    or controller.processingModeCorrectionAvailable
+                ),
+                is_undo_active=lambda: controller.undoAvailable,
             )
             app.aboutToQuit.connect(voice_action_hotkeys.close)
         except BaseException as exc:
@@ -72,14 +75,17 @@ def main(argv: list[str] | None = None) -> int:
 
                 mac_hotkeys["instance"] = MacOSVoiceActionHotkeys(
                     controller.dispatchVoiceAction,
-                    is_review_active=lambda: controller.reviewPending,
                     is_interaction_active=lambda: controller.interactionCanCancel,
-                    is_mode_correction_active=lambda: controller.modeCorrectionAvailable,
+                    is_mode_correction_active=lambda: (
+                        controller.modeCorrectionAvailable
+                        or controller.processingModeCorrectionAvailable
+                    ),
+                    is_undo_active=lambda: controller.undoAvailable,
                 )
                 print("[voice-actions] macOS 语音交互按键已就绪")
             except BaseException as exc:
                 print(
-                    f"[voice-actions] macOS 编辑确认键不可用：{exc}",
+                    f"[voice-actions] macOS 语音交互快捷键不可用：{exc}",
                     file=sys.stderr,
                 )
 

@@ -10,6 +10,7 @@ from proximic_ring.desktop_target import (
     DesktopTextSnapshot,
     MacOSDesktopTextTarget,
     WindowsDesktopTextTarget,
+    _MacOSAccessibilityTextBridge,
     macos_texts_equivalent,
 )
 from proximic_ring.windows_uia import UIATextControlRef, WindowsUIATextBridge
@@ -62,6 +63,18 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
             calls.append(("ax-bounds", process_id))
             return 120, 240, 500, 180
 
+        def focused_caret_bounds(self, process_id):
+            calls.append(("ax-caret", process_id))
+            return 410, 286, 2, 19
+
+        def focused_selected_range(self, process_id):
+            calls.append(("ax-selection", process_id))
+            return 3, 0
+
+        def set_focused_selected_range(self, process_id, selection):
+            calls.append(("ax-selection-restore", process_id, selection))
+            return True
+
         def read_focused_value(self, process_id):
             calls.append(("ax-read", process_id))
             return None
@@ -87,6 +100,12 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
         target.screen_width,
         target.screen_height,
     ) == (120, 240, 500, 180)
+    assert (
+        target.caret_x,
+        target.caret_y,
+        target.caret_width,
+        target.caret_height,
+    ) == (410, 286, 2, 19)
     snapshot = adapter.capture_text(target)
     adapter.inject(target, "听写内容")
     adapter.replace(snapshot, "修改后内容")
@@ -95,6 +114,11 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
     assert snapshot == DesktopTextSnapshot(target, "外部文本框内容")
     assert clipboard.value == "修改后内容"
     assert ("command", MacOSDesktopTextTarget.KEY_V) in calls
+    assert ("ax-selection-restore", 4321, (3, 0)) in calls
+    assert ("press", MacOSDesktopTextTarget.KEY_RIGHT) not in calls
+    assert calls.index(("ax-selection-restore", 4321, (3, 0))) < calls.index(
+        ("command", MacOSDesktopTextTarget.KEY_V)
+    )
     assert ("inject", "听写内容") not in calls
     assert ("inject", "修改后内容") not in calls
     assert calls.count(("command", MacOSDesktopTextTarget.KEY_V)) == 2
@@ -198,6 +222,55 @@ def test_macos_target_prefers_accessibility_value_for_exact_replace(monkeypatch)
     assert ("ax-set", 4321, "新文本") in calls
 
 
+def test_macos_manual_observation_never_activates_selects_or_copies(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class Clipboard:
+        def snapshot(self):
+            raise AssertionError("manual observation must not touch the clipboard")
+
+    class Injector:
+        def command_key(self, _key):
+            raise AssertionError("manual observation must not send shortcuts")
+
+    class AccessibilityText:
+        def focused_bounds(self, process_id):
+            calls.append(("bounds", process_id))
+            return 100, 200, 500, 80
+
+        def read_focused_value(self, process_id):
+            calls.append(("read", process_id))
+            return "用户正在手写"
+
+    adapter = MacOSDesktopTextTarget(
+        Clipboard(),
+        injector=Injector(),
+        accessibility_text=AccessibilityText(),
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "编辑器"))
+    monkeypatch.setattr(
+        adapter,
+        "_activate",
+        lambda _target: (_ for _ in ()).throw(
+            AssertionError("manual observation must not activate the target")
+        ),
+    )
+    target = DesktopTargetRef(
+        0,
+        0,
+        "编辑器",
+        process_id=4321,
+        screen_x=100,
+        screen_y=200,
+        screen_width=500,
+        screen_height=80,
+    )
+
+    assert adapter.observe_text(target).text == "用户正在手写"
+    assert calls == [("bounds", 4321), ("read", 4321)]
+
+
 def test_macos_injection_waits_for_current_clipboard_before_paste(monkeypatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     calls: list[object] = []
@@ -293,6 +366,83 @@ def test_macos_target_rejects_own_process() -> None:
         adapter._activate(target)
 
 
+def test_macos_target_reads_live_caret_bounds_without_moving_focus(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    class AccessibilityText:
+        def focused_caret_bounds(self, process_id):
+            assert process_id == 4321
+            return 410, 242, 2, 19
+
+    adapter = MacOSDesktopTextTarget(
+        object(),
+        injector=object(),
+        accessibility_text=AccessibilityText(),
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "编辑器"))
+    target = DesktopTargetRef(0, 0, "编辑器", process_id=4321)
+
+    assert adapter.caret_bounds(target) == (410, 242, 2, 19)
+
+
+def test_macos_target_uses_last_pointer_when_editor_hides_ax_caret(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    class AccessibilityText:
+        def focused_bounds(self, _process_id):
+            return 100, 200, 500, 100
+
+        def focused_caret_bounds(self, _process_id):
+            return 0, 0, 0, 0
+
+    adapter = MacOSDesktopTextTarget(
+        object(),
+        injector=object(),
+        accessibility_text=AccessibilityText(),
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "编辑器"))
+    monkeypatch.setattr(adapter, "_pointer_position", lambda: (320, 245))
+
+    target = adapter.capture_reference()
+
+    assert (target.caret_x, target.caret_y, target.caret_height) == (320, 245, 18)
+
+
+def test_macos_caret_search_walks_from_web_child_to_editable_parent() -> None:
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+    released: list[int] = []
+
+    class Services:
+        @staticmethod
+        def AXUIElementCreateApplication(_process_id):
+            return 1
+
+        @staticmethod
+        def AXUIElementCopyAttributeValue(element, attribute, output):
+            if element == 1 and attribute == 101:
+                output._obj.value = 10
+                return 0
+            if element == 10 and attribute == 102:
+                output._obj.value = 20
+                return 0
+            return 1
+
+    bridge._application_services = Services()
+    bridge._cf_string = lambda value: {
+        "AXFocusedUIElement": 101,
+        "AXParent": 102,
+    }[value]
+    bridge._element_caret_bounds = lambda element: (
+        (410, 242, 2, 19) if element == 20 else (0, 0, 0, 0)
+    )
+    bridge._release = lambda *values: released.extend(
+        int(value) for value in values if value
+    )
+
+    assert bridge.focused_caret_bounds(4321) == (410, 242, 2, 19)
+    assert 20 in released
+
+
 def test_macos_undo_targets_the_locked_external_control() -> None:
     adapter = object.__new__(MacOSDesktopTextTarget)
     target = DesktopTargetRef(1, 2, "测试窗口", process_id=30)
@@ -365,6 +515,57 @@ def test_capture_retries_transient_empty_clipboard_and_restores_original() -> No
     assert snapshot == DesktopTextSnapshot(target, "文本框内容")
     assert clipboard.value == "用户原剪贴板"
     assert calls[-1] == ("restore", "用户原剪贴板")
+
+
+def test_macos_explicit_clear_can_verify_an_empty_control(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class Clipboard:
+        value = "用户原剪贴板"
+
+        def snapshot(self):
+            return self.value
+
+        def restore(self, snapshot):
+            self.value = snapshot
+
+        def set_text(self, text):
+            self.value = text
+
+        def text(self):
+            return self.value
+
+    class Injector:
+        def require_accessibility(self):
+            return None
+
+        def command_key(self, key):
+            calls.append(("command", key))
+
+    class AccessibilityText:
+        def read_focused_value(self, _process_id):
+            return None
+
+        def focused_selected_range(self, _process_id):
+            return 0, 0
+
+        def set_focused_selected_range(self, _process_id, _selection):
+            return True
+
+    adapter = MacOSDesktopTextTarget(
+        Clipboard(),
+        injector=Injector(),
+        copy_timeout_s=0.2,
+        accessibility_text=AccessibilityText(),
+    )
+    target = DesktopTargetRef(0, 0, "编辑器", process_id=4321)
+    monkeypatch.setattr(adapter, "_activate", lambda _target: None)
+
+    snapshot = adapter.capture_text_allowing_empty(target)
+
+    assert snapshot.text == ""
+    assert calls.count(("command", MacOSDesktopTextTarget.KEY_C)) == 1
 
 
 def test_replace_empty_text_selects_all_and_clears_field() -> None:
@@ -446,6 +647,23 @@ def test_codex_capture_reads_only_uia_composer_without_clipboard() -> None:
     snapshot = adapter.capture_text(target)
 
     assert snapshot == DesktopTextSnapshot(target, "只读取当前提问框")
+    assert calls == [("read", target.uia_control, 10)]
+
+
+def test_windows_manual_observation_uses_only_uia() -> None:
+    adapter = object.__new__(WindowsDesktopTextTarget)
+    calls: list[object] = []
+
+    class UIA:
+        def read_text(self, control, window_handle):
+            calls.append(("read", control, window_handle))
+            return "用户正在手写"
+
+    adapter._uia = UIA()
+    adapter._clipboard = object()
+    target = _codex_target()
+
+    assert adapter.observe_text(target).text == "用户正在手写"
     assert calls == [("read", target.uia_control, 10)]
 
 

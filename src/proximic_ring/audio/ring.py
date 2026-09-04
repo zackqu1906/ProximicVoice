@@ -92,6 +92,8 @@ class RingAudioSource(AudioSource):
 
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_blocks)
         self._pending = np.empty(0, dtype=np.float32)
+        self._pending_start_monotonic_ns: int | None = None
+        self.last_read_end_monotonic_ns: int | None = None
         self._stop = threading.Event()
         self._connected_ready = threading.Event()
         self._start_stream = threading.Event()
@@ -129,6 +131,8 @@ class RingAudioSource(AudioSource):
 
         self._clear_queue()
         self._pending = np.empty(0, dtype=np.float32)
+        self._pending_start_monotonic_ns = None
+        self.last_read_end_monotonic_ns = None
         self._error = None
         self.capture_path = None
         self.pcm_callbacks = 0
@@ -203,6 +207,8 @@ class RingAudioSource(AudioSource):
             raise RuntimeError(f"Ring audio stream failed: {self._error}") from self._error
         self._clear_queue()
         self._pending = np.empty(0, dtype=np.float32)
+        self._pending_start_monotonic_ns = None
+        self.last_read_end_monotonic_ns = None
         if self._stream_paused.is_set():
             self._buffer_audio.set()
             self._ready.clear()
@@ -308,8 +314,16 @@ class RingAudioSource(AudioSource):
             if isinstance(item, BaseException):
                 raise RuntimeError(f"Ringo audio stream failed: {item}") from item
 
+            block_end_monotonic_ns: int | None = None
+            if isinstance(item, tuple) and len(item) == 2:
+                item, block_end_monotonic_ns = item
             block = np.asarray(item, dtype=np.float32).reshape(-1)
             if block.size:
+                if self._pending.size == 0:
+                    end_ns = int(block_end_monotonic_ns or time.monotonic_ns())
+                    self._pending_start_monotonic_ns = end_ns - int(
+                        block.size * 1_000_000_000 / self.sample_rate
+                    )
                 self._pending = np.concatenate((self._pending, block))
 
         if self._pending.size == 0:
@@ -318,6 +332,17 @@ class RingAudioSource(AudioSource):
         take = min(frames, int(self._pending.size))
         out = self._pending[:take].copy()
         self._pending = self._pending[take:]
+        start_ns = self._pending_start_monotonic_ns
+        if start_ns is None:
+            start_ns = time.monotonic_ns() - int(
+                take * 1_000_000_000 / self.sample_rate
+            )
+        self.last_read_end_monotonic_ns = start_ns + int(
+            take * 1_000_000_000 / self.sample_rate
+        )
+        self._pending_start_monotonic_ns = (
+            self.last_read_end_monotonic_ns if self._pending.size else None
+        )
         return out
 
     def _on_pcm(self, frame_seq: int, pcm: bytes) -> None:
@@ -336,6 +361,7 @@ class RingAudioSource(AudioSource):
             return
 
         now = time.monotonic()
+        now_ns = time.monotonic_ns()
         self.pcm_callbacks += 1
         self.samples_received += int(block.size)
         self._last_pcm_monotonic = now
@@ -350,7 +376,7 @@ class RingAudioSource(AudioSource):
         self._fresh_pcm.set()
         if self._buffer_audio.is_set():
             try:
-                self._queue.put_nowait(block)
+                self._queue.put_nowait((block, now_ns))
             except queue.Full:
                 self._signal_error(
                     RuntimeError(

@@ -102,6 +102,13 @@ class StreamingASRWorker:
         x = np.asarray(final_audio_16k, dtype=np.float32).reshape(-1).copy()
         self._queue.put(("end", x, time.perf_counter()))
 
+    def discard(self, captured_audio_16k: np.ndarray) -> None:
+        """End only the live backend session without emitting a final result."""
+        del captured_audio_16k
+        self._queue.put(
+            ("discard", np.empty(0, dtype=np.float32), time.perf_counter())
+        )
+
     def abort(self) -> None:
         self._abort_requested.set()
 
@@ -317,6 +324,13 @@ class StreamingASRWorker:
                         chunk_ready_time_s=chunk_ready_time_s,
                     )
                     self._session_samples = 0
+                    self._session_model_started_time_s = None
+                elif kind == "discard":
+                    abort_backend = getattr(self.backend, "abort", None)
+                    if callable(abort_backend):
+                        abort_backend()
+                    self._session_samples = 0
+                    self._session_failed = False
                     self._session_model_started_time_s = None
                 else:  # pragma: no cover - internal invariant
                     raise RuntimeError(f"Unknown streaming ASR worker message: {kind}")

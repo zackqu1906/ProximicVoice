@@ -51,7 +51,7 @@ def test_final_utterance_blocks_next_recognition_until_routing_and_input_finish(
             model_output="dictation",
         )
     )
-    assert controller.modeCorrectionAvailable is True
+    assert controller.modeCorrectionAvailable is False
     assert controller._interaction_recognition_suspended is True
     controller._dictation_commit_timer.stop()
     controller._commit_pending_dictation()

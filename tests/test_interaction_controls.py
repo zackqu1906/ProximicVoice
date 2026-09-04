@@ -33,7 +33,7 @@ def test_overlay_starts_on_detected_voice_and_cancel_ignores_stale_asr(
 
     controller._apply_runtime_status("[ASR] START t=1.000s (pre-roll=0.40s)")
     assert controller.transcriptVisible is True
-    assert controller.transcriptText == "正在聆听…"
+    assert controller.transcriptText == "正在收听语音"
     assert controller.interactionState == "listening"
     assert controller.interactionCanCancel is True
 
@@ -45,7 +45,96 @@ def test_overlay_starts_on_detected_voice_and_cancel_ignores_stale_asr(
 
     controller._apply_runtime_status("[ASR] START t=2.000s (pre-roll=0.40s)")
     assert controller.interactionState == "listening"
-    assert controller.transcriptText == "正在聆听…"
+    assert controller.transcriptText == "正在收听语音"
+    _close(controller)
+
+
+def test_processing_overlay_shows_recognized_edit_command_only(
+    tmp_path, monkeypatch
+):
+    controller = _controller(tmp_path, monkeypatch)
+
+    assert controller._processing_overlay_text(
+        "edit", "  把这句   改得更正式  "
+    ) == "正在处理文本 · 指令：把这句 改得更正式"
+    assert controller._processing_overlay_text(
+        "dictation", "这是听写内容"
+    ) == "正在处理文本"
+    _close(controller)
+
+
+def test_processing_edit_can_be_switched_directly_to_dictation(
+    tmp_path, monkeypatch
+):
+    import json
+
+    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.text_processing import TextProcessingResult
+    from proximic_ring.ui.controller import _AutoInteraction
+
+    controller = _controller(tmp_path, monkeypatch)
+    target = DesktopTargetRef(1, 2, "编辑器", process_id=30)
+
+    class Desktop:
+        def __init__(self):
+            self.injected = []
+
+        def inject(self, captured, text):
+            assert captured == target
+            self.injected.append(text)
+
+    desktop = Desktop()
+    controller._desktop_target = desktop
+    controller._desktop_output = True
+    result = TextProcessingResult(
+        request_id=0,
+        session_id=8,
+        mode="dictation",
+        raw_text="这是要输入的话",
+        final_text="这是要输入的话",
+        latency_s=0.0,
+        used_llm=False,
+    )
+    interaction = _AutoInteraction(
+        route_id=80,
+        session_id=8,
+        raw_text=result.raw_text,
+        target=target,
+        selected_mode="edit",
+        routed_at=time.monotonic(),
+        results={"dictation": result},
+        preparing=False,
+        classified=True,
+        routed_by_model=True,
+    )
+    controller._active_auto_interaction = interaction
+    controller._transcript_visible = True
+    controller._transcript_text = controller._processing_overlay_text(
+        "edit", result.raw_text
+    )
+    controller._set_interaction_state("processing")
+
+    controller._schedule_processing_mode_correction("edit", interaction)
+    assert controller._processing_mode_correction_timer.isActive() is True
+    assert controller.processingModeCorrectionAvailable is False
+    controller._reveal_processing_mode_correction()
+    assert controller.processingModeCorrectionAvailable is True
+    controller.switchCurrentInputMode()
+
+    assert desktop.injected == ["这是要输入的话"]
+    assert controller._latest_operation().mode == "dictation"
+    assert controller.processingModeCorrectionAvailable is False
+    interaction_id = controller._modification_dataset.interaction_id_for_session(8)
+    record = json.loads(
+        (
+            controller._modification_dataset.interactions_root
+            / interaction_id
+            / "record.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert record["mode"]["selected"] == "dictation"
+    assert record["mode"]["negative_mode"] == "edit"
+    assert record["mode"]["label_source"] == "explicit_tab"
     _close(controller)
 
 
@@ -61,7 +150,7 @@ def test_empty_final_shows_no_text_then_closes_and_resumes(
     controller._apply_runtime_update("", True, "", 11)
 
     assert controller.transcriptVisible is True
-    assert controller.transcriptText == "未识别到文字"
+    assert controller.transcriptText == "未识别到语音"
     assert controller.transcriptFinal is True
     assert controller.interactionState == "no_result"
     assert controller._hide_overlay_timer.isActive() is True
@@ -75,6 +164,126 @@ def test_empty_final_shows_no_text_then_closes_and_resumes(
     _close(controller)
 
 
+def test_pre_application_cancel_labels_near_field_not_asr(tmp_path, monkeypatch):
+    import json
+
+    controller = _controller(tmp_path, monkeypatch)
+    controller._recognition_enabled = True
+    controller._apply_runtime_status("[ASR] START t=1.000s")
+    controller._apply_runtime_session_started(7)
+
+    controller.cancelCurrentUtterance()
+
+    interaction_id = controller._modification_dataset.interaction_id_for_session(7)
+    record = json.loads(
+        (
+            controller._modification_dataset.interactions_root
+            / interaction_id
+            / "record.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert record["near_field"]["training_label"] == "negative"
+    assert record["near_field"]["label_source"] == "pre_application_cancel"
+    assert record["asr"]["training_label"] is None
+    _close(controller)
+
+
+def test_applied_operations_support_multiple_undo_steps(tmp_path, monkeypatch):
+    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.ui.controller import _AppliedInteraction
+
+    controller = _controller(tmp_path, monkeypatch)
+    target = DesktopTargetRef(1, 2, "编辑器", process_id=30)
+
+    class Desktop:
+        def __init__(self):
+            self.text = "ABC"
+            self.foreground = True
+
+        def replace(self, snapshot, text):
+            assert snapshot.target == target
+            self.text = text
+
+        def is_foreground(self, captured):
+            assert captured == target
+            return self.foreground
+
+    desktop = Desktop()
+    controller._desktop_target = desktop
+    controller._show_applied_interaction(
+        _AppliedInteraction(
+            "edit", target, 1, 0, "第一次", "AB",
+            DesktopTextSnapshot(target, "A"), summary="第一次修改",
+        ),
+        message="第一次已应用",
+    )
+    controller._show_applied_interaction(
+        _AppliedInteraction(
+            "edit", target, 2, 0, "第二次", "ABC",
+            DesktopTextSnapshot(target, "AB"), summary="第二次修改",
+        ),
+        message="第二次已应用",
+    )
+    assert controller.undoDepth == 2
+    assert controller.appliedActionText == "第二次修改"
+
+    controller.undoLastApplied()
+    assert desktop.text == "AB"
+    assert controller.undoDepth == 1
+    assert controller.appliedActionText == "第一次修改"
+    controller.undoLastApplied()
+    assert desktop.text == "A"
+    assert controller.undoDepth == 0
+
+    desktop.foreground = False
+    controller._show_applied_interaction(
+        _AppliedInteraction(
+            "edit", target, 3, 0, "第三次", "AB",
+            DesktopTextSnapshot(target, "A"), summary="第三次修改",
+        ),
+        message="第三次已应用",
+    )
+    controller._poll_applied_target_foreground()
+    assert controller.appliedActionVisible is False
+    _close(controller)
+
+
+def test_applied_action_uses_post_application_caret_bounds(tmp_path, monkeypatch):
+    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.ui.controller import _AppliedInteraction
+
+    controller = _controller(tmp_path, monkeypatch)
+    target = DesktopTargetRef(
+        1,
+        2,
+        "编辑器",
+        process_id=30,
+        screen_x=100,
+        screen_y=200,
+        screen_width=500,
+        screen_height=100,
+    )
+
+    class Desktop:
+        def caret_bounds(self, captured):
+            assert captured == target
+            return 410, 242, 2, 19
+
+    controller._desktop_target = Desktop()
+    controller._show_applied_interaction(
+        _AppliedInteraction(
+            "dictation", target, 1, 0, "测试", "测试", summary="已输入"
+        ),
+        message="听写已应用",
+    )
+
+    assert controller.appliedPopupCaretX == 410
+    assert controller.appliedPopupCaretY == 242
+    assert controller.appliedPopupCaretWidth == 2
+    assert controller.appliedPopupCaretHeight == 19
+    _close(controller)
+
+
 def test_success_recommends_recent_asr_failures_and_writes_link_index(
     tmp_path, monkeypatch
 ):
@@ -85,6 +294,7 @@ def test_success_recommends_recent_asr_failures_and_writes_link_index(
     from proximic_ring.ui.controller import _AppliedInteraction
 
     controller = _controller(tmp_path, monkeypatch)
+    controller.smartAssociationEnabled = True
     controller._llm_enabled = False
     target = DesktopTargetRef(
         1,
@@ -144,7 +354,7 @@ def test_success_recommends_recent_asr_failures_and_writes_link_index(
     assert controller.associationRecommendationVisible is True
     assert controller.associationRecommendationTitle == "发现 2 条可关联的听写"
     assert controller.undoAvailable is True
-    assert controller.undoRemainingSeconds == 5
+    assert controller.undoDepth == 1
     assert controller.associationPopupTargetX == 120
     assert controller.associationPopupTargetY == 240
     controller.performAssociationAction("recommendation.details.open", "")
@@ -156,7 +366,7 @@ def test_success_recommends_recent_asr_failures_and_writes_link_index(
     assert controller.associationRecommendationVisible is True
     controller.performAssociationAction("recommendation.accept", "")
     assert controller.undoAvailable is False
-    assert controller.undoRemainingSeconds == 0
+    assert controller.undoDepth == 0
 
     rows = controller._modification_dataset.load_associations()
     assert len(rows) == 1
@@ -179,7 +389,7 @@ def test_success_recommends_recent_asr_failures_and_writes_link_index(
     _close(controller)
 
 
-def test_applied_result_loses_undo_after_five_second_window(
+def test_applied_result_remains_on_multi_undo_stack(
     tmp_path, monkeypatch
 ):
     import json
@@ -223,14 +433,10 @@ def test_applied_result_loses_undo_after_five_second_window(
         message="听写已应用到原文本框",
     )
     assert controller.undoAvailable is True
-    assert controller.transcriptVisible is True
-
-    controller._undo_deadline = time.monotonic() - 0.1
-    controller._tick_undo_window()
-
-    assert controller.undoAvailable is False
-    assert controller.undoRemainingSeconds == 0
     assert controller.transcriptVisible is False
+    assert controller.appliedActionVisible is True
+    assert controller.undoDepth == 1
+    assert not hasattr(controller, "_undo_deadline")
     interaction_id = collector.interaction_id_for_session(9)
     record = json.loads(
         (collector.interactions_root / interaction_id / "record.json").read_text(
@@ -245,6 +451,7 @@ def test_applied_result_loses_undo_after_five_second_window(
 def test_auto_route_prepares_both_modes_and_switch_uses_cached_edit(
     tmp_path, monkeypatch
 ):
+    import json
     from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
     from proximic_ring.text_processing import (
         InputModeRoutingResult,
@@ -271,15 +478,27 @@ def test_auto_route_prepares_both_modes_and_switch_uses_cached_edit(
     target = DesktopTargetRef(1, 2, "编辑器")
 
     class Desktop:
+        def __init__(self):
+            self.text = "旧文本"
+
         def capture_text(self, captured):
             assert captured == target
-            return DesktopTextSnapshot(target, "旧文本")
+            return DesktopTextSnapshot(target, self.text)
+
+        def inject(self, captured, text):
+            assert captured == target
+            self.text += text
+
+        def replace(self, snapshot, text):
+            assert snapshot.target == target
+            self.text = text
 
         def release_selection(self, _target):
             return None
 
     controller._text_processing_worker = Worker()
-    controller._desktop_target = Desktop()
+    desktop = Desktop()
+    controller._desktop_target = desktop
     controller._desktop_output = True
     controller._llm_enabled = True
     controller._input_routing_mode = "auto"
@@ -327,14 +546,30 @@ def test_auto_route_prepares_both_modes_and_switch_uses_cached_edit(
             True,
         )
     )
+    controller._dictation_commit_timer.stop()
+    controller._commit_pending_dictation()
     assert controller.modeCorrectionAvailable is True
+    assert controller.appliedActionVisible is True
+    assert controller.modeCorrectionLabel == "刚刚是指令"
     before = len(submitted)
     controller.switchCurrentInputMode()
     assert len(submitted) == before
-    assert controller.transcriptMode == "edit"
-    assert controller.reviewPending is True
-    assert controller.editAutoConfirmText
-    controller.cancelCurrentUtterance()
+    assert controller._latest_operation().mode == "edit"
+    assert desktop.text == "新的正式文本"
+    assert controller.modeCorrectionLabel == "刚刚是输入内容"
+    interaction_id = controller._modification_dataset.interaction_id_for_session(21)
+    record = json.loads(
+        (
+            controller._modification_dataset.interactions_root
+            / interaction_id
+            / "record.json"
+        ).read_text(encoding="utf-8")
+    )
+    assert record["mode"]["selected"] == "edit"
+    assert record["mode"]["negative_mode"] == "dictation"
+    assert record["mode"]["label_source"] == "explicit_tab"
+    assert record["asr"]["training_label"] == "positive"
+    assert record["near_field"]["training_label"] == "positive"
     _close(controller)
 
 
@@ -368,6 +603,9 @@ def test_auto_dictation_commits_asr_without_waiting_for_llm_candidates(
     class Desktop:
         def capture_text(self, captured):
             return DesktopTextSnapshot(captured, "旧文本")
+
+        def inject(self, _captured, _text):
+            return None
 
         def inject(self, captured, text):
             injected.append((captured, text))
@@ -403,9 +641,10 @@ def test_auto_dictation_commits_asr_without_waiting_for_llm_candidates(
     controller._commit_pending_dictation()
 
     assert injected == [(target, "直接输入这句话")]
-    assert set(cancelled) == {request.request_id for request in submitted}
+    assert cancelled == []
     assert controller._active_auto_interaction is None
     assert controller.interactionState == "applied"
+    assert controller.modeCorrectionAvailable is True
     _close(controller)
 
 
@@ -461,8 +700,8 @@ def test_dictation_injection_failure_is_visible_in_overlay(tmp_path, monkeypatch
 
     assert controller.interactionState == "error"
     assert copied == ["内容"]
-    assert "未注入" not in controller.transcriptText
-    assert "注入失败：文本框已关闭" in controller.transcriptText
+    assert controller.transcriptText == "未能输入文本"
+    assert "注入失败：文本框已关闭" in controller.logText
     assert controller._hide_overlay_timer.isActive() is True
     _close(controller)
 
@@ -502,13 +741,13 @@ def test_undo_only_records_failure_and_does_not_show_association_prompt(
     )
     controller._set_interaction_state("review")
 
-    controller.confirmEdit()
+    controller._apply_edit_result()
     controller.undoLastApplied()
 
     assert desktop.text == "原文"
     assert controller.associationRecommendationVisible is False
-    assert controller.transcriptVisible is True
-    assert controller._hide_overlay_timer.isActive() is True
+    assert controller.transcriptVisible is False
+    assert controller.undoAvailable is False
     _close(controller)
 
 
@@ -583,12 +822,15 @@ def test_manual_edit_after_failed_llm_creates_recommended_dpo_link(
     class Desktop:
         text = "原文"
 
-        def capture_text(self, captured):
+        def observe_text(self, captured):
             assert captured == target
             return DesktopTextSnapshot(captured, self.text)
 
+        def capture_text(self, _target):
+            raise AssertionError("manual observation must not select or copy text")
+
         def release_selection(self, _target):
-            return None
+            raise AssertionError("manual observation must not move the caret")
 
     desktop = Desktop()
     controller._desktop_target = desktop
@@ -748,6 +990,9 @@ def test_auto_edit_failure_is_cached_until_classification_finishes(
         def capture_text(self, captured):
             return DesktopTextSnapshot(captured, "旧文本")
 
+        def inject(self, _captured, _text):
+            return None
+
         def release_selection(self, _target):
             return None
 
@@ -774,7 +1019,6 @@ def test_auto_edit_failure_is_cached_until_classification_finishes(
         )
     )
 
-    assert controller.reviewPending is False
     assert controller.modeCorrectionAvailable is False
     assert controller.interactionState == "processing"
 
@@ -788,16 +1032,12 @@ def test_auto_edit_failure_is_cached_until_classification_finishes(
             model_output="dictation",
         )
     )
+    controller._dictation_commit_timer.stop()
+    controller._commit_pending_dictation()
     assert controller.modeCorrectionAvailable is True
-    assert controller.reviewPending is False
     controller.switchCurrentInputMode()
-    assert controller.reviewFailed is True
-    assert controller.interactionCanCancel is True
-    assert "Tab 改为听写" in controller.transcriptText
-    controller.switchCurrentInputMode()
-    assert controller.reviewPending is False
-    assert controller.transcriptMode == "dictation"
-    controller.cancelCurrentUtterance()
+    assert controller._latest_operation().mode == "dictation"
+    assert controller.appliedActionText == "另一种处理方式不可用"
     _close(controller)
 
 
@@ -842,11 +1082,7 @@ def test_auto_error_without_edit_target_still_allows_switch_and_cancel(
 
     assert controller.interactionState == "error"
     assert controller.interactionCanCancel is True
-    assert controller.modeCorrectionAvailable is True
-    controller.switchCurrentInputMode()
-    assert controller.transcriptMode == "dictation"
-    controller.cancelCurrentUtterance()
-    assert controller.interactionState == "cancelled"
+    assert controller.modeCorrectionAvailable is False
     _close(controller)
 
 
@@ -882,15 +1118,12 @@ def test_failed_edit_cancel_skips_readback_and_survives_release_error(
         result, DesktopTextSnapshot(target, "旧文本")
     )
 
-    controller.cancelCurrentUtterance()
-
-    assert controller.reviewPending is False
-    assert controller.interactionState == "cancelled"
-    assert "取消修改时释放目标失败" in controller.logText
+    assert controller.interactionState == "error"
+    assert controller.interactionCanCancel is False
     _close(controller)
 
 
-def test_edit_preview_auto_confirms_and_manual_confirm_can_run_first(
+def test_edit_result_applies_immediately_without_preview_confirmation(
     tmp_path, monkeypatch
 ):
     from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
@@ -915,9 +1148,71 @@ def test_edit_preview_auto_confirms_and_manual_confirm_can_run_first(
         31, 1, "edit", "改一下", "新文本", 0.1, True, target_text="旧文本"
     )
     controller._begin_edit_review(result, DesktopTextSnapshot(target, "旧文本"))
-    assert controller.editAutoConfirmText.startswith("2.0")
-    controller._edit_auto_confirm_deadline = time.monotonic() - 0.01
-    controller._tick_edit_auto_confirm()
     assert replacements == [("旧文本", "新文本")]
-    assert controller.reviewPending is False
+    assert controller.interactionState == "applied"
+    assert controller.undoAvailable is True
+    assert controller.appliedActionText == '已将“旧”改为“新”'
+    assert not hasattr(controller, "confirmEdit")
+    _close(controller)
+
+
+def test_explicit_full_delete_finishes_and_enters_undo_stack(
+    tmp_path, monkeypatch
+):
+    import proximic_ring.ui.controller as controller_module
+    from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
+    from proximic_ring.text_processing import TextProcessingResult
+
+    monkeypatch.setattr(controller_module.sys, "platform", "darwin")
+    controller = _controller(tmp_path, monkeypatch)
+    target = DesktopTargetRef(1, 2, "编辑器", process_id=123)
+
+    class Desktop:
+        def __init__(self):
+            self.text = "需要删除的整句话。"
+
+        def replace(self, _snapshot, text):
+            self.text = text
+
+        def capture_text(self, _target):
+            raise AssertionError("清空结果不应使用非空文本读取路径")
+
+        def capture_text_allowing_empty(self, captured):
+            assert captured == target
+            return DesktopTextSnapshot(captured, self.text)
+
+        def release_selection(self, _target):
+            return None
+
+        def caret_bounds(self, _target):
+            return 320, 245, 2, 18
+
+    desktop = Desktop()
+    controller._desktop_target = desktop
+    result = TextProcessingResult(
+        32,
+        2,
+        "edit",
+        "删除整句话",
+        "",
+        0.1,
+        True,
+        target_text="需要删除的整句话。",
+        model_output='{"modified_text":""}',
+    )
+
+    controller._begin_edit_review(
+        result,
+        DesktopTextSnapshot(target, "需要删除的整句话。"),
+        allow_empty=True,
+    )
+
+    assert desktop.text == ""
+    assert controller.interactionState == "applied"
+    assert controller.undoAvailable is True
+    assert controller.appliedActionText == "已清空当前文本"
+
+    controller.undoLastApplied()
+    assert desktop.text == "需要删除的整句话。"
+    assert controller.undoAvailable is False
     _close(controller)

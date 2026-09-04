@@ -68,6 +68,7 @@ def test_ring_pcm_callback_becomes_float32_audio():
     )
     assert source.pcm_callbacks == 1
     assert source.samples_received == 4
+    assert isinstance(source.last_read_end_monotonic_ns, int)
 
     diagnostics = source.diagnostic_summary()
     assert "encoding=opus" in diagnostics

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import time
 from typing import Callable, Iterable
 
 import numpy as np
@@ -85,6 +86,8 @@ class ProximitySessionController:
         self._pending_sink_audio: list[np.ndarray] = []
         self._sink_samples = 0
         self._session_start_sample = 0
+        self._session_start_monotonic_ns: int | None = None
+        self._last_block_end_monotonic_ns: int | None = None
         self._last_stage1_sample: int | None = None
         self._last_activate_sample: int | None = None
         self._consecutive_rejects = 0
@@ -99,12 +102,26 @@ class ProximitySessionController:
     def consecutive_rejects(self) -> int:
         return self._consecutive_rejects
 
-    def process(self, block: np.ndarray, events: Iterable[DetectionEvent]) -> None:
+    @property
+    def audio_start_monotonic_ns(self) -> int | None:
+        """Host-clock timestamp corresponding to sample zero of the utterance."""
+        return self._session_start_monotonic_ns
+
+    def process(
+        self,
+        block: np.ndarray,
+        events: Iterable[DetectionEvent],
+        *,
+        block_end_monotonic_ns: int | None = None,
+    ) -> None:
         x = np.asarray(block, dtype=np.float32).reshape(-1)
         if x.size == 0:
             return
         if not np.all(np.isfinite(x)):
             raise ValueError("ASR controller audio contains NaN or infinity")
+        self._last_block_end_monotonic_ns = int(
+            block_end_monotonic_ns or time.monotonic_ns()
+        )
 
         # run_source uses the same block for detector.feed() and for us.  Keep
         # an absolute sample clock matching Stage1Event/Stage2Event.sample_index.
@@ -192,6 +209,8 @@ class ProximitySessionController:
         self._utterance_samples = 0
         self._pending_sink_audio = []
         self._sink_samples = 0
+        self._session_start_monotonic_ns = None
+        self._last_block_end_monotonic_ns = None
         self._consecutive_rejects = 0
         self._first_reject_cutoff_sample = None
         abort_sink = getattr(self.sink, "abort", None)
@@ -201,12 +220,22 @@ class ProximitySessionController:
     def discard_current(self) -> None:
         """Cancel only the current utterance and stay ready for the next one.
 
-        Unlike :meth:`abort`, this deliberately does not close/abort the ASR
-        sink.  The next ``sink.start`` establishes a fresh backend session.
-        Unlike :meth:`reset`, it never submits the cancelled audio as a final.
+        The captured waveform is offered to data-only observers through
+        ``sink.discard`` but is never submitted as a completed ASR utterance.
+        The next ``sink.start`` establishes a fresh backend session.
         """
         if self._active:
             self._log("[ASR] CANCEL reason=user-request")
+            captured = (
+                np.concatenate(self._utterance).astype(np.float32, copy=False)
+                if self._utterance
+                else np.empty(0, dtype=np.float32)
+            )
+            discard_sink = getattr(self.sink, "discard", None)
+            if callable(discard_sink):
+                # Keep audio_start_monotonic_ns alive until observers have
+                # sliced the matching IMU interval.
+                discard_sink(captured)
         self._history.clear()
         self._history_count = 0
         self._stream_samples = 0
@@ -216,6 +245,8 @@ class ProximitySessionController:
         self._pending_sink_audio = []
         self._sink_samples = 0
         self._session_start_sample = 0
+        self._session_start_monotonic_ns = None
+        self._last_block_end_monotonic_ns = None
         self._last_stage1_sample = None
         self._last_activate_sample = None
         self._consecutive_rejects = 0
@@ -239,6 +270,8 @@ class ProximitySessionController:
         self._pending_sink_audio = []
         self._sink_samples = 0
         self._session_start_sample = 0
+        self._session_start_monotonic_ns = None
+        self._last_block_end_monotonic_ns = None
         self._last_stage1_sample = None
         self._last_activate_sample = None
         self._consecutive_rejects = 0
@@ -273,6 +306,10 @@ class ProximitySessionController:
         self._utterance_samples = sum(b.size for b in self._utterance)
         self._pending_sink_audio = []
         self._session_start_sample = self._stream_samples - self._utterance_samples
+        block_end_ns = self._last_block_end_monotonic_ns or time.monotonic_ns()
+        self._session_start_monotonic_ns = block_end_ns - int(
+            self._utterance_samples * 1_000_000_000 / self.sample_rate
+        )
 
         # The Stage1 trigger that led to this ACTIVATE happened stage2_delay
         # earlier.  Seed the inactivity heartbeat from that trigger.
@@ -304,6 +341,10 @@ class ProximitySessionController:
         self._utterance_samples = block.size
         self._pending_sink_audio = []
         self._session_start_sample = self._stream_samples - block.size
+        block_end_ns = self._last_block_end_monotonic_ns or time.monotonic_ns()
+        self._session_start_monotonic_ns = block_end_ns - int(
+            block.size * 1_000_000_000 / self.sample_rate
+        )
         # If the detector sees real proximity evidence during the hold it will
         # update this heartbeat.  Otherwise release naturally reaches the
         # existing inactivity endpoint and closes the manually-started session.
@@ -393,6 +434,7 @@ class ProximitySessionController:
         self._pending_sink_audio = []
         self._sink_samples = 0
         self._session_start_sample = self._stream_samples
+        self._session_start_monotonic_ns = None
         self._last_stage1_sample = None
         self._last_activate_sample = None
         self._consecutive_rejects = 0
@@ -435,19 +477,38 @@ class DirectASRSessionController:
         self._samples = 0
         self._stream_samples = 0
         self._active = False
+        self._session_start_monotonic_ns: int | None = None
+        self._last_block_end_monotonic_ns: int | None = None
 
-    def process(self, block: np.ndarray, _events: Iterable[DetectionEvent] = ()) -> None:
+    @property
+    def audio_start_monotonic_ns(self) -> int | None:
+        return self._session_start_monotonic_ns
+
+    def process(
+        self,
+        block: np.ndarray,
+        _events: Iterable[DetectionEvent] = (),
+        *,
+        block_end_monotonic_ns: int | None = None,
+    ) -> None:
         x = np.asarray(block, dtype=np.float32).reshape(-1)
         if x.size == 0:
             return
         if not np.all(np.isfinite(x)):
             raise ValueError("Direct ASR audio contains NaN or infinity")
+        self._last_block_end_monotonic_ns = int(
+            block_end_monotonic_ns or time.monotonic_ns()
+        )
         self._stream_samples += x.size
 
         if not self._active:
             self._active = True
             self._parts = [x.copy()]
             self._samples = x.size
+            self._session_start_monotonic_ns = (
+                self._last_block_end_monotonic_ns
+                - int(x.size * 1_000_000_000 / self.sample_rate)
+            )
             self._log(f"\n\n[ASR] START direct t={self._stream_samples / self.sample_rate:.3f}s")
             self.sink.start(x)
         else:
@@ -470,18 +531,30 @@ class DirectASRSessionController:
         self._parts = []
         self._samples = 0
         self._active = False
+        self._session_start_monotonic_ns = None
+        self._last_block_end_monotonic_ns = None
         abort_sink = getattr(self.sink, "abort", None)
         if callable(abort_sink):
             abort_sink()
 
     def discard_current(self) -> None:
-        """Drop one direct-ASR utterance without shutting down its sink."""
+        """Keep cancelled raw data without producing a final ASR result."""
         if self._active:
             self._log("[ASR] CANCEL direct reason=user-request")
+            captured = (
+                np.concatenate(self._parts).astype(np.float32, copy=False)
+                if self._parts
+                else np.empty(0, dtype=np.float32)
+            )
+            discard_sink = getattr(self.sink, "discard", None)
+            if callable(discard_sink):
+                discard_sink(captured)
         self._parts = []
         self._samples = 0
         self._stream_samples = 0
         self._active = False
+        self._session_start_monotonic_ns = None
+        self._last_block_end_monotonic_ns = None
 
     def close(self) -> None:
         self.flush()
@@ -496,6 +569,7 @@ class DirectASRSessionController:
         self._parts = []
         self._samples = 0
         self._active = False
+        self._session_start_monotonic_ns = None
 
     def _log(self, message: str) -> None:
         if self.on_state is not None:

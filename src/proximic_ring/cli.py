@@ -263,6 +263,7 @@ def _build_session_controller(
     desktop_should_inject=None,
     backend_cache=None,
     raw_audio_observer=None,
+    raw_session_start_observer=None,
 ):
     selected = _selected_asr_backends(args)
     if not selected:
@@ -353,7 +354,12 @@ def _build_session_controller(
     if raw_audio_observer is not None:
         # Dataset audio and ASR both receive the Controller's final cropped
         # 16 kHz waveform without a separate amplitude transform.
-        session_sinks.append(RawAudioObserverSessionSink(raw_audio_observer))
+        session_sinks.append(
+            RawAudioObserverSessionSink(
+                raw_audio_observer,
+                on_start=raw_session_start_observer,
+            )
+        )
 
     for name in selected:
         settings = ASRBackendSettings(

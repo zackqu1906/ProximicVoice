@@ -9,7 +9,7 @@ this module without changing ASR or LLM code.
 from __future__ import annotations
 
 import ctypes
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import os
 import sys
 import time
@@ -33,6 +33,14 @@ class _CGSize(ctypes.Structure):
     _fields_ = (("width", ctypes.c_double), ("height", ctypes.c_double))
 
 
+class _CGRect(ctypes.Structure):
+    _fields_ = (("origin", _CGPoint), ("size", _CGSize))
+
+
+class _CFRange(ctypes.Structure):
+    _fields_ = (("location", ctypes.c_long), ("length", ctypes.c_long))
+
+
 class ClipboardBridge(Protocol):
     """Small clipboard boundary supplied by the UI toolkit."""
 
@@ -54,6 +62,10 @@ class DesktopTargetRef:
     screen_y: int = 0
     screen_width: int = 0
     screen_height: int = 0
+    caret_x: int = 0
+    caret_y: int = 0
+    caret_width: int = 0
+    caret_height: int = 0
 
 
 @dataclass(frozen=True)
@@ -65,10 +77,13 @@ class DesktopTextSnapshot:
 class DesktopTextTarget(Protocol):
     def capture_reference(self) -> DesktopTargetRef: ...
     def capture_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot: ...
+    def observe_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot: ...
     def inject(self, target: DesktopTargetRef, text: str) -> None: ...
     def replace(self, snapshot: DesktopTextSnapshot, text: str) -> None: ...
     def undo(self, target: DesktopTargetRef) -> None: ...
     def release_selection(self, target: DesktopTargetRef) -> None: ...
+    def is_foreground(self, target: DesktopTargetRef) -> bool: ...
+    def caret_bounds(self, target: DesktopTargetRef) -> tuple[int, int, int, int]: ...
 
 
 def macos_texts_equivalent(actual: str, expected: str) -> bool:
@@ -121,12 +136,26 @@ class _MacOSAccessibilityTextBridge:
             ctypes.c_void_p,
         )
         application_services.AXUIElementSetAttributeValue.restype = ctypes.c_int
+        application_services.AXUIElementCopyParameterizedAttributeValue.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        application_services.AXUIElementCopyParameterizedAttributeValue.restype = (
+            ctypes.c_int
+        )
         application_services.AXValueGetValue.argtypes = (
             ctypes.c_void_p,
             ctypes.c_int,
             ctypes.c_void_p,
         )
         application_services.AXValueGetValue.restype = ctypes.c_bool
+        application_services.AXValueCreate.argtypes = (
+            ctypes.c_int,
+            ctypes.c_void_p,
+        )
+        application_services.AXValueCreate.restype = ctypes.c_void_p
         core_foundation.CFStringCreateWithCString.argtypes = (
             ctypes.c_void_p,
             ctypes.c_char_p,
@@ -193,6 +222,83 @@ class _MacOSAccessibilityTextBridge:
         finally:
             self._release(value, attribute, current_value, focused, application)
 
+    def focused_selected_range(self, process_id: int) -> tuple[int, int] | None:
+        """Read the current AX text selection without changing it."""
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        focused = ctypes.c_void_p()
+        value = ctypes.c_void_p()
+        focused_attribute = None
+        selected_attribute = None
+        try:
+            if not application:
+                return None
+            focused_attribute = self._cf_string("AXFocusedUIElement")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                application, focused_attribute, ctypes.byref(focused)
+            ) or not focused.value:
+                return None
+            selected_attribute = self._cf_string("AXSelectedTextRange")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                focused.value, selected_attribute, ctypes.byref(value)
+            ) or not value.value:
+                return None
+            selected_range = _CFRange()
+            if not self._application_services.AXValueGetValue(
+                value.value, 4, ctypes.byref(selected_range)
+            ):
+                return None
+            return int(selected_range.location), int(selected_range.length)
+        finally:
+            self._release(
+                value.value,
+                selected_attribute,
+                focused.value,
+                focused_attribute,
+                application,
+            )
+
+    def set_focused_selected_range(
+        self, process_id: int, selection: tuple[int, int]
+    ) -> bool:
+        """Restore a previously captured AX text selection/caret."""
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        focused = ctypes.c_void_p()
+        value = None
+        focused_attribute = None
+        selected_attribute = None
+        try:
+            if not application:
+                return False
+            focused_attribute = self._cf_string("AXFocusedUIElement")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                application, focused_attribute, ctypes.byref(focused)
+            ) or not focused.value:
+                return False
+            selected_attribute = self._cf_string("AXSelectedTextRange")
+            selected_range = _CFRange(
+                max(0, int(selection[0])), max(0, int(selection[1]))
+            )
+            value = self._application_services.AXValueCreate(
+                4, ctypes.byref(selected_range)
+            )
+            if not value:
+                return False
+            return not self._application_services.AXUIElementSetAttributeValue(
+                focused.value, selected_attribute, value
+            )
+        finally:
+            self._release(
+                value,
+                selected_attribute,
+                focused.value,
+                focused_attribute,
+                application,
+            )
+
     def focused_bounds(self, process_id: int) -> tuple[int, int, int, int]:
         """Return the focused accessibility element's global screen bounds."""
         application = self._application_services.AXUIElementCreateApplication(
@@ -247,6 +353,161 @@ class _MacOSAccessibilityTextBridge:
                 focused.value,
                 focused_attribute,
                 application,
+            )
+
+    def focused_caret_bounds(self, process_id: int) -> tuple[int, int, int, int]:
+        """Return the caret bounds, walking out of nested web-editor children."""
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        focused = ctypes.c_void_p()
+        focused_attribute = None
+        parent_attribute = None
+        owned_parents: list[int] = []
+        try:
+            if not application:
+                return 0, 0, 0, 0
+            focused_attribute = self._cf_string("AXFocusedUIElement")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                application, focused_attribute, ctypes.byref(focused)
+            ) or not focused.value:
+                return 0, 0, 0, 0
+            parent_attribute = self._cf_string("AXParent")
+            element = int(focused.value)
+            # Chromium, Electron and WebKit can expose the caret range on the
+            # editor, a nested text child, or one of its accessibility parents.
+            for _depth in range(7):
+                bounds = self._element_caret_bounds(element)
+                if bounds[3] > 0:
+                    return bounds
+                parent = ctypes.c_void_p()
+                if self._application_services.AXUIElementCopyAttributeValue(
+                    element, parent_attribute, ctypes.byref(parent)
+                ) or not parent.value:
+                    break
+                element = int(parent.value)
+                owned_parents.append(element)
+            return 0, 0, 0, 0
+        finally:
+            self._release(
+                *reversed(owned_parents),
+                parent_attribute,
+                focused.value,
+                focused_attribute,
+                application,
+            )
+
+    def _element_caret_bounds(self, element: int) -> tuple[int, int, int, int]:
+        selected_attribute = None
+        bounds_attribute = None
+        selected_value = ctypes.c_void_p()
+        try:
+            selected_attribute = self._cf_string("AXSelectedTextRange")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                element, selected_attribute, ctypes.byref(selected_value)
+            ) or not selected_value.value:
+                return self._text_marker_caret_bounds(element)
+            selected_range = _CFRange()
+            if not self._application_services.AXValueGetValue(
+                selected_value.value, 4, ctypes.byref(selected_range)
+            ):
+                return self._text_marker_caret_bounds(element)
+            bounds_attribute = self._cf_string("AXBoundsForRange")
+
+            def bounds_for_range(
+                location: int, length: int, *, use_right_edge: bool
+            ) -> tuple[int, int, int, int]:
+                range_value = None
+                value = ctypes.c_void_p()
+                try:
+                    text_range = _CFRange(max(0, location), max(0, length))
+                    range_value = self._application_services.AXValueCreate(
+                        4, ctypes.byref(text_range)
+                    )
+                    if not range_value:
+                        return 0, 0, 0, 0
+                    error = self._application_services.AXUIElementCopyParameterizedAttributeValue(
+                        element,
+                        bounds_attribute,
+                        range_value,
+                        ctypes.byref(value),
+                    )
+                    if error or not value.value:
+                        return 0, 0, 0, 0
+                    rect = _CGRect()
+                    if not self._application_services.AXValueGetValue(
+                        value.value, 3, ctypes.byref(rect)
+                    ):
+                        return 0, 0, 0, 0
+                    x = rect.origin.x + (rect.size.width if use_right_edge else 0)
+                    return (
+                        int(round(x)),
+                        int(round(rect.origin.y)),
+                        2,
+                        max(1, int(round(rect.size.height))),
+                    )
+                finally:
+                    self._release(value.value, range_value)
+
+            caret_location = max(
+                0, int(selected_range.location + selected_range.length)
+            )
+            exact = bounds_for_range(caret_location, 0, use_right_edge=False)
+            if exact[3] > 0:
+                return exact
+            if caret_location > 0:
+                trailing = bounds_for_range(
+                    caret_location - 1, 1, use_right_edge=True
+                )
+                if trailing[3] > 0:
+                    return trailing
+            return self._text_marker_caret_bounds(element)
+        finally:
+            self._release(
+                bounds_attribute, selected_value.value, selected_attribute
+            )
+
+    def _text_marker_caret_bounds(
+        self, element: int
+    ) -> tuple[int, int, int, int]:
+        """Fallback used by WebKit/Chromium accessibility text markers."""
+        selected_attribute = None
+        bounds_attribute = None
+        selected_value = ctypes.c_void_p()
+        bounds_value = ctypes.c_void_p()
+        try:
+            selected_attribute = self._cf_string("AXSelectedTextMarkerRange")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                element,
+                selected_attribute,
+                ctypes.byref(selected_value),
+            ) or not selected_value.value:
+                return 0, 0, 0, 0
+            bounds_attribute = self._cf_string("AXBoundsForTextMarkerRange")
+            if self._application_services.AXUIElementCopyParameterizedAttributeValue(
+                element,
+                bounds_attribute,
+                selected_value.value,
+                ctypes.byref(bounds_value),
+            ) or not bounds_value.value:
+                return 0, 0, 0, 0
+            rect = _CGRect()
+            if not self._application_services.AXValueGetValue(
+                bounds_value.value, 3, ctypes.byref(rect)
+            ):
+                return 0, 0, 0, 0
+            return (
+                int(round(rect.origin.x + rect.size.width)),
+                int(round(rect.origin.y)),
+                2,
+                max(1, int(round(rect.size.height))),
+            )
+        finally:
+            self._release(
+                bounds_value.value,
+                bounds_attribute,
+                selected_value.value,
+                selected_attribute,
             )
 
     def _focused_value(
@@ -342,15 +603,47 @@ class MacOSDesktopTextTarget:
         except BaseException:
             return 0, "当前光标"
 
+    @staticmethod
+    def _pointer_position() -> tuple[int, int]:
+        """Last-resort anchor for editors that hide all AX text geometry."""
+        try:
+            import Quartz
+
+            point = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+            return int(round(point.x)), int(round(point.y))
+        except BaseException:
+            return 0, 0
+
     def capture_reference(self) -> DesktopTargetRef:
         process_id, name = self._frontmost_application()
         bounds = (0, 0, 0, 0)
+        caret = (0, 0, 0, 0)
         focused_bounds = getattr(self._accessibility_text, "focused_bounds", None)
         if callable(focused_bounds):
             try:
                 bounds = tuple(int(item) for item in focused_bounds(process_id))
             except BaseException:
                 bounds = (0, 0, 0, 0)
+        focused_caret_bounds = getattr(
+            self._accessibility_text, "focused_caret_bounds", None
+        )
+        if callable(focused_caret_bounds):
+            try:
+                caret = tuple(
+                    int(item) for item in focused_caret_bounds(process_id)
+                )
+            except BaseException:
+                caret = (0, 0, 0, 0)
+        if caret[3] <= 0:
+            pointer_x, pointer_y = self._pointer_position()
+            pointer_is_plausible = pointer_x > 0 and pointer_y > 0
+            if bounds[2] > 0 and bounds[3] > 0:
+                pointer_is_plausible = pointer_is_plausible and (
+                    bounds[0] <= pointer_x <= bounds[0] + bounds[2]
+                    and bounds[1] <= pointer_y <= bounds[1] + bounds[3]
+                )
+            if pointer_is_plausible:
+                caret = (pointer_x, pointer_y, 2, 18)
         return DesktopTargetRef(
             window_handle=0,
             control_handle=0,
@@ -361,12 +654,48 @@ class MacOSDesktopTextTarget:
             screen_y=bounds[1],
             screen_width=bounds[2],
             screen_height=bounds[3],
+            caret_x=caret[0],
+            caret_y=caret[1],
+            caret_width=max(0, caret[2]),
+            caret_height=max(0, caret[3]),
         )
+
+    def is_foreground(self, target: DesktopTargetRef) -> bool:
+        process_id, _name = self._frontmost_application()
+        return bool(process_id and process_id == int(target.process_id))
+
+    def caret_bounds(self, target: DesktopTargetRef) -> tuple[int, int, int, int]:
+        """Locate the live insertion caret without moving focus."""
+        process_id, _name = self._frontmost_application()
+        if not process_id or process_id != int(target.process_id):
+            return 0, 0, 0, 0
+        focused_caret_bounds = getattr(
+            self._accessibility_text, "focused_caret_bounds", None
+        )
+        if not callable(focused_caret_bounds):
+            return 0, 0, 0, 0
+        try:
+            return tuple(
+                int(value) for value in focused_caret_bounds(target.process_id)
+            )
+        except BaseException:
+            return 0, 0, 0, 0
 
     def request_accessibility(self, *, prompt: bool = True) -> bool:
         return self._injector.is_trusted(prompt=prompt)
 
     def capture_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
+        return self._capture_text(target, allow_empty=False)
+
+    def capture_text_allowing_empty(
+        self, target: DesktopTargetRef
+    ) -> DesktopTextSnapshot:
+        """Read back a known clear operation where an empty value is success."""
+        return self._capture_text(target, allow_empty=True)
+
+    def _capture_text(
+        self, target: DesktopTargetRef, *, allow_empty: bool
+    ) -> DesktopTextSnapshot:
         self._injector.require_accessibility()
         self._activate(target)
         try:
@@ -377,6 +706,15 @@ class MacOSDesktopTextTarget:
             accessibility_value = None
         if accessibility_value is not None:
             return DesktopTextSnapshot(target=target, text=accessibility_value)
+        saved_selection = None
+        selected_range = getattr(
+            self._accessibility_text, "focused_selected_range", None
+        )
+        if callable(selected_range):
+            try:
+                saved_selection = selected_range(target.process_id)
+            except BaseException:
+                saved_selection = None
         clipboard_snapshot = self._clipboard.snapshot()
         text = ""
         try:
@@ -396,15 +734,80 @@ class MacOSDesktopTextTarget:
                     time.sleep(0.01)
                 if text:
                     break
+                if allow_empty:
+                    # The caller just issued an explicit, validated clear.
+                    # A successful copy of an empty control leaves the sentinel
+                    # untouched, so retrying cannot produce a non-empty value.
+                    break
                 if attempt + 1 < self._copy_attempts:
                     time.sleep(0.05)
         finally:
             self._clipboard.restore(clipboard_snapshot)
-        if not text:
+            restored = False
+            restore_selection = getattr(
+                self._accessibility_text, "set_focused_selected_range", None
+            )
+            if saved_selection is not None and callable(restore_selection):
+                try:
+                    self._activate(target)
+                    restored = bool(
+                        restore_selection(target.process_id, saved_selection)
+                    )
+                except BaseException:
+                    restored = False
+            if not restored:
+                # Never leave Select-All active: a following dictation paste
+                # must append at a caret rather than replace the entire field.
+                try:
+                    self._activate(target)
+                    self._injector.press_key(self.KEY_RIGHT)
+                    time.sleep(self._shortcut_settle_s)
+                except BaseException:
+                    pass
+        if not text and not allow_empty:
             raise RuntimeError(
                 "多次复制后仍未读取到文本；请确认光标位于可编辑文本框且内容非空"
             )
         return DesktopTextSnapshot(target=target, text=text)
+
+    def observe_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
+        """Read a manually edited field without focus, selection, or clipboard I/O."""
+        process_id, _name = self._frontmost_application()
+        if not process_id or process_id != int(target.process_id):
+            raise RuntimeError("目标文本框当前不在前台")
+
+        # A process can contain several editable fields.  Bounds are the only
+        # stable identity available through the lightweight AX bridge; refuse
+        # to observe a different field instead of recording the wrong result.
+        focused_bounds = getattr(self._accessibility_text, "focused_bounds", None)
+        if target.screen_width > 0 and target.screen_height > 0:
+            if not callable(focused_bounds):
+                raise RuntimeError("目标文本框不支持无干扰定位")
+            try:
+                current_bounds = tuple(
+                    int(item) for item in focused_bounds(target.process_id)
+                )
+            except BaseException as exc:
+                raise RuntimeError("无法无干扰定位目标文本框") from exc
+            expected_bounds = (
+                target.screen_x,
+                target.screen_y,
+                target.screen_width,
+                target.screen_height,
+            )
+            if any(
+                abs(current - expected) > 8
+                for current, expected in zip(current_bounds, expected_bounds)
+            ):
+                raise RuntimeError("用户焦点已经离开原文本框")
+
+        try:
+            value = self._accessibility_text.read_focused_value(target.process_id)
+        except BaseException as exc:
+            raise RuntimeError("当前文本框不支持无干扰读取") from exc
+        if value is None:
+            raise RuntimeError("当前文本框不支持无干扰读取")
+        return DesktopTextSnapshot(target=target, text=str(value))
 
     def inject(self, target: DesktopTargetRef, text: str) -> None:
         value = str(text or "")
@@ -635,7 +1038,7 @@ class WindowsDesktopTextTarget:
         bounds_handle = focus if self._user32.GetWindowRect(focus, ctypes.byref(bounds)) else window
         if bounds_handle == window:
             self._user32.GetWindowRect(window, ctypes.byref(bounds))
-        return DesktopTargetRef(
+        target = DesktopTargetRef(
             window,
             focus,
             title_buffer.value.strip(),
@@ -647,6 +1050,16 @@ class WindowsDesktopTextTarget:
             max(0, int(bounds.right - bounds.left)),
             max(0, int(bounds.bottom - bounds.top)),
         )
+        caret = self.caret_bounds(target)
+        if caret[3] > 0:
+            target = replace(
+                target,
+                caret_x=caret[0],
+                caret_y=caret[1],
+                caret_width=max(2, caret[2]),
+                caret_height=max(1, caret[3]),
+            )
+        return target
 
     def capture_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
         if target.uia_control is not None:
@@ -719,6 +1132,44 @@ class WindowsDesktopTextTarget:
             )
         return DesktopTextSnapshot(target=target, text=text)
 
+    def observe_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
+        """Read text through UI Automation without sending Ctrl+A/Ctrl+C."""
+        if self._uia is None:
+            raise RuntimeError("当前文本框不支持无干扰读取")
+
+        control = target.uia_control
+        if control is None:
+            foreground = int(self._user32.GetForegroundWindow() or 0)
+            if foreground != int(target.window_handle):
+                raise RuntimeError("目标文本框当前不在前台")
+            process_id = wintypes.DWORD()
+            thread_id = int(
+                self._user32.GetWindowThreadProcessId(
+                    foreground, ctypes.byref(process_id)
+                )
+            )
+            info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
+            if (
+                not thread_id
+                or not self._user32.GetGUIThreadInfo(thread_id, ctypes.byref(info))
+                or int(info.hwndFocus or 0) != int(target.control_handle)
+            ):
+                raise RuntimeError("用户焦点已经离开原文本框")
+            try:
+                control = self._uia.capture_focused_text_control(
+                    int(target.process_id)
+                )
+            except Exception as exc:
+                raise RuntimeError("当前文本框不支持无干扰读取") from exc
+            if control is None:
+                raise RuntimeError("当前文本框不支持无干扰读取")
+
+        try:
+            text = self._uia.read_text(control, target.window_handle)
+        except Exception as exc:
+            raise RuntimeError("无法无干扰读取目标文本框") from exc
+        return DesktopTextSnapshot(target=target, text=str(text or ""))
+
     def inject(self, target: DesktopTargetRef, text: str) -> None:
         value = str(text or "")
         if not value:
@@ -745,7 +1196,7 @@ class WindowsDesktopTextTarget:
                 ) from exc
         self._activate(snapshot.target)
         # Re-select the complete field because clicking the background control
-        # window may have collapsed the selection while the preview was open.
+        # window may have collapsed the selection while the model was running.
         # We intentionally do not copy/compare again: browser content-editable
         # controls often expose different clipboard representations after a
         # focus round trip even though their visible text did not change.
@@ -768,6 +1219,48 @@ class WindowsDesktopTextTarget:
             self._press_key(self.VK_END)
         except BaseException:
             return
+
+    def is_foreground(self, target: DesktopTargetRef) -> bool:
+        return int(self._user32.GetForegroundWindow() or 0) == int(
+            target.window_handle
+        )
+
+    def caret_bounds(self, target: DesktopTargetRef) -> tuple[int, int, int, int]:
+        """Return the current Win32 caret rectangle in global coordinates."""
+        foreground = int(self._user32.GetForegroundWindow() or 0)
+        if foreground != int(target.window_handle):
+            return 0, 0, 0, 0
+        process_id = wintypes.DWORD()
+        thread_id = int(
+            self._user32.GetWindowThreadProcessId(
+                foreground, ctypes.byref(process_id)
+            )
+        )
+        info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
+        if (
+            not thread_id
+            or not self._user32.GetGUIThreadInfo(thread_id, ctypes.byref(info))
+        ):
+            return 0, 0, 0, 0
+        caret_window = int(info.hwndCaret or info.hwndFocus or 0)
+        if not caret_window:
+            return 0, 0, 0, 0
+        top_left = wintypes.POINT(int(info.rcCaret.left), int(info.rcCaret.top))
+        bottom_right = wintypes.POINT(
+            int(info.rcCaret.right), int(info.rcCaret.bottom)
+        )
+        if not self._user32.ClientToScreen(
+            caret_window, ctypes.byref(top_left)
+        ) or not self._user32.ClientToScreen(
+            caret_window, ctypes.byref(bottom_right)
+        ):
+            return 0, 0, 0, 0
+        return (
+            int(top_left.x),
+            int(top_left.y),
+            max(2, int(bottom_right.x - top_left.x)),
+            max(1, int(bottom_right.y - top_left.y)),
+        )
 
     def _activate(self, target: DesktopTargetRef) -> None:
         window = wintypes.HWND(int(target.window_handle))
@@ -863,6 +1356,11 @@ class WindowsDesktopTextTarget:
             ctypes.POINTER(wintypes.RECT),
         )
         self._user32.GetWindowRect.restype = wintypes.BOOL
+        self._user32.ClientToScreen.argtypes = (
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.POINT),
+        )
+        self._user32.ClientToScreen.restype = wintypes.BOOL
         self._user32.IsWindow.argtypes = (wintypes.HWND,)
         self._user32.IsWindow.restype = wintypes.BOOL
         self._user32.SetForegroundWindow.argtypes = (wintypes.HWND,)
