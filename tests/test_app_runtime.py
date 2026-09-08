@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 import threading
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -14,7 +15,56 @@ from proximic_ring.app_runtime import (
     apply_asr_gain,
     normalize_funasr_nano_hotwords,
 )
+from proximic_ring.config import DetectorConfig
 from proximic_ring.events import Stage2Event
+
+
+def test_volcengine_context_provider_reads_focused_text_without_clipboard(
+    monkeypatch,
+):
+    from proximic_ring import desktop_target
+
+    full_text = "旧" * 200 + "新" * 1700
+    target = SimpleNamespace(
+        process_id=123,
+        window_handle=456,
+        control_handle=789,
+        accessibility_id="editor-field",
+        uia_control=None,
+        process_name="测试编辑器",
+        window_title="文档",
+        screen_x=0,
+        screen_y=0,
+        screen_width=100,
+        screen_height=100,
+    )
+
+    class FakeMacTarget:
+        def __init__(self, clipboard):
+            self.clipboard = clipboard
+
+        def capture_reference(self):
+            return target
+
+        def observe_text(self, observed_target):
+            assert observed_target is target
+            return SimpleNamespace(text=full_text)
+
+        def capture_text(self, _target):
+            raise AssertionError("clipboard/select-all capture must not be used")
+
+    monkeypatch.setattr(app_runtime, "DESKTOP_TEXT_INJECTION_SUPPORTED", True)
+    monkeypatch.setattr(app_runtime.sys, "platform", "darwin")
+    monkeypatch.setattr(desktop_target, "MacOSDesktopTextTarget", FakeMacTarget)
+
+    context = app_runtime._volcengine_context_provider()()
+
+    assert context["status"] == "captured"
+    assert context["source"] == "focused_text"
+    assert context["text"] == full_text[-1600:]
+    assert context["source_char_count"] == len(full_text)
+    assert context["target_key"] == "123:456:editor-field"
+    assert context["application"] == "测试编辑器"
 
 
 def test_imu_buffer_slices_samples_and_preserves_sync_metadata():
@@ -84,6 +134,9 @@ def test_runtime_defaults_only_enable_windows_desktop_features():
     assert not hasattr(args, "asr_gain_db")
     assert settings.asr_gain_db == 0.0
     assert args.asr_pre_roll == 1.0
+    assert args.stage2_delay == 0.3
+    assert args.stage2_active_interval == 0.2
+    assert args.asr_end_rejects == 5
     assert args.asr_option == [
         "streaming_sensevoice.final_redecode=false"
     ]
@@ -110,14 +163,17 @@ def test_runtime_applies_gain_after_detector_and_before_session_controller(
 ):
     original = np.array([0.1, -0.2, 0.3], dtype=np.float32)
     seen: dict[str, np.ndarray] = {}
+    battery_updates = []
 
     class FakeSource:
         error = None
 
-        def __init__(self, **_kwargs):
+        def __init__(self, **kwargs):
             self.read_count = 0
+            self.battery_observer = kwargs["battery_observer"]
 
         def connect(self):
+            self.battery_observer(68, 3880, 0)
             return None
 
         def start_stream(self, *, buffer_audio=True):
@@ -131,11 +187,14 @@ def test_runtime_applies_gain_after_detector_and_before_session_controller(
             return None
 
     class FakeDetector:
+        config = DetectorConfig(stage1_threshold=0.005)
+
         def reset(self):
             return None
 
         def feed(self, block):
             seen["detector"] = np.asarray(block).copy()
+            seen["stage1_threshold"] = self.config.stage1_threshold
             return []
 
     class FakeController:
@@ -169,14 +228,19 @@ def test_runtime_applies_gain_after_detector_and_before_session_controller(
         on_connected=lambda: None,
         on_disconnected=lambda: None,
         on_started=lambda: None,
+        on_battery=lambda *values: battery_updates.append(values),
+        asr_gain_db_provider=lambda: 3.0,
+        stage1_threshold_provider=lambda: 0.02,
     )
 
+    assert battery_updates == [(68, 3880, 0)]
     np.testing.assert_array_equal(seen["detector"], original)
     np.testing.assert_allclose(
         seen["controller"],
-        original * (10.0 ** (6.0 / 20.0)),
+        original * (10.0 ** (3.0 / 20.0)),
         rtol=1e-6,
     )
+    assert seen["stage1_threshold"] == 0.02
 
 
 def test_runtime_settings_preserve_working_detector_and_asr_values():
@@ -414,6 +478,9 @@ def test_ui_runtime_reports_stage2_decisions_to_the_log(monkeypatch):
         state.startswith("STAGE2 ") and state.endswith("ACTIVATE")
         for state in states
     )
+    stage2_state = next(state for state in states if state.startswith("STAGE2 "))
+    assert "sample=16000" in stage2_state
+    assert "decision=ACTIVATE" in stage2_state
 
 
 def test_ui_runtime_cancels_current_utterance_without_disabling_next_audio(

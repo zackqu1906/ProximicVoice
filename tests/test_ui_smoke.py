@@ -208,10 +208,12 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
         def inject(self, captured_target, text):
             assert captured_target == target
             self.injected.append(text)
+            self.current_text += text
 
         def undo(self, captured_target):
             assert captured_target == target
             self.undone.append(captured_target)
+            self.current_text = "原始文本"
 
         def replace(self, snapshot, text):
             assert snapshot.target == target
@@ -220,6 +222,10 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
             self.replaced.append(text)
 
         def capture_text(self, captured_target):
+            assert captured_target == target
+            return DesktopTextSnapshot(target, self.current_text)
+
+        def observe_text(self, captured_target):
             assert captured_target == target
             return DesktopTextSnapshot(target, self.current_text)
 
@@ -253,7 +259,8 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
 
     controller.undoLastApplied()
 
-    assert desktop_target.undone == [target]
+    assert desktop_target.undone == []
+    assert desktop_target.replaced == ["原始文本"]
     assert controller.undoAvailable is False
     assert controller.interactionState == "idle"
     assert "听写 · 已撤回" in controller.sessionHistoryText
@@ -281,7 +288,7 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
     controller.undoLastApplied()
 
     assert desktop_target.current_text == "原始文本"
-    assert desktop_target.replaced == ["正式文本", "原始文本"]
+    assert desktop_target.replaced == ["原始文本", "正式文本"]
     assert controller.undoAvailable is False
     assert controller.interactionState == "idle"
     assert controller.associationRecommendationVisible is False
@@ -395,6 +402,7 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     assert submitted[0].mode == "edit"
     assert routed[0].settings.enabled is True
     assert controller.transcriptMode == ""
+    assert controller.transcriptText == "正在判断听写或指令"
     assert "自动路由判断开始" in controller.logText
     controller._apply_input_mode_routed(
         InputModeRoutingResult(
@@ -407,12 +415,9 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
         )
     )
     assert controller.transcriptMode == ""
-    assert controller.modeCorrectionAvailable is False
-    assert desktop_target.injected == []
-    controller._dictation_commit_timer.stop()
-    controller._commit_pending_dictation()
     assert desktop_target.injected == ["这是一段要输入的话。"]
     assert controller.modeCorrectionAvailable is True
+    assert controller._dictation_commit_timer.isActive() is False
     assert "自动路由判断完成：听写（耗时 0.234s）" in controller.logText
 
     controller._apply_runtime_update("把上一句改正式一点", True, "", 702)
@@ -435,7 +440,8 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     assert submitted[1].target_text == "已有文本。"
     assert "自动路由判断完成：编辑指令（耗时 0.125s）" in controller.logText
     assert re.search(
-        r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] 自动路由判断完成",
+        r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] "
+        r"\[session=702 route=\d+\] 自动路由判断完成",
         controller.logText,
     )
     controller._cancel_pending_text_processing()
@@ -484,6 +490,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
         QUrl,
     )
     from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtQuick import QQuickItem
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QApplication
 
@@ -504,6 +511,10 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     QSettings("ProxiMic", "ProxiMic Voice").remove(
         "dataCollection/smartAssociationEnabled"
     )
+    QSettings("ProxiMic", "ProxiMic Voice").remove("ui/appliedOverlayStyle")
+    QSettings("ProxiMic", "ProxiMic Voice").remove(
+        "ui/appliedOverlayDurationSeconds"
+    )
     controller = AppController()
     controller._text_processing_worker.close(wait=True)
     controller._accessibility_timer.stop()
@@ -518,8 +529,151 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     window = engine.rootObjects()[0]
     status_overlay = window.findChild(QObject, "transcriptOverlay")
     action_overlay = window.findChild(QObject, "appliedActionOverlay")
+    battery_pill = window.findChild(QObject, "batteryStatusPill")
+    battery_fill = window.findChild(QObject, "batteryLevelFill")
+    voice_history_list = window.findChild(QObject, "voiceHistoryList")
     assert status_overlay is not None
     assert action_overlay is not None
+    assert battery_pill is not None
+    assert battery_fill is not None
+    assert voice_history_list is not None
+
+    controller._voice_history_entries = [
+        {
+            "interactionId": "interaction-live-update",
+            "displayTime": "16:30:00",
+            "durationLabel": "1.2 秒",
+            "backend": "SenseVoice",
+            "text": "测试语音记录",
+            "recognized": True,
+            "mode": "dictation",
+            "outcome": "applied",
+            "candidateText": "测试语音记录",
+            "audioPath": str(tmp_path / "voice.wav"),
+            "recordPath": str(tmp_path / "record.json"),
+            "hasImu": False,
+            "imuSampleCount": 0,
+            "dataSummary": "音频已保存 · IMU 未采集",
+        }
+    ]
+    controller.voiceHistoryChanged.emit()
+    app.processEvents()
+    assert voice_history_list.property("count") == 1
+    voice_history_list.setProperty("currentIndex", 0)
+    QMetaObject.invokeMethod(voice_history_list, "forceLayout")
+    QTest.qWait(50)
+    history_item = voice_history_list.property("currentItem")
+    assert history_item is not None
+    history_metadata = history_item.findChild(
+        QQuickItem, "voiceHistoryMetadata"
+    )
+    history_primary = history_item.findChild(
+        QQuickItem, "voiceHistoryPrimaryText"
+    )
+    history_summary = history_item.findChild(
+        QQuickItem, "voiceHistoryEditSummary"
+    )
+    assert history_metadata is not None
+    assert history_primary is not None
+    assert history_summary is not None
+    assert history_primary.property("text") == "输入内容：测试语音记录"
+
+    processed_dictation_entry = dict(controller._voice_history_entries[0])
+    processed_dictation_entry.update(
+        {
+            "candidateText": "整理后的语音记录",
+            "candidateAvailable": True,
+            "candidateEmpty": False,
+        }
+    )
+    controller._voice_history_entries = [processed_dictation_entry]
+    controller.voiceHistoryChanged.emit()
+    QTest.qWait(50)
+    history_source = history_item.findChild(
+        QQuickItem, "voiceHistorySourceText"
+    )
+    assert history_primary.property("text") == "输入内容：整理后的语音记录"
+    assert history_source is not None
+    assert history_source.property("visible") is True
+    assert history_source.property("text") == "识别原文：测试语音记录"
+
+    undone_dictation_entry = dict(controller._voice_history_entries[0])
+    undone_dictation_entry.update(
+        {
+            "outcome": "undone",
+            "candidateText": "",
+            "candidateAvailable": False,
+            "candidateEmpty": False,
+        }
+    )
+    controller._voice_history_entries = [undone_dictation_entry]
+    controller.voiceHistoryChanged.emit()
+    QTest.qWait(50)
+    history_outcome_detail = history_item.findChild(
+        QQuickItem, "voiceHistoryOutcomeDetail"
+    )
+    assert history_primary.property("text") == "原听写内容：测试语音记录"
+    assert history_outcome_detail is not None
+    assert history_outcome_detail.property("text") == "本次听写已从原文本框移除"
+
+    cleared_history_entry = dict(controller._voice_history_entries[0])
+    cleared_history_entry.update(
+        {
+            "mode": "edit",
+            "modeLabel": "编辑指令",
+            "outcome": "applied",
+            "candidateText": "",
+            "candidateAvailable": True,
+            "candidateEmpty": True,
+            "editSummary": "已清空当前文本",
+        }
+    )
+    controller._voice_history_entries = [cleared_history_entry]
+    controller.voiceHistoryChanged.emit()
+    QTest.qWait(50)
+    history_candidate = history_item.findChild(
+        QQuickItem, "voiceHistoryCandidateText"
+    )
+    assert history_primary.property("text") == "编辑指令：测试语音记录"
+    assert history_summary.property("text") == "修改摘要：已清空当前文本"
+    assert history_candidate.property("visible") is True
+    assert history_candidate.property("text") == "修改结果：已清空文本"
+
+    updated_history_entry = dict(controller._voice_history_entries[0])
+    updated_history_entry["mode"] = "edit"
+    updated_history_entry["outcome"] = "undone"
+    updated_history_entry["candidateText"] = "这段结果不应继续显示"
+    updated_history_entry["candidateAvailable"] = False
+    updated_history_entry["candidateEmpty"] = False
+    updated_history_entry["editSummary"] = "已清空当前文本"
+    controller._voice_history_entries = [updated_history_entry]
+    controller.voiceHistoryChanged.emit()
+    QTest.qWait(50)
+    history_status = history_item.findChild(
+        QQuickItem, "voiceHistoryOutcomeStatus"
+    )
+    assert history_status is not None
+    assert history_status.property("visible") is True
+    assert history_status.property("text") == "已撤回"
+    assert history_primary.property("text") == "原编辑指令：测试语音记录"
+    assert history_summary.property("text") == "已撤回的修改：已清空当前文本"
+    assert history_candidate is not None
+    assert history_candidate.property("visible") is False
+    assert history_outcome_detail.property("text") == "文本已恢复到编辑前状态"
+
+    assert battery_pill.property("visible") is False
+    controller._connected = True
+    controller.connectedChanged.emit()
+    controller._apply_runtime_battery(73, 3910, 1)
+    app.processEvents()
+    assert battery_pill.property("visible") is True
+    QTest.qWait(250)
+    assert battery_fill.property("width") > 2
+    controller._connected = False
+    controller._reset_battery_state()
+    controller.connectedChanged.emit()
+    app.processEvents()
+    assert battery_pill.property("visible") is False
     assert window.findChild(QObject, "confirmEditButton") is None
     assert window.findChild(QObject, "overlayConfirmButton") is None
     assert window.findChild(QObject, "editPreviewText") is None
@@ -528,6 +682,22 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     settings_dialog = window.findChild(QObject, "runtimeSettingsDialog")
     settings_back_button = window.findChild(QObject, "settingsBackButton")
     settings_apply_button = window.findChild(QObject, "settingsApplyButton")
+    applied_overlay_style_combo = window.findChild(
+        QObject, "appliedOverlayStyleCombo"
+    )
+    applied_overlay_duration_slider = window.findChild(
+        QObject, "appliedOverlayDurationSlider"
+    )
+    audio_encoding_combo = window.findChild(QObject, "audioEncodingCombo")
+    stage1_sensitivity_slider = window.findChild(
+        QObject, "stage1SensitivitySlider"
+    )
+    asr_backend_combo = window.findChild(QObject, "asrBackendCombo")
+    asr_gain_slider = window.findChild(QObject, "asrGainSlider")
+    input_routing_mode_combo = window.findChild(QObject, "inputRoutingModeCombo")
+    llm_provider_combo = window.findChild(QObject, "llmProviderCombo")
+    dictation_llm_switch = window.findChild(QObject, "dictationLlmSwitch")
+    desktop_output_switch = window.findChild(QObject, "desktopOutputSwitch")
     assert settings_button is not None
     assert settings_button.property("text") == "设置"
     assert settings_dialog is not None
@@ -535,11 +705,67 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert settings_back_button.property("text") == "返回"
     assert settings_apply_button is not None
     assert settings_apply_button.property("text") == "应用"
+    assert applied_overlay_style_combo is not None
+    assert applied_overlay_duration_slider is not None
+    assert audio_encoding_combo is not None
+    assert window.findChild(QObject, "detectorModelPathField") is None
+    assert window.findChild(QObject, "asrModelField") is None
+    assert window.findChild(QObject, "streamingRepoField") is None
+    assert window.findChild(QObject, "funasrRepoField") is None
+    assert window.findChild(QObject, "llmLocalServerField") is None
+    assert window.findChild(QObject, "llmLocalModelField") is None
+    assert window.findChild(QObject, "llmBaseUrlField") is None
+    assert window.findChild(QObject, "llmModelField") is None
+    assert window.findChild(QObject, "llmTimeoutSpinBox") is None
+    assert stage1_sensitivity_slider is not None
+    assert asr_backend_combo is not None
+    assert asr_gain_slider is not None
+    assert input_routing_mode_combo is not None
+    assert llm_provider_combo is not None
+    assert dictation_llm_switch is not None
+    assert window.findChild(QObject, "dictationLlmButton") is None
+    assert desktop_output_switch is not None
+    assert applied_overlay_style_combo.property("currentIndex") == 0
+    assert controller.appliedOverlayStyle == "normal"
+    assert applied_overlay_duration_slider.property("value") == 3
+    assert controller.appliedOverlayDurationSeconds == 3
     assert settings_dialog.property("visible") is False
     QMetaObject.invokeMethod(settings_button, "click")
     QTest.qWait(400)
     assert settings_dialog.property("visible") is True
     assert settings_dialog.property("opened") is True
+    controller._connected = True
+    controller.connectedChanged.emit()
+    app.processEvents()
+    assert audio_encoding_combo.property("enabled") is False
+    assert asr_backend_combo.property("enabled") is False
+    assert stage1_sensitivity_slider.property("enabled") is True
+    assert asr_gain_slider.property("enabled") is True
+    assert applied_overlay_style_combo.property("enabled") is True
+    assert applied_overlay_duration_slider.property("enabled") is True
+    assert input_routing_mode_combo.property("enabled") is True
+    assert llm_provider_combo.property("enabled") is True
+    assert dictation_llm_switch.property("enabled") is True
+    assert desktop_output_switch.property("enabled") is True
+    assert settings_apply_button.property("enabled") is True
+    controller.stage1Threshold = 0.012
+    controller.asrGainDb = 3.0
+    controller.inputRoutingMode = "auto"
+    controller.appliedOverlayDurationSeconds = 7
+    app.processEvents()
+    assert 1 <= stage1_sensitivity_slider.property("value") <= 10
+    assert asr_gain_slider.property("value") == 3.0
+    assert input_routing_mode_combo.property("currentIndex") == 0
+    assert applied_overlay_duration_slider.property("value") == 7
+    assert controller._applied_action_hide_timer.interval() == 7000
+    assert int(
+        QSettings("ProxiMic", "ProxiMic Voice").value(
+            "ui/appliedOverlayDurationSeconds"
+        )
+    ) == 7
+    controller._connected = False
+    controller.connectedChanged.emit()
+    app.processEvents()
     QMetaObject.invokeMethod(settings_dialog, "goBack")
     QTest.qWait(400)
     assert settings_dialog.property("visible") is False
@@ -564,12 +790,26 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert window.findChild(QObject, "cancelUtteranceButton") is not None
     processing_switch = window.findChild(QObject, "processingSwitchModeButton")
     assert processing_switch is not None
+    status_text = window.findChild(QObject, "statusOverlayText")
+    asr_text = window.findChild(QObject, "asrOverlayText")
+    assert status_text is not None
+    assert asr_text is not None
+    assert status_text.property("text") == "正在收听语音"
+    assert asr_text.property("visible") is False
+
+    controller._apply_runtime_update("正在形成的识别文本", False, "", 41)
+    app.processEvents()
+    assert status_text.property("text") == "正在收听语音"
+    assert asr_text.property("text") == "正在形成的识别文本"
+    assert asr_text.property("visible") is True
 
     compact_status_width = status_overlay.width()
     controller._transcript_text = "正在处理文本 · 指令：把这句话改得更正式"
     controller.transcriptChanged.emit()
     app.processEvents()
     assert status_overlay.width() > compact_status_width
+    assert status_text.property("text") == "正在处理文本"
+    assert asr_text.property("text") == "正在形成的识别文本"
 
     dictation_result = TextProcessingResult(
         0, 1, "dictation", "这不是指令", "这不是指令", 0.0, False
@@ -591,6 +831,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     app.processEvents()
     assert processing_switch.property("visible") is True
     assert processing_switch.property("title") == "刚刚是输入内容"
+    assert processing_switch.property("shortcut") == "F8"
     assert processing_switch.property("enabled") is False
     controller._reveal_processing_mode_correction()
     app.processEvents()
@@ -602,6 +843,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     controller._pending_dictation_result = None
     target = DesktopTargetRef(
         1, 2, "编辑器", process_id=30,
+        process_name="Editor",
         screen_x=180, screen_y=180, screen_width=360, screen_height=72,
         caret_x=420, caret_y=220, caret_width=2, caret_height=20,
     )
@@ -616,9 +858,32 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert status_overlay.property("visible") is False
     assert action_overlay.property("visible") is True
     assert action_overlay.flags() & Qt.WindowStaysOnTopHint
-    assert action_overlay.width() == 102
+    assert action_overlay.width() == 360
+    assert action_overlay.height() == 120
+    assert controller.appliedActionTitle == "已输入文本"
+    assert window.findChild(QObject, "appliedActionTitle").property("text") == "已输入文本"
+    assert window.findChild(QObject, "appliedActionSummary").property("text") == '已输入：“测试听写”'
+    assert window.findChild(QObject, "appliedActionCharacterLabel") is None
+    assert window.findChild(QObject, "appliedActionDragSpace") is not None
+    assert window.findChild(QObject, "appliedActionBackgroundDragArea") is not None
     assert window.findChild(QObject, "undoAppliedButton") is not None
+    assert window.findChild(QObject, "undoAppliedButton").property("shortcut") == "Esc"
     assert window.findChild(QObject, "switchModeButton") is not None
+    assert window.findChild(QObject, "switchModeButton").property("busy") is False
+    assert window.findChild(QObject, "switchModeButton").property("shortcut") == "F8"
+
+    controller.appliedOverlayStyle = "compact"
+    app.processEvents()
+    assert applied_overlay_style_combo.property("currentIndex") == 1
+    assert (
+        QSettings("ProxiMic", "ProxiMic Voice").value(
+            "ui/appliedOverlayStyle"
+        )
+        == "compact"
+    )
+    assert action_overlay.width() == 134
+    assert action_overlay.height() == 56
+    assert window.findChild(QObject, "appliedActionSummaryRow").property("visible") is False
 
     target_right = target.screen_x + target.screen_width
     target_bottom = target.screen_y + target.screen_height
@@ -633,8 +898,81 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert overlaps is False
     assert action_overlay.x() >= target.caret_x + target.caret_width
     assert overlay_bottom <= target.screen_y - 16
+
+    # Once the user has moved the action pill, result/summary updates must not
+    # snap it back to the caret-derived automatic position.
+    dragged_x = max(8, action_overlay.x() - 36)
+    dragged_y = max(8, action_overlay.y() - 24)
+    action_overlay.setProperty("userX", dragged_x)
+    action_overlay.setProperty("userY", dragged_y)
+    action_overlay.setProperty("userPositioned", True)
+    QMetaObject.invokeMethod(action_overlay, "finishSystemDrag")
+    app.processEvents()
+    assert action_overlay.x() == dragged_x
+    assert action_overlay.y() == dragged_y
+    controller._latest_operation().summary = "更新后的处理结果"
+    controller.interactionChanged.emit()
+    app.processEvents()
+    assert action_overlay.x() == dragged_x
+    assert action_overlay.y() == dragged_y
+
+    next_target = DesktopTargetRef(
+        3, 4, "另一个编辑器", process_id=31,
+        process_name="OtherEditor",
+        screen_x=40, screen_y=400, screen_width=300, screen_height=60,
+        caret_x=250, caret_y=430, caret_width=2, caret_height=20,
+    )
+    controller._show_applied_interaction(
+        _AppliedInteraction(
+            "dictation", next_target, 2, 0, "新的输入", "新的输入",
+            summary='已输入：“新的输入”',
+        ),
+        message="新文本框听写已应用",
+    )
+    app.processEvents()
+    assert action_overlay.property("placementKey") == "2"
+    assert action_overlay.property("userPositioned") is False
+    next_right = next_target.screen_x + next_target.screen_width
+    next_bottom = next_target.screen_y + next_target.screen_height
+    overlaps_next_target = not (
+        action_overlay.x() + action_overlay.width() <= next_target.screen_x
+        or action_overlay.x() >= next_right
+        or action_overlay.y() + action_overlay.height() <= next_target.screen_y
+        or action_overlay.y() >= next_bottom
+    )
+    assert overlaps_next_target is False
+
+    # A later utterance in the original application restores the position the
+    # user chose there, even when it targets a different text field.
+    same_application_target = DesktopTargetRef(
+        5, 6, "编辑器 · 新文本框", process_id=30,
+        process_name="Editor",
+        screen_x=620, screen_y=320, screen_width=280, screen_height=64,
+        caret_x=760, caret_y=350, caret_width=2, caret_height=20,
+    )
+    controller._show_applied_interaction(
+        _AppliedInteraction(
+            "dictation", same_application_target, 3, 0,
+            "同一应用的新输入", "同一应用的新输入",
+            summary='已输入：“同一应用的新输入”',
+        ),
+        message="同一应用的新听写已应用",
+    )
+    app.processEvents()
+    assert action_overlay.property("placementKey") == "3"
+    assert action_overlay.property("userPositioned") is True
+    assert action_overlay.x() == dragged_x
+    assert action_overlay.y() == dragged_y
     window.close()
     controller._close_voice_history()
+
+    controller._settings.sync()
+    restarted = AppController()
+    restarted._text_processing_worker.close(wait=True)
+    restarted._accessibility_timer.stop()
+    assert restarted.appliedOverlayDurationSeconds == 7
+    assert restarted._applied_action_hide_timer.interval() == 7000
+    restarted._close_voice_history()
 
 
 def _legacy_qml_customer_window_loads(tmp_path):
@@ -761,14 +1099,10 @@ def _legacy_qml_customer_window_loads(tmp_path):
     edit_mode_button = window.findChild(QObject, "editModeButton")
     input_routing_mode_combo = window.findChild(QObject, "inputRoutingModeCombo")
     auto_mode_badge = window.findChild(QObject, "autoModeBadge")
-    dictation_llm_button = window.findChild(QQuickItem, "dictationLlmButton")
+    dictation_llm_switch = window.findChild(QObject, "dictationLlmSwitch")
     voice_input_card = window.findChild(QQuickItem, "voiceInputCard")
-    llm_local_server_field = window.findChild(QObject, "llmLocalServerField")
-    llm_local_model_field = window.findChild(QObject, "llmLocalModelField")
     llm_provider_combo = window.findChild(QObject, "llmProviderCombo")
-    llm_base_url_field = window.findChild(QObject, "llmBaseUrlField")
     llm_model_combo = window.findChild(QObject, "llmModelCombo")
-    llm_model_field = window.findChild(QObject, "llmModelField")
     llm_api_key_field = window.findChild(QObject, "llmApiKeyField")
     voice_history_list = window.findChild(QObject, "voiceHistoryList")
     voice_history_card = window.findChild(QQuickItem, "voiceHistoryCard")
@@ -804,6 +1138,9 @@ def _legacy_qml_customer_window_loads(tmp_path):
     runtime_settings_button = window.findChild(QObject, "runtimeSettingsButton")
     runtime_settings_dialog = window.findChild(QObject, "runtimeSettingsDialog")
     runtime_log_dialog = window.findChild(QObject, "runtimeLogDialog")
+    open_diagnostic_log_directory_button = window.findChild(
+        QObject, "openDiagnosticLogDirectoryButton"
+    )
     primary_connection_button = window.findChild(QObject, "primaryConnectionButton")
     secondary_connection_button = window.findChild(QObject, "secondaryConnectionButton")
     assert picker is not None and picker.property("visible") is True
@@ -839,7 +1176,7 @@ def _legacy_qml_customer_window_loads(tmp_path):
     assert gpu_install_button.property("visible") is controller.gpuInstallerAvailable
     assert dictation_mode_button is not None
     assert edit_mode_button is not None
-    assert dictation_llm_button is not None
+    assert dictation_llm_switch is not None
     assert voice_input_card is not None
     assert cancel_utterance_button is not None
     assert switch_mode_button is not None
@@ -877,28 +1214,14 @@ def _legacy_qml_customer_window_loads(tmp_path):
     assert controller.llmEnabled is True
     QMetaObject.invokeMethod(picker, "close")
     QTest.qWait(300)
-    llm_button_center = dictation_llm_button.mapToScene(
-        QPointF(
-            dictation_llm_button.property("width") / 2,
-            dictation_llm_button.property("height") / 2,
-        )
-    )
-    QTest.mouseClick(
-        window,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-        QPoint(round(llm_button_center.x()), round(llm_button_center.y())),
-    )
+    controller.llmEnabled = False
     app.processEvents()
     assert controller.llmEnabled is False
-    QTest.mouseClick(
-        window,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-        QPoint(round(llm_button_center.x()), round(llm_button_center.y())),
-    )
+    assert dictation_llm_switch.property("checked") is False
+    controller.llmEnabled = True
     app.processEvents()
     assert controller.llmEnabled is True
+    assert dictation_llm_switch.property("checked") is True
     controller._set_status(
         "设备已断开",
         "Ringo audio stream failed: [WinError -2147023673] 操作已被用户取消。"
@@ -914,11 +1237,12 @@ def _legacy_qml_customer_window_loads(tmp_path):
     assert button_top + primary_connection_item.property("height") <= (
         card_top + voice_input_card.property("height")
     )
-    assert llm_local_server_field is not None
     assert llm_provider_combo is not None
-    assert llm_base_url_field is not None
     assert llm_model_combo is not None
-    assert llm_model_field is not None
+    assert window.findChild(QObject, "llmLocalServerField") is None
+    assert window.findChild(QObject, "llmLocalModelField") is None
+    assert window.findChild(QObject, "llmBaseUrlField") is None
+    assert window.findChild(QObject, "llmModelField") is None
     assert llm_api_key_field is not None
     assert voice_history_list is not None
     assert voice_history_card is not None
@@ -928,11 +1252,14 @@ def _legacy_qml_customer_window_loads(tmp_path):
     assert voice_history_card.property("height") >= 250
     controller._voice_history_entries = [
         {
+            "interactionId": "interaction-test",
             "displayTime": "16:30:00",
             "durationLabel": "1.2 秒",
             "backend": "SenseVoice",
             "text": "测试语音记录",
             "recognized": True,
+            "mode": "dictation",
+            "candidateText": "测试语音记录",
             "audioPath": str(tmp_path / "voice.wav"),
             "recordPath": str(tmp_path / "record.json"),
             "hasImu": True,
@@ -954,8 +1281,31 @@ def _legacy_qml_customer_window_loads(tmp_path):
     voice_location_button = current_voice_item.findChild(
         QQuickItem, "voiceHistoryOpenLocationButton"
     )
+    voice_metadata = current_voice_item.findChild(
+        QQuickItem, "voiceHistoryMetadata"
+    )
     assert voice_play_button is not None
     assert voice_location_button is not None
+    assert voice_metadata is not None
+    assert current_voice_item.findChild(
+        QQuickItem, "voiceHistoryPrimaryText"
+    ).property("text") == "输入内容：测试语音记录"
+
+    updated_history_entry = dict(controller._voice_history_entries[0])
+    updated_history_entry["mode"] = "edit"
+    updated_history_entry["candidateText"] = "修改后的内容"
+    updated_history_entry["candidateAvailable"] = True
+    updated_history_entry["candidateEmpty"] = False
+    updated_history_entry["editSummary"] = "已将“原内容”改为“修改后的内容”"
+    controller._voice_history_entries = [updated_history_entry]
+    controller.voiceHistoryChanged.emit()
+    QTest.qWait(50)
+    assert current_voice_item.findChild(
+        QQuickItem, "voiceHistoryPrimaryText"
+    ).property("text") == "编辑指令：测试语音记录"
+    assert current_voice_item.findChild(
+        QQuickItem, "voiceHistoryEditSummary"
+    ).property("text") == "修改摘要：已将“原内容”改为“修改后的内容”"
     assert voice_location_button.property("text") == "打开记录文件夹"
     assert voice_play_button.property("text") == "播放录音"
     assert voice_play_button.property("width") >= 88
@@ -969,6 +1319,8 @@ def _legacy_qml_customer_window_loads(tmp_path):
     assert runtime_settings_dialog is not None
     assert runtime_settings_dialog.property("visible") is False
     assert runtime_log_dialog is not None
+    assert open_diagnostic_log_directory_button is not None
+    assert controller.diagnosticLogPath.endswith("logs/diagnostic.log")
     assert runtime_log_dialog.property("visible") is False
     QMetaObject.invokeMethod(runtime_log_dialog, "open")
     app.processEvents()
@@ -984,7 +1336,6 @@ def _legacy_qml_customer_window_loads(tmp_path):
     )
     assert log_area.property("text") == controller.logText
     assert log_area.property("cursorPosition") == len(log_area.property("text"))
-    assert llm_local_model_field is not None
     assert controller.inputMode == "dictation"
     assert input_routing_mode_combo is not None
     assert auto_mode_badge is not None
@@ -1010,7 +1361,7 @@ def _legacy_qml_customer_window_loads(tmp_path):
     app.processEvents()
     assert controller.inputMode == "edit"
     assert edit_mode_button.property("checked") is True
-    assert dictation_llm_button.property("visible") is True
+    assert dictation_llm_switch is not None
     controller.llmApiKey = "ark-ui-key"
     controller.asrApiKey = "speech-ui-key"
     controller.asrGainDb = 4.0
@@ -1053,6 +1404,7 @@ def _legacy_qml_customer_window_loads(tmp_path):
     assert controller._selected_device is selected_handle
     runtime_settings = controller._runtime_settings()
     assert runtime_settings.encoding == "adpcm"
+    assert runtime_settings.asr_pre_roll_s == 1.2
     assert runtime_settings.desktop_output is False
     assert runtime_settings.ring_device is None
     assert controller.canReconnect is True
@@ -1110,6 +1462,18 @@ def _legacy_qml_customer_window_loads(tmp_path):
     controller._apply_runtime_connected()
     assert controller.connected is True
     assert controller.busy is True
+    assert controller.batteryAvailable is False
+    assert controller.batteryQueryComplete is False
+    controller._apply_runtime_battery(73, 3910, 1)
+    assert controller.batteryAvailable is True
+    assert controller.batteryQueryComplete is True
+    assert controller.batteryPercentage == 73
+    assert controller.batteryCharging is True
+    assert controller.batteryFull is False
+    controller._apply_runtime_battery(255, 3700, 0)
+    assert controller.batteryAvailable is False
+    assert controller.batteryQueryComplete is True
+    assert "无效电量值：255%" in controller.logText
     controller._apply_runtime_status("正在加载 ProxiMic 检测模型…")
     assert controller.statusTitle == "正在加载检测模型"
     controller._apply_runtime_status("正在加载语音模型 funasr_nano…")
@@ -1122,6 +1486,8 @@ def _legacy_qml_customer_window_loads(tmp_path):
     assert controller.statusTitle == "模型参数已载入"
     controller._apply_runtime_disconnected()
     assert controller.connected is False
+    assert controller.batteryAvailable is False
+    assert controller.batteryQueryComplete is False
     assert controller.busy is True
     assert controller.statusTitle == "设备已断开"
     assert "后台" in controller.statusDetail
@@ -1211,11 +1577,13 @@ def _legacy_qml_customer_window_loads(tmp_path):
     controller.inputMode = "dictation"
     controller.llmEnabled = False
     app.processEvents()
-    assert "关" in dictation_llm_button.property("text")
+    assert dictation_llm_switch.property("checked") is False
     submitted_before_direct_input = len(submitted)
     controller._apply_runtime_update("Nano 已整理的文本。", True, "", 100)
     assert len(submitted) == submitted_before_direct_input
     assert desktop_target.injected[-1] == "Nano 已整理的文本。"
+    assert controller.interactionState == "applied"
+    assert controller._dictation_commit_timer.isActive() is False
     assert "直接采用 ASR 最终结果" in controller.logText
 
     controller.inputMode = "edit"

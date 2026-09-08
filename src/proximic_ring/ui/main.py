@@ -53,10 +53,10 @@ def main(argv: list[str] | None = None) -> int:
                 controller.dispatchVoiceAction,
                 is_interaction_active=lambda: controller.interactionCanCancel,
                 is_mode_correction_active=lambda: (
-                    controller.modeCorrectionAvailable
+                    controller.modeCorrectionHotkeyAvailable
                     or controller.processingModeCorrectionAvailable
                 ),
-                is_undo_active=lambda: controller.undoAvailable,
+                is_undo_active=lambda: controller.appliedActionVisible,
             )
             app.aboutToQuit.connect(voice_action_hotkeys.close)
         except BaseException as exc:
@@ -77,10 +77,10 @@ def main(argv: list[str] | None = None) -> int:
                     controller.dispatchVoiceAction,
                     is_interaction_active=lambda: controller.interactionCanCancel,
                     is_mode_correction_active=lambda: (
-                        controller.modeCorrectionAvailable
+                        controller.modeCorrectionHotkeyAvailable
                         or controller.processingModeCorrectionAvailable
                     ),
-                    is_undo_active=lambda: controller.undoAvailable,
+                    is_undo_active=lambda: controller.appliedActionVisible,
                 )
                 print("[voice-actions] macOS 语音交互按键已就绪")
             except BaseException as exc:

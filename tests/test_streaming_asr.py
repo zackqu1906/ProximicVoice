@@ -86,6 +86,33 @@ class FailingStreamingBackend:
         self.calls.append("finish")
 
 
+class ContextStreamingBackend(FakeStreamingBackend):
+    backend_name = "volcengine"
+
+    def __init__(self):
+        super().__init__()
+        self.received_context = None
+        self._context_metadata = {}
+
+    def set_session_context(self, context):
+        self.received_context = context
+        self._context_metadata = {
+            "status": "prepared",
+            "source": "focused_text",
+            "context_type": "dialog_ctx",
+            "context_data": [{"text": context["text"]}],
+            "item_count": 1,
+            "source_char_count": len(context["text"]),
+            "sent_char_count": len(context["text"]),
+            "truncated": False,
+            "reason": "",
+        }
+
+    @property
+    def session_context_metadata(self):
+        return dict(self._context_metadata)
+
+
 def test_streaming_backend_is_discoverable_and_classified():
     assert "funasr_nano" in available_asr_backends()
     assert "streaming_sensevoice" in available_asr_backends()
@@ -122,6 +149,74 @@ def test_streaming_worker_emits_partial_then_final_without_blocking_caller():
     assert any("final_inference=" in state for state in states)
 
 
+def test_streaming_worker_captures_and_publishes_context_for_same_session():
+    backend = ContextStreamingBackend()
+    states = []
+    contexts = []
+    worker = StreamingASRWorker(
+        backend,
+        context_provider=lambda: {
+            "status": "captured",
+            "source": "focused_text",
+            "text": "输入框上文。",
+        },
+        on_context=lambda session_id, context: contexts.append(
+            (session_id, context)
+        ),
+        on_state=states.append,
+    )
+
+    worker.start(np.ones(160, dtype=np.float32))
+    worker.end(np.ones(160, dtype=np.float32))
+    worker.close()
+
+    assert backend.received_context["text"] == "输入框上文。"
+    assert contexts[0][0] == 1
+    assert contexts[0][1]["context_data"] == [{"text": "输入框上文。"}]
+    assert any(
+        "[ASR CONTEXT] session=1 backend=volcengine status=prepared" in state
+        for state in states
+    )
+    assert all("输入框上文。" not in state for state in states)
+
+
+def test_context_provider_is_not_called_for_backend_without_context_support():
+    calls = []
+    worker = StreamingASRWorker(
+        FakeStreamingBackend(),
+        context_provider=lambda: calls.append("called"),
+    )
+
+    worker.start(np.ones(160, dtype=np.float32))
+    worker.end(np.ones(160, dtype=np.float32))
+    worker.close()
+
+    assert calls == []
+
+
+def test_broken_context_hook_cannot_prevent_recognition():
+    updates = []
+
+    class BrokenContextBackend(FakeStreamingBackend):
+        def set_session_context(self, _context):
+            raise RuntimeError("bad context hook")
+
+    backend = BrokenContextBackend()
+    worker = StreamingASRWorker(
+        backend,
+        context_provider=lambda: {"status": "captured", "text": "上文"},
+        on_update=updates.append,
+    )
+
+    worker.start(np.ones(160, dtype=np.float32))
+    worker.end(np.ones(160, dtype=np.float32))
+    worker.close()
+
+    assert backend.started == 1
+    assert updates[-1].is_final
+    assert updates[-1].text == "final=160"
+
+
 def test_streaming_worker_coalesces_stale_feed_backlog():
     entered = threading.Event()
     release = threading.Event()
@@ -147,7 +242,7 @@ def test_streaming_worker_coalesces_stale_feed_backlog():
     assert [part.size for part in backend.parts] == [160, 12 * 320]
 
 
-def test_streaming_worker_reports_connect_error_once_then_drops_failed_session():
+def test_streaming_worker_repeats_connect_error_as_terminal_session_update():
     updates = []
     backend = FailingStreamingBackend()
     worker = StreamingASRWorker(backend, on_update=updates.append, on_error=lambda _: None)
@@ -158,8 +253,11 @@ def test_streaming_worker_reports_connect_error_once_then_drops_failed_session()
     worker.close()
 
     assert backend.calls == ["start"]
-    assert len(updates) == 1
-    assert updates[0].error == "connect failed"
+    assert [update.is_final for update in updates] == [False, True]
+    assert [update.error for update in updates] == [
+        "connect failed",
+        "connect failed",
+    ]
 
 
 def test_streaming_worker_aborts_lost_feed_and_reconnects_on_next_start():
@@ -217,10 +315,12 @@ def test_streaming_worker_aborts_lost_feed_and_reconnects_on_next_start():
         "feed-2-1",
         "finish-2",
     ]
-    assert len(updates) == 2
+    assert len(updates) == 3
     assert updates[0].error == "connection lost"
-    assert updates[1].text == "recovered"
+    assert updates[1].error == "connection lost"
     assert updates[1].is_final
+    assert updates[2].text == "recovered"
+    assert updates[2].is_final
 
 
 def test_streaming_worker_discards_session_without_final_and_can_restart():

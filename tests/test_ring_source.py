@@ -8,6 +8,83 @@ import numpy as np
 from proximic_ring.audio.ring import RingAudioSource
 
 
+def test_battery_query_is_published_once_and_observer_failure_is_isolated():
+    import asyncio
+    import sys
+    import types
+
+    updates = []
+    source = RingAudioSource(battery_observer=lambda *values: updates.append(values))
+
+    class FakeSession:
+        battery_pct = None
+        battery_mv = None
+        charge_status = None
+
+        async def query_battery(self):
+            self.battery_pct = 73
+            self.battery_mv = 3910
+            self.charge_status = 1
+
+    battery_status = types.ModuleType("ring_python_sdk.core.battery_status")
+    battery_status.format_battery = lambda **_kwargs: "73%"
+    original = sys.modules.get("ring_python_sdk.core.battery_status")
+    sys.modules["ring_python_sdk.core.battery_status"] = battery_status
+    try:
+        asyncio.run(source._print_battery_status(FakeSession()))
+    finally:
+        if original is None:
+            sys.modules.pop("ring_python_sdk.core.battery_status", None)
+        else:
+            sys.modules["ring_python_sdk.core.battery_status"] = original
+
+    assert updates == [(73, 3910, 1)]
+
+    failing = RingAudioSource(
+        battery_observer=lambda *_values: (_ for _ in ()).throw(
+            RuntimeError("ui closed")
+        )
+    )
+    failing._publish_battery_status(50, 3800, 0)
+    assert failing.error is None
+
+
+def test_battery_refresh_publishes_fresh_readings_until_stopped(monkeypatch):
+    import asyncio
+    from proximic_ring.audio import ring as ring_module
+
+    monkeypatch.setattr(ring_module, "_BATTERY_REFRESH_INTERVAL_S", 0.01)
+    updates = []
+    source = RingAudioSource(battery_observer=lambda *values: updates.append(values))
+
+    class FakeClient:
+        is_connected = True
+
+    class FakeSession:
+        client = FakeClient()
+        battery_pct = 80
+        battery_mv = 3950
+        charge_status = 0
+        queries = 0
+
+        async def query_battery(self):
+            self.queries += 1
+            self.battery_pct = 80 - self.queries
+            self.battery_mv = 3950 - self.queries * 10
+            self.charge_status = 0
+
+    async def run_refresh() -> None:
+        session = FakeSession()
+        task = asyncio.create_task(source._battery_refresh_loop(session))
+        while len(updates) < 2:
+            await asyncio.sleep(0.005)
+        source._stop.set()
+        await task
+
+    asyncio.run(run_refresh())
+    assert updates[:2] == [(79, 3940, 0), (78, 3930, 0)]
+
+
 def test_imu_callback_is_normalized_and_failure_does_not_poison_audio():
     import asyncio
 

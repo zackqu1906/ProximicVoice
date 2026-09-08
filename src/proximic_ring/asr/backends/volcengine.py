@@ -16,11 +16,13 @@ import gzip
 import json
 import os
 import queue
+import re
 import struct
 import threading
 import time
 import uuid
 from collections.abc import Callable
+from copy import deepcopy
 from typing import Any
 
 import numpy as np
@@ -41,6 +43,12 @@ _FULL_SERVER_RESPONSE = 0x9
 _ERROR_RESPONSE = 0xF
 _SERIALIZATION_JSON = 0x1
 _COMPRESSION_GZIP = 0x1
+_DIALOG_CONTEXT_TYPE = "dialog_ctx"
+_DIALOG_CONTEXT_MAX_ITEMS = 20
+# The service limit is 800 model tokens.  Its tokenizer is not available in
+# the client, so keep a conservative character budget that is safe for Chinese
+# (roughly one token per character) as well as mixed English text.
+_DIALOG_CONTEXT_MAX_CHARS = 640
 
 
 def _bool_option(value: str | None, default: bool) -> bool:
@@ -132,6 +140,48 @@ def _response_summary(payload: Any) -> str:
     )
 
 
+def _dialog_context_data(
+    text: str,
+    *,
+    max_items: int = _DIALOG_CONTEXT_MAX_ITEMS,
+    max_chars: int = _DIALOG_CONTEXT_MAX_CHARS,
+) -> tuple[list[dict[str, str]], bool]:
+    """Return recent text fragments in the newest-to-oldest service order."""
+
+    normalized = str(text or "").replace("\r\n", "\n").replace("\r", "\n")
+    parts = [
+        part.strip()
+        for part in re.split(r"(?<=[。！？!?；;])|\n+", normalized)
+        if part.strip()
+    ]
+    if not parts:
+        return [], False
+
+    context_data: list[dict[str, str]] = []
+    used_chars = 0
+    truncated = False
+    for part in reversed(parts):
+        if len(context_data) >= max(1, int(max_items)):
+            truncated = True
+            break
+        remaining = max(0, int(max_chars) - used_chars)
+        if remaining <= 0:
+            truncated = True
+            break
+        selected = part
+        if len(selected) > remaining:
+            selected = selected[-remaining:]
+            truncated = True
+        if selected:
+            context_data.append({"text": selected})
+            used_chars += len(selected)
+        if selected != part:
+            break
+    if len(context_data) < len(parts):
+        truncated = True
+    return context_data, truncated
+
+
 class VolcengineStreamingASR:
     """Bidirectional Seed-ASR 2.0 stream used by :class:`StreamingASRWorker`."""
 
@@ -199,6 +249,18 @@ class VolcengineStreamingASR:
         self._latest_packet_timing: tuple[float, float] | None = None
         self._timing_lock = threading.Lock()
         self._partial_callback: Callable[[str, float, float], None] | None = None
+        self._pending_session_context: dict[str, Any] | None = None
+        self._session_context_metadata: dict[str, Any] = {
+            "status": "empty",
+            "source": "focused_text",
+            "context_type": _DIALOG_CONTEXT_TYPE,
+            "context_data": [],
+            "item_count": 0,
+            "source_char_count": 0,
+            "sent_char_count": 0,
+            "truncated": False,
+            "reason": "not_provided",
+        }
 
     def set_partial_callback(
         self,
@@ -207,6 +269,53 @@ class VolcengineStreamingASR:
         """Deliver native receiver-thread partials without a later feed poll."""
 
         self._partial_callback = callback
+
+    def set_session_context(self, context: object | None) -> None:
+        """Prepare one utterance's semantic context without retaining stale text."""
+
+        supplied = dict(context) if isinstance(context, dict) else {}
+        status = str(supplied.get("status", "captured") or "captured")
+        source = str(supplied.get("source", "focused_text") or "focused_text")
+        raw_text = str(supplied.get("text", "") or "")
+        source_char_count = int(
+            supplied.get("source_char_count", len(raw_text)) or 0
+        )
+        context_data, truncated = _dialog_context_data(raw_text)
+        sent_char_count = sum(len(item["text"]) for item in context_data)
+
+        if status != "captured":
+            context_data = []
+            sent_char_count = 0
+        final_status = "prepared" if context_data else (
+            "empty" if status in {"captured", "empty"} else "unavailable"
+        )
+        reason = str(supplied.get("reason", "") or "")
+        if not reason and not context_data:
+            reason = "empty_focused_text"
+
+        metadata: dict[str, Any] = {
+            "status": final_status,
+            "source": source,
+            "context_type": _DIALOG_CONTEXT_TYPE,
+            "context_data": context_data,
+            "item_count": len(context_data),
+            "source_char_count": max(0, source_char_count),
+            "sent_char_count": sent_char_count,
+            "truncated": bool(truncated or source_char_count > len(raw_text)),
+            "reason": reason,
+        }
+        for key in ("target_key", "application"):
+            value = str(supplied.get(key, "") or "")
+            if value:
+                metadata[key] = value
+        self._pending_session_context = metadata
+        self._session_context_metadata = deepcopy(metadata)
+
+    @property
+    def session_context_metadata(self) -> dict[str, Any]:
+        """Describe exactly what this session sends, for logs and datasets."""
+
+        return deepcopy(self._session_context_metadata)
 
     def mark_chunk_ready(self, chunk_ready_time_s: float) -> None:
         """Associate subsequently completed packets with their input-ready time."""
@@ -241,6 +350,15 @@ class VolcengineStreamingASR:
 
     def start(self) -> None:
         self._close()
+        context_metadata = self._pending_session_context
+        self._pending_session_context = None
+        if context_metadata is None:
+            self.set_session_context(None)
+            context_metadata = self._pending_session_context
+            self._pending_session_context = None
+        if context_metadata is None:  # pragma: no cover - defensive invariant
+            context_metadata = {}
+        self._session_context_metadata = deepcopy(context_metadata)
         self._ws = self._connect()
         self._pending_pcm.clear()
         self._last_text = ""
@@ -275,6 +393,18 @@ class VolcengineStreamingASR:
         }
         if self.language != "auto":
             request["request"]["language"] = self.language
+        context_data = context_metadata.get("context_data")
+        if isinstance(context_data, list) and context_data:
+            request["request"]["corpus"] = {
+                "context": json.dumps(
+                    {
+                        "context_type": _DIALOG_CONTEXT_TYPE,
+                        "context_data": context_data,
+                    },
+                    ensure_ascii=False,
+                    separators=(",", ":"),
+                )
+            }
         self._ws.send(
             _packet(
                 _FULL_CLIENT_REQUEST,
@@ -283,6 +413,8 @@ class VolcengineStreamingASR:
                 serialization=_SERIALIZATION_JSON,
             )
         )
+        if context_data:
+            self._session_context_metadata["status"] = "sent"
         self._next_sequence += 1
         # Audio sending must never wait for a cloud response.  The old design
         # waited up to ``partial_timeout_s`` after *every* audio callback. A

@@ -12,11 +12,12 @@ continues producing Stage2 `ACTIVATE` / `reject` evidence.
 ```text
 IDLE
   |
-  | original Stage1 -> wait 0.5 s -> original Stage2 CNN
+  | Stage1 -> wait 0.3 s -> Stage2 CNN on the rolling 1 s window
   | first ACTIVATE
   v
 ACTIVE / recording original 16 kHz PCM
   |
+  | rolling Stage2 every 0.20 s while active
   | later ACTIVATE     -> same session, reject counter = 0
   | Stage2 reject      -> reject counter += 1
   | N rejects          -> END
@@ -51,25 +52,26 @@ Defaults:
 ```text
 pre-roll                 1.00 s
 ASR input gain            0.00 dB
-Stage2 reject count      2
+Active Stage2 interval   0.20 s
+Stage2 reject count      5
 Stage1 inactivity        1.25 s
 minimum utterance        0.40 s
 maximum utterance       15.00 s
 ```
 
-The inactivity timeout must remain longer than the Stage2 delay (0.50 s), so it
-does not fire while a valid Stage2 result is still pending.
+The inactivity timeout must remain longer than the initial Stage2 delay
+(0.30 s), so it does not fire while a valid first Stage2 result is still pending.
 
 ## Confirmation-tail trimming
 
-When consecutive rejects confirm END, the second reject is useful as evidence
+When consecutive rejects confirm END, the later rejects are useful as evidence
 but its whole audio tail is not useful to ASR. The session controller therefore
 cuts the submitted waveform at the first reject's Stage2 endpoint. This reduces
 far-speech / ambient tail contamination.
 
 ## Why the 1.0 s pre-roll stays
 
-The first Stage2 decision arrives only after the 0.5 s delay. Starting waveform
+The first Stage2 decision arrives only after the 0.3 s delay. Starting waveform
 capture at the ACTIVATE event would lose the beginning of the command. The
 controller keeps the latest 1.0 s of the original 16 kHz Ring waveform and prepends
 it when a new session starts.
@@ -95,3 +97,17 @@ submits the exact same utterance to each worker.
 
 See `ASR_BACKENDS.md` for backend/model selection, comparison commands, cloud
 integration, and the adapter template.
+
+## Doubao semantic dialog context
+
+Only the Volcengine/Doubao Seed-ASR backend reads the currently focused text
+field before opening each utterance stream. The read uses macOS Accessibility or
+Windows UI Automation only: it does not select text, send copy shortcuts, move
+the caret, or touch the clipboard. If the control cannot be read safely, ASR
+starts normally without context.
+
+The most recent text is split into sentence-like fragments and sent newest first
+as the documented stringified `request.corpus.context` value with
+`context_type=dialog_ctx`. The client caps the payload at 20 fragments and a
+conservative 640 characters, below the service's 800-token limit. This path is
+not wired to local or other cloud ASR backends.

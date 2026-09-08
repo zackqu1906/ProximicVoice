@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 
-def test_final_utterance_blocks_next_recognition_until_routing_and_input_finish(
+def test_final_utterance_resumes_immediately_after_direct_dictation_finishes(
     tmp_path, monkeypatch
 ):
     pytest.importorskip("PySide6")
@@ -52,9 +52,6 @@ def test_final_utterance_blocks_next_recognition_until_routing_and_input_finish(
         )
     )
     assert controller.modeCorrectionAvailable is False
-    assert controller._interaction_recognition_suspended is True
-    controller._dictation_commit_timer.stop()
-    controller._commit_pending_dictation()
     assert controller._interaction_recognition_suspended is False
     assert controller._recognition_event.is_set() is True
     controller._voice_history.close(wait=True)

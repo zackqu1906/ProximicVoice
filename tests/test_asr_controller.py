@@ -132,6 +132,30 @@ def test_first_activate_starts_repeated_activate_keeps_session_and_two_rejects_e
     np.testing.assert_allclose(out[320:640], b)
 
 
+def test_endpoint_closes_recognition_gate_before_final_asr_is_submitted():
+    order = []
+
+    class OrderedStreamingRecorder(StreamingRecorder):
+        def end(self, audio):
+            order.append("asr-final-submitted")
+            super().end(audio)
+
+    sink = OrderedStreamingRecorder()
+    gate = make_gate(
+        sink,
+        stage1_inactivity_s=1.0,
+        on_session_end=lambda: order.append("recognition-gate-closed"),
+    )
+    block = np.full(320, 0.2, dtype=np.float32)
+
+    gate.process(block, [activate_event(320)])
+    gate.process(block, [reject_event(640)])
+    gate.process(block, [reject_event(960)])
+
+    assert order == ["recognition-gate-closed", "asr-final-submitted"]
+    assert not gate.active
+
+
 def test_audio_start_clock_points_to_first_pre_roll_sample():
     worker = ImmediateWorker()
     gate = make_gate(worker, pre_roll_s=0.04, stage1_inactivity_s=1.0)
@@ -416,6 +440,32 @@ def test_direct_controller_bypasses_detector_and_rolls_fixed_sessions():
     assert worker.items[0].size == 640
     controller.close()
     assert worker.closed
+
+
+def test_direct_controller_can_reset_after_endpoint_gate_closes():
+    worker = ImmediateWorker()
+    events = []
+    controller = DirectASRSessionController(
+        worker,
+        session_duration_s=0.03,
+        on_session_end=lambda: events.append("gate-closed"),
+    )
+    block = np.full(320, 0.2, dtype=np.float32)
+
+    controller.process(block)
+    controller.process(block)
+    assert events == ["gate-closed"]
+    assert len(worker.items) == 1
+
+    # RecognitionRuntime resets the controller on the next block after the
+    # endpoint callback clears its gate, then resets it once more on resume.
+    controller.reset()
+    controller.reset()
+    controller.process(block)
+    controller.flush()
+
+    assert events == ["gate-closed", "gate-closed"]
+    assert [audio.size for audio in worker.items] == [640, 320]
 
 
 def test_direct_abort_discards_partial_session():

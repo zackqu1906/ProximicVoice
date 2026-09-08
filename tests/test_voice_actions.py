@@ -26,14 +26,31 @@ def _action(
 def test_cancel_and_mode_correction_only_capture_during_an_interaction():
     assert ACTION_UNDO == "undo"
     assert _action(0x1B, alt=False, interaction=True) == ACTION_CANCEL
-    assert _action(0x09, alt=False, correction=True) == ACTION_SWITCH_MODE
+    assert _action(0x77, alt=False, correction=True) == ACTION_SWITCH_MODE
     assert _action(0x1B, alt=False) is None
     assert _action(0x09, alt=False) is None
+    assert _action(0x09, alt=False, correction=True) is None
     assert (
         WindowsVoiceActionHotkeys._action_for_key(
-            0x5A,
+            0x77,
+            alt_down=True,
+            correction_active=True,
+        )
+        is None
+    )
+    assert (
+        WindowsVoiceActionHotkeys._action_for_key(
+            0x77,
             alt_down=False,
             control_down=True,
+            correction_active=True,
+        )
+        is None
+    )
+    assert (
+        WindowsVoiceActionHotkeys._action_for_key(
+            0x1B,
+            alt_down=False,
             undo_active=True,
         )
         == ACTION_UNDO
@@ -42,20 +59,34 @@ def test_cancel_and_mode_correction_only_capture_during_an_interaction():
         WindowsVoiceActionHotkeys._action_for_key(
             0x5A,
             alt_down=False,
-            control_down=True,
-            shift_down=True,
             undo_active=True,
         )
         is None
+    )
+    assert (
+        WindowsVoiceActionHotkeys._action_for_key(
+            0x1B,
+            alt_down=False,
+            interaction_active=True,
+            undo_active=True,
+        )
+        == ACTION_UNDO
     )
 
 
 def test_macos_only_captures_cancel_and_post_application_correction():
     action = MacOSVoiceActionHotkeys._action_for_key
-    assert action(48, correction_active=True) == ACTION_SWITCH_MODE
+    assert action(100, correction_active=True) == ACTION_SWITCH_MODE
+    assert action(48, correction_active=True) is None
+    assert action(100, command_down=True, correction_active=True) is None
+    assert action(100, option_down=True, correction_active=True) is None
     assert action(53, interaction_active=True) == ACTION_CANCEL
-    assert action(6, command_down=True, undo_active=True) == ACTION_UNDO
-    assert action(6, command_down=True, shift_down=True, undo_active=True) is None
+    assert action(53, undo_active=True) == ACTION_UNDO
+    assert action(6, command_down=True, undo_active=True) is None
+    assert (
+        action(53, interaction_active=True, undo_active=True)
+        == ACTION_UNDO
+    )
     assert action(36) is None
     assert action(76) is None
 
@@ -144,4 +175,8 @@ def test_macos_event_tap_consumes_escape_only_during_interaction(monkeypatch):
     assert actions == [ACTION_CANCEL]
     active["value"] = False
     assert FakeQuartz.callback(None, 10, event, None) is event
+    active["value"] = True
+    repeated_letter = {"key": 0, "repeat": 1}
+    assert FakeQuartz.callback(None, 10, repeated_letter, None) is repeated_letter
+    assert actions == [ACTION_CANCEL]
     hook.close()

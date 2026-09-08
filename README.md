@@ -87,6 +87,13 @@ Developer ID 签名并通过 Apple 公证；开发者本地未配置证书时生
 ~/Library/Application Support/ProxiMic Voice/logs/startup.log
 ```
 
+应用正常启动后的交互诊断写入同目录的 `diagnostic.log`。它会关联 session、路由、
+LLM 请求、应用结果，以及连接、F8 类型转换、撤销和取消等关键用户动作；实时 ASR
+partial 和空闲状态下的普通 Stage2 reject 不逐条写入。`diagnostic.log` 每个文件最多
+2 MiB，保留 3 个备份；`startup.log` 每次启动前检查并保留 2 个备份，避免长期占用硬盘。
+排查交互问题时优先提供 `diagnostic.log` 和大致发生时间；如果问题发生后日志已经轮转，
+再附上同目录的 `.1` 备份。日志包含识别文本和模型返回，分享前请确认其中没有敏感内容。
+
 也可以在“终端”直接启动以复现，并把上述日志发给开发者：
 
 ```bash
@@ -94,7 +101,7 @@ Developer ID 签名并通过 Apple 公证；开发者本地未配置证书时生
 ```
 
 macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI，并可通过辅助功能权限听写或修改当前
-文本框；语音处理期间支持全局 `Esc` 取消，应用后可用 `Command+Z` 撤销或用 `Tab`
+文本框；语音处理期间支持全局 `Esc` 取消，应用后可单按 `Esc` 撤销或用 `F8`
 切换处理方式。右 `Alt` 按住说话仍仅在 Windows 上提供。
 
 ## 当前可以做什么
@@ -223,9 +230,13 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 如果大模型没有返回可用的编辑结果，状态浮窗会提示修改未完成，不会修改原文本；
 已知的 `llm_error` 记录在同一条 InteractionRecord 中。
 
-每段语音结束后，主界面的“逐句语音记录”会显示最终裁剪录音和 ASR 文字，可直接播放；
-记录保存在当前用户的应用数据目录，重新打开应用后仍可查看。录音写盘在后台完成。
+每段语音结束后，主界面的“逐句语音记录”会显示最终裁剪录音并可直接播放。听写记录
+以实际输入内容为主体，经过整理时另列识别原文；编辑记录分别显示编辑指令、修改摘要和
+修改结果；撤回后改为醒目的撤回状态，不再把已撤回结果显示成有效 final 文本。记录保存
+在当前用户的应用数据目录，重新打开应用后仍可查看。录音写盘在后台完成。
 完整运行日志默认不占用主界面空间，点击顶栏“实时日志”按钮即可打开并持续查看。
+该窗口保留本次运行最近 1000 行，点击“打开日志目录”可查看跨重启保留且自动轮转的
+`diagnostic.log`；日志只保存在本机应用数据目录。
 
 “暂停语音识别”只暂停 ProxiMic 和 ASR，Ring 仍保持连接；“断开设备”才会释放麦克风和 BLE。
 
@@ -285,7 +296,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 | --- | --- | --- | --- |
 | 本地 | `Qwen3-4B-Instruct-2507` Q4_K_M | llama.cpp `/chat/completions` | Instruct 模式、thinking 关闭、强制本地 tool calling |
 | 火山方舟 | `doubao-seed-2-0-lite-260215` | 方舟 `/responses` | 显式关闭 thinking，支持 function tools |
-| 火山方舟 | `deepseek-v4-flash-260425` | 方舟 `/responses` | 与豆包复用相同 prompt、schema 和校验器 |
+| 火山方舟 | `deepseek-v4-flash-260425` | 方舟 `/responses` | 显式关闭 thinking，与豆包复用相同 prompt、schema 和校验器 |
 
 本地模型在 UI 首帧出现后自动启动并预热固定 prompt。模型加载完成只表示权重已进入内存，
 实际生成速度仍取决于 CPU/GPU、输出 token 数和是否触发重试。

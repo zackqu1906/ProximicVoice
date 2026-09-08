@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import queue
 import threading
 import time
-from typing import Callable, Protocol
+from typing import Any, Callable, Protocol
 
 import numpy as np
 
@@ -65,11 +65,15 @@ class StreamingASRWorker:
         on_update: Callable[[StreamingASRUpdate], None] | None = None,
         on_error: Callable[[str], None] = print,
         on_state: Callable[[str], None] | None = None,
+        context_provider: Callable[[], object | None] | None = None,
+        on_context: Callable[[int, dict[str, Any]], None] | None = None,
     ) -> None:
         self.backend = backend
         self.on_update = on_update
         self.on_error = on_error
         self.on_state = on_state
+        self.context_provider = context_provider
+        self.on_context = on_context
         # Session length is bounded by the controller.  SimpleQueue keeps the
         # real-time producer non-blocking and preserves every audio block.
         self._queue: queue.SimpleQueue[tuple[str, np.ndarray, float] | None] = queue.SimpleQueue()
@@ -77,6 +81,7 @@ class StreamingASRWorker:
         self._session_id = 0
         self._session_model_started_time_s: float | None = None
         self._session_failed = False
+        self._session_error: str | None = None
         self._abort_requested = threading.Event()
         name = getattr(backend, "backend_name", type(backend).__name__)
         set_partial_callback = getattr(backend, "set_partial_callback", None)
@@ -201,6 +206,69 @@ class StreamingASRWorker:
         except Exception:
             return
 
+    def _prepare_session_context(self) -> None:
+        """Bind optional per-utterance context without making ASR depend on it."""
+
+        setter = getattr(self.backend, "set_session_context", None)
+        if not callable(setter):
+            return
+        context: object | None = None
+        if self.context_provider is not None:
+            try:
+                context = self.context_provider()
+            except BaseException as exc:
+                context = {
+                    "status": "unavailable",
+                    "source": "focused_text",
+                    "reason": f"provider_error:{type(exc).__name__}",
+                }
+        try:
+            setter(context)
+        except BaseException as exc:
+            # Context is an accuracy hint.  A malformed or unreadable context
+            # must never prevent the audio stream from starting.
+            try:
+                setter(
+                    {
+                        "status": "unavailable",
+                        "source": "focused_text",
+                        "reason": f"prepare_error:{type(exc).__name__}",
+                    }
+                )
+            except BaseException:
+                # A third-party backend may expose an incompatible method.
+                # Keep recognition functional and omit context diagnostics.
+                return
+
+    def _publish_session_context(self) -> None:
+        metadata = getattr(self.backend, "session_context_metadata", None)
+        if callable(metadata):
+            metadata = metadata()
+        if not isinstance(metadata, dict):
+            return
+        snapshot = dict(metadata)
+        status = str(snapshot.get("status", "unknown") or "unknown")
+        source = str(snapshot.get("source", "unknown") or "unknown")
+        fields = (
+            f"[ASR CONTEXT] session={self._session_id} "
+            f"backend={getattr(self.backend, 'backend_name', type(self.backend).__name__)} "
+            f"status={status} source={source} "
+            f"items={int(snapshot.get('item_count', 0) or 0)} "
+            f"chars={int(snapshot.get('sent_char_count', 0) or 0)} "
+            f"source_chars={int(snapshot.get('source_char_count', 0) or 0)} "
+            f"truncated={'true' if bool(snapshot.get('truncated')) else 'false'}"
+        )
+        reason = str(snapshot.get("reason", "") or "")
+        if reason:
+            fields += f" reason={reason}"
+        self._report_timing(fields)
+        if self.on_context is not None:
+            try:
+                self.on_context(self._session_id, snapshot)
+            except Exception:
+                # Dataset/log observers cannot break live recognition.
+                pass
+
     def _run(self) -> None:
         deferred_item: tuple[str, np.ndarray, float] | None | object = _NO_ITEM
         while True:
@@ -245,6 +313,8 @@ class StreamingASRWorker:
                 if kind == "start":
                     self._session_id += 1
                     self._session_failed = False
+                    self._session_error = None
+                    self._prepare_session_context()
                     model_started_time_s = time.perf_counter()
                     self._session_model_started_time_s = model_started_time_s
                     self._report_timing(
@@ -253,7 +323,10 @@ class StreamingASRWorker:
                         f"{max(0.0, model_started_time_s - chunk_ready_time_s) * 1000:.1f}ms "
                         f"initial_audio={audio.size / self.sample_rate:.3f}s"
                     )
-                    self.backend.start()
+                    try:
+                        self.backend.start()
+                    finally:
+                        self._publish_session_context()
                     self._mark_backend_chunk_ready(chunk_ready_time_s)
                     self._session_samples = int(audio.size)
                     text = self.backend.feed(audio) if audio.size else None
@@ -283,8 +356,24 @@ class StreamingASRWorker:
                         )
                 elif kind == "end":
                     if self._session_failed:
+                        # The producer closes recognition at the utterance
+                        # endpoint. Publish a terminal update even though the
+                        # backend failed earlier, otherwise the UI never gets
+                        # the completion signal that reopens that gate.
+                        self._emit_error(
+                            RuntimeError(
+                                self._session_error
+                                or "streaming ASR session failed before finalization"
+                            ),
+                            is_final=True,
+                            latency_s=max(
+                                0.0, time.perf_counter() - chunk_ready_time_s
+                            ),
+                            chunk_ready_time_s=chunk_ready_time_s,
+                        )
                         self._session_samples = 0
                         self._session_failed = False
+                        self._session_error = None
                         self._session_model_started_time_s = None
                         continue
                     # The controller passes its trimmed final utterance here.
@@ -325,12 +414,14 @@ class StreamingASRWorker:
                     )
                     self._session_samples = 0
                     self._session_model_started_time_s = None
+                    self._session_error = None
                 elif kind == "discard":
                     abort_backend = getattr(self.backend, "abort", None)
                     if callable(abort_backend):
                         abort_backend()
                     self._session_samples = 0
                     self._session_failed = False
+                    self._session_error = None
                     self._session_model_started_time_s = None
                 else:  # pragma: no cover - internal invariant
                     raise RuntimeError(f"Unknown streaming ASR worker message: {kind}")
@@ -348,6 +439,7 @@ class StreamingASRWorker:
                     # keep the first useful error, and drop the rest of this
                     # session.  The next START will establish a fresh stream.
                     self._session_failed = True
+                    self._session_error = str(exc)
                     abort_backend = getattr(self.backend, "abort", None)
                     if callable(abort_backend):
                         try:
@@ -359,4 +451,5 @@ class StreamingASRWorker:
                 elif kind == "end":
                     self._session_samples = 0
                     self._session_failed = False
+                    self._session_error = None
                     self._session_model_started_time_s = None

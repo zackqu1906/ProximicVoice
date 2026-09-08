@@ -60,7 +60,13 @@ def _add_detector_args(parser: argparse.ArgumentParser) -> None:
             "for a trained custom model, auto-load <model>.json when present."
         ),
     )
-    parser.add_argument("--stage2-delay", type=float, default=0.50, help="Seconds after Stage-1 trigger")
+    parser.add_argument("--stage2-delay", type=float, default=0.30, help="Seconds after Stage-1 trigger")
+    parser.add_argument(
+        "--stage2-active-interval",
+        type=float,
+        default=0.20,
+        help="Seconds between rolling Stage-2 runs while an ASR session is active",
+    )
     parser.add_argument("--show-stage1", action="store_true")
 
 
@@ -93,6 +99,7 @@ def _build_detector(args) -> ProxiMicDetector:
         stage1_threshold=args.stage1_threshold,
         stage2_threshold=threshold,
         stage2_delay_s=args.stage2_delay,
+        stage2_active_interval_s=args.stage2_active_interval,
     ).validate()
     model = ProxiMicModel(args.model) if args.model else ProxiMicModel()
     return ProxiMicDetector(cfg, LegacyInferencePipeline(model=model))
@@ -162,7 +169,7 @@ def _add_asr_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--asr-end-rejects",
         type=int,
-        default=2,
+        default=5,
         help="Consecutive Stage2 rejects required to end an active near-speech session.",
     )
     parser.add_argument(
@@ -264,6 +271,9 @@ def _build_session_controller(
     backend_cache=None,
     raw_audio_observer=None,
     raw_session_start_observer=None,
+    session_end_observer=None,
+    asr_context_provider=None,
+    asr_context_observer=None,
 ):
     selected = _selected_asr_backends(args)
     if not selected:
@@ -397,6 +407,15 @@ def _build_session_controller(
                     backend,
                     on_update=publish_streaming_update,
                     on_state=on_state,
+                    # Semantic dialog context is a Volcengine/Seed-ASR
+                    # request feature.  Never expose the focused editor text
+                    # to another backend merely because it is streaming.
+                    context_provider=(
+                        asr_context_provider if name == "volcengine" else None
+                    ),
+                    on_context=(
+                        asr_context_observer if name == "volcengine" else None
+                    ),
                 )
             )
         else:  # pragma: no cover - factory invariant
@@ -437,6 +456,7 @@ def _build_session_controller(
             sink,
             session_duration_s=args.direct_asr_session_duration,
             on_state=on_state,
+            on_session_end=session_end_observer,
         )
 
     if detector is None:  # pragma: no cover - CLI invariant
@@ -450,6 +470,7 @@ def _build_session_controller(
         min_utterance_s=args.asr_min_duration,
         max_utterance_s=args.asr_max_duration,
         on_state=on_state,
+        on_session_end=session_end_observer,
         manual_active=push_to_talk.is_active if push_to_talk is not None else None,
     )
 

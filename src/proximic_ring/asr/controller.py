@@ -37,12 +37,13 @@ class ProximitySessionController:
         sink,
         *,
         pre_roll_s: float = 1.0,
-        end_rejects: int = 2,
+        end_rejects: int = 5,
         stage1_inactivity_s: float = 1.25,
-        stage2_delay_s: float = 0.50,
+        stage2_delay_s: float = 0.30,
         min_utterance_s: float = 0.40,
         max_utterance_s: float = 15.0,
         on_state: Callable[[str], None] | None = None,
+        on_session_end: Callable[[], None] | None = None,
         manual_active: Callable[[], bool] | None = None,
     ) -> None:
         if pre_roll_s < 0:
@@ -70,6 +71,7 @@ class ProximitySessionController:
         self.min_utterance_samples = int(round(min_utterance_s * self.sample_rate))
         self.max_utterance_samples = int(round(max_utterance_s * self.sample_rate))
         self.on_state = on_state
+        self.on_session_end = on_session_end
         self.manual_active = manual_active
 
         # Rolling history is maintained at all times, including during ACTIVE,
@@ -415,6 +417,12 @@ class ProximitySessionController:
             f"rejects={self._consecutive_rejects}"
         )
 
+        # Close the producer-side recognition gate before enqueueing final ASR
+        # work.  Waiting for the asynchronous final callback leaves a window in
+        # which the detector can start a second utterance while this one is
+        # still being recognized/routed/applied.
+        self._notify_session_end()
+
         final_audio = (
             audio if audio is not None else np.empty(0, dtype=np.float32)
         )
@@ -444,6 +452,16 @@ class ProximitySessionController:
         if self.on_state is not None:
             self.on_state(message)
 
+    def _notify_session_end(self) -> None:
+        if self.on_session_end is None:
+            return
+        try:
+            self.on_session_end()
+        except Exception as exc:
+            # Diagnostics/UI integration must not prevent the captured audio
+            # from reaching ASR.
+            self._log(f"[ASR] session-end callback failed: {exc}")
+
 
 # Backward-compatible name used by older code/tests. New code should prefer
 # ProximitySessionController because this class no longer depends on ASR.
@@ -467,12 +485,14 @@ class DirectASRSessionController:
         *,
         session_duration_s: float = 15.0,
         on_state: Callable[[str], None] | None = None,
+        on_session_end: Callable[[], None] | None = None,
     ) -> None:
         if session_duration_s <= 0:
             raise ValueError("session_duration_s must be positive")
         self.sink = ensure_session_sink(sink)
         self.session_samples = int(round(session_duration_s * self.sample_rate))
         self.on_state = on_state
+        self.on_session_end = on_session_end
         self._parts: list[np.ndarray] = []
         self._samples = 0
         self._stream_samples = 0
@@ -556,6 +576,16 @@ class DirectASRSessionController:
         self._session_start_monotonic_ns = None
         self._last_block_end_monotonic_ns = None
 
+    def reset(self) -> None:
+        """Finish an active direct session and restart its local audio clock."""
+        self.flush()
+        self._parts = []
+        self._samples = 0
+        self._stream_samples = 0
+        self._active = False
+        self._session_start_monotonic_ns = None
+        self._last_block_end_monotonic_ns = None
+
     def close(self) -> None:
         self.flush()
         self.sink.close()
@@ -565,6 +595,7 @@ class DirectASRSessionController:
         self._log(
             f"[ASR] END reason={reason} duration={audio.size / self.sample_rate:.2f}s\n"
         )
+        self._notify_session_end()
         self.sink.end(audio)
         self._parts = []
         self._samples = 0
@@ -574,3 +605,11 @@ class DirectASRSessionController:
     def _log(self, message: str) -> None:
         if self.on_state is not None:
             self.on_state(message)
+
+    def _notify_session_end(self) -> None:
+        if self.on_session_end is None:
+            return
+        try:
+            self.on_session_end()
+        except Exception as exc:
+            self._log(f"[ASR] session-end callback failed: {exc}")

@@ -20,7 +20,8 @@ class DetectorConfig:
     model_input_samples: int = 8_000          # 1 s at 8 kHz
 
     stage1_threshold: float = 0.30
-    stage2_delay_s: float = 0.50
+    stage2_delay_s: float = 0.30
+    stage2_active_interval_s: float = 0.20
     stage2_threshold: float = 1.00
 
     def validate(self) -> "DetectorConfig":
@@ -34,6 +35,8 @@ class DetectorConfig:
             raise ValueError("chunk_samples must be positive")
         if self.stage2_delay_s < 0:
             raise ValueError("stage2_delay_s cannot be negative")
+        if self.stage2_active_interval_s <= 0:
+            raise ValueError("stage2_active_interval_s must be positive")
         return self
 
     @property
@@ -43,6 +46,13 @@ class DetectorConfig:
     @property
     def stage2_delay_samples(self) -> int:
         return int(self.stage2_delay_s * self.input_sample_rate)
+
+    @property
+    def stage2_active_interval_samples(self) -> int:
+        return max(
+            self.chunk_samples,
+            int(self.stage2_active_interval_s * self.input_sample_rate),
+        )
 
     def with_overrides(self, **kwargs) -> "DetectorConfig":
         return replace(self, **kwargs).validate()

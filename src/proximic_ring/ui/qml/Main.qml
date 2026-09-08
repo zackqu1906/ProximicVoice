@@ -37,6 +37,8 @@ ApplicationWindow {
         property color outlineColor: "#344155"
         property color titleColor: "#F4F7FB"
         property color shortcutColor: "#93A2B8"
+        property bool busy: false
+        property string busyLabel: "处理中"
         signal triggered()
 
         implicitHeight: 44
@@ -73,27 +75,182 @@ ApplicationWindow {
                 wrapMode: Text.NoWrap
                 clip: true
             }
-            Text {
+            Item {
                 width: parent.width
                 height: 11
-                text: actionButton.shortcut
-                color: actionButton.shortcutColor
-                font.family: root.uiFontFamily
-                font.pixelSize: 9
-                font.letterSpacing: 0.4
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-                wrapMode: Text.NoWrap
-                clip: true
+
+                Row {
+                    anchors.centerIn: parent
+                    spacing: 4
+
+                    Item {
+                        id: inlineBusySpinner
+                        width: actionButton.busy ? 10 : 0
+                        height: 10
+                        visible: actionButton.busy
+
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            y: 0
+                            width: 3
+                            height: 3
+                            radius: 1.5
+                            color: actionButton.titleColor
+                        }
+                        Rectangle {
+                            anchors.horizontalCenter: parent.horizontalCenter
+                            anchors.bottom: parent.bottom
+                            width: 2
+                            height: 2
+                            radius: 1
+                            color: actionButton.shortcutColor
+                            opacity: 0.45
+                        }
+                        RotationAnimator on rotation {
+                            from: 0
+                            to: 360
+                            duration: 720
+                            loops: Animation.Infinite
+                            running: inlineBusySpinner.visible
+                        }
+                    }
+
+                    Text {
+                        height: 11
+                        text: actionButton.busy
+                              ? actionButton.busyLabel
+                              : actionButton.shortcut
+                        color: actionButton.shortcutColor
+                        font.family: root.uiFontFamily
+                        font.pixelSize: 9
+                        font.letterSpacing: 0.4
+                        verticalAlignment: Text.AlignVCenter
+                        wrapMode: Text.NoWrap
+                    }
+                }
             }
         }
 
         MouseArea {
             id: actionMouse
             anchors.fill: parent
+            enabled: actionButton.enabled && !actionButton.busy
             hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
+            cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
             onClicked: actionButton.triggered()
+        }
+    }
+
+    component SegmentedChoice: Rectangle {
+        id: segmentedChoice
+        property var options: []
+        property int currentIndex: 0
+        signal activated(int index)
+
+        implicitHeight: 44
+        radius: 12
+        color: "#0D121A"
+        border.width: 1
+        border.color: "#293448"
+
+        Row {
+            anchors.fill: parent
+            anchors.margins: 4
+            spacing: 4
+
+            Repeater {
+                model: segmentedChoice.options
+
+                Rectangle {
+                    required property int index
+                    required property string modelData
+                    width: (parent.width - Math.max(0, segmentedChoice.options.length - 1) * parent.spacing)
+                           / Math.max(1, segmentedChoice.options.length)
+                    height: parent.height
+                    radius: 9
+                    color: index === segmentedChoice.currentIndex
+                           ? "#314472" : "transparent"
+                    border.width: index === segmentedChoice.currentIndex ? 1 : 0
+                    border.color: "#607DE0"
+                    opacity: segmentedChoice.enabled ? 1.0 : 0.45
+
+                    Behavior on color { ColorAnimation { duration: 120 } }
+
+                    Text {
+                        anchors.fill: parent
+                        anchors.leftMargin: 8
+                        anchors.rightMargin: 8
+                        text: modelData
+                        color: index === segmentedChoice.currentIndex
+                               ? "#F4F7FF" : "#8F9CAF"
+                        font.family: root.uiFontFamily
+                        font.pixelSize: 12
+                        font.weight: index === segmentedChoice.currentIndex
+                                     ? Font.DemiBold : Font.Normal
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                        elide: Text.ElideRight
+                    }
+
+                    MouseArea {
+                        anchors.fill: parent
+                        enabled: segmentedChoice.enabled
+                        hoverEnabled: true
+                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                        onClicked: segmentedChoice.activated(index)
+                    }
+                }
+            }
+        }
+    }
+
+    component SettingsSectionHeader: RowLayout {
+        id: sectionHeader
+        property string title: ""
+        property string badge: ""
+        property color accent: root.primary
+
+        spacing: 9
+
+        Rectangle {
+            Layout.preferredWidth: 4
+            Layout.preferredHeight: 20
+            radius: 2
+            color: sectionHeader.accent
+        }
+        Label {
+            text: sectionHeader.title
+            color: root.textMain
+            font.pixelSize: 15
+            font.bold: true
+        }
+        Item { Layout.fillWidth: true }
+        Rectangle {
+            visible: sectionHeader.badge.length > 0
+            Layout.preferredWidth: sectionBadge.implicitWidth + 16
+            Layout.preferredHeight: 24
+            radius: 12
+            color: Qt.rgba(
+                sectionHeader.accent.r,
+                sectionHeader.accent.g,
+                sectionHeader.accent.b,
+                0.12
+            )
+            border.width: 1
+            border.color: Qt.rgba(
+                sectionHeader.accent.r,
+                sectionHeader.accent.g,
+                sectionHeader.accent.b,
+                0.35
+            )
+            Label {
+                id: sectionBadge
+                anchors.centerIn: parent
+                text: sectionHeader.badge
+                color: sectionHeader.accent
+                font.pixelSize: 10
+                font.bold: true
+            }
         }
     }
 
@@ -294,7 +451,7 @@ ApplicationWindow {
         height: Math.min(620, parent.height - 48)
         modal: true
         popupType: Popup.Item
-        title: "完整实时日志"
+        title: "运行诊断日志"
         closePolicy: Popup.CloseOnEscape
         onOpened: logArea.refreshLog()
 
@@ -368,16 +525,21 @@ ApplicationWindow {
                 Layout.fillWidth: true
                 Label {
                     Layout.fillWidth: true
-                    text: "日志实时更新，但不会改变当前滚动位置"
+                    text: "窗口保留最近 1000 行；完整诊断日志会持久保存并自动轮转"
                     color: root.textMuted
                     font.pixelSize: 11
+                }
+                Button {
+                    objectName: "openDiagnosticLogDirectoryButton"
+                    text: "打开日志目录"
+                    onClicked: appController.openDiagnosticLogDirectory()
                 }
                 Button {
                     objectName: "jumpToLatestLogButton"
                     text: "跳到最新"
                     onClicked: logArea.jumpToLatest()
                 }
-                Button { text: "清空"; onClicked: appController.clearLog() }
+                Button { text: "清空窗口"; onClicked: appController.clearLog() }
                 Button { text: "关闭"; onClicked: runtimeLogDialog.close() }
             }
         }
@@ -555,32 +717,6 @@ ApplicationWindow {
                             ToolTip.visible: hovered
                             ToolTip.text: "读取当前外部文本框，下一段语音作为增删改指令"
                         }
-                        Button {
-                            id: dictationLlmButton
-                            objectName: "dictationLlmButton"
-                            Layout.preferredWidth: 130
-                            Layout.preferredHeight: 42
-                            text: appController.llmEnabled ? "LLM 整理：开" : "LLM 整理：关"
-                            onClicked: appController.toggleDictationLlm()
-                            ToolTip.visible: hovered
-                            ToolTip.text: "仅影响听写后的二次整理；自动模式的听写/指令判断始终使用所选 LLM"
-                            contentItem: Label {
-                                text: parent.text
-                                color: appController.llmEnabled ? "#DCE4FF" : root.textMain
-                                font.pixelSize: 13
-                                font.bold: true
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
-                            background: Rectangle {
-                                radius: 10
-                                color: parent.down
-                                       ? "#34415A"
-                                       : (appController.llmEnabled ? "#314472" : root.panelAlt)
-                                border.width: 1
-                                border.color: appController.llmEnabled ? root.primary : root.border
-                            }
-                        }
                     }
 
                     Label {
@@ -635,13 +771,139 @@ ApplicationWindow {
                         Layout.maximumWidth: 430
                         Layout.maximumHeight: 38
                         text: appController.statusDetail
-                              + (appController.textProcessing ? " · 大模型处理中" : "")
+                              + (appController.textProcessing
+                                 && appController.interactionState === "processing"
+                                 && appController.transcriptText.indexOf("正在处理文本") === 0
+                                 ? " · 大模型处理中" : "")
                         color: root.textMuted
                         font.pixelSize: 13
                         horizontalAlignment: Text.AlignHCenter
                         wrapMode: Text.Wrap
                         maximumLineCount: 2
                         elide: Text.ElideRight
+                    }
+
+                    Rectangle {
+                        id: batteryStatusPill
+                        objectName: "batteryStatusPill"
+                        Layout.alignment: Qt.AlignHCenter
+                        Layout.preferredWidth: Math.min(300, batteryPillContent.implicitWidth + 24)
+                        Layout.preferredHeight: 28
+                        visible: appController.connected
+                        radius: 14
+                        color: "#121925"
+                        border.width: 1
+                        border.color: "#273143"
+
+                        Row {
+                            id: batteryPillContent
+                            anchors.centerIn: parent
+                            spacing: 8
+
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 6
+                                height: 6
+                                radius: 3
+                                color: "#4DD4AC"
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: Math.min(132, implicitWidth)
+                                text: appController.deviceName
+                                color: "#B5BECC"
+                                font.family: root.uiFontFamily
+                                font.pixelSize: 11
+                                elide: Text.ElideRight
+                            }
+
+                            Rectangle {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 1
+                                height: 12
+                                color: "#303A4C"
+                            }
+
+                            Item {
+                                anchors.verticalCenter: parent.verticalCenter
+                                width: 22
+                                height: 12
+
+                                Rectangle {
+                                    id: batteryBody
+                                    anchors.left: parent.left
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 18
+                                    height: 10
+                                    radius: 2
+                                    color: "transparent"
+                                    border.width: 1
+                                    border.color: appController.batteryAvailable
+                                                  ? batteryLevelFill.color
+                                                  : "#647085"
+
+                                    Rectangle {
+                                        id: batteryLevelFill
+                                        objectName: "batteryLevelFill"
+                                        x: 2
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        height: 6
+                                        width: appController.batteryAvailable
+                                               ? Math.max(2, Math.round(14 * appController.batteryPercentage / 100))
+                                               : 2
+                                        radius: 1
+                                        color: !appController.batteryAvailable
+                                               ? "#647085"
+                                               : (appController.batteryPercentage <= 15
+                                                  ? "#FF7B86"
+                                                  : (appController.batteryPercentage <= 35
+                                                     ? "#F5B942"
+                                                     : "#4DD4AC"))
+
+                                        Behavior on width {
+                                            NumberAnimation { duration: 220; easing.type: Easing.OutCubic }
+                                        }
+                                    }
+                                }
+
+                                Rectangle {
+                                    anchors.left: batteryBody.right
+                                    anchors.leftMargin: 1
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    width: 2
+                                    height: 5
+                                    radius: 1
+                                    color: appController.batteryAvailable
+                                           ? batteryLevelFill.color
+                                           : "#647085"
+                                }
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: appController.batteryAvailable
+                                      ? appController.batteryPercentage + "%"
+                                      : (appController.batteryQueryComplete
+                                         ? "电量不可用"
+                                         : "电量读取中")
+                                color: appController.batteryAvailable
+                                       ? "#D9E0EA"
+                                       : root.textMuted
+                                font.family: root.uiFontFamily
+                                font.pixelSize: 11
+                                font.weight: Font.DemiBold
+                            }
+
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                visible: appController.batteryCharging || appController.batteryFull
+                                text: appController.batteryCharging ? "充电中" : "已充满"
+                                color: "#72D9B8"
+                                font.family: root.uiFontFamily
+                                font.pixelSize: 10
+                            }
+                        }
                     }
 
                     RowLayout {
@@ -747,15 +1009,25 @@ ApplicationWindow {
                         Layout.fillHeight: true
                         clip: true
                         spacing: 8
-                        model: appController.voiceHistoryEntries
+                        model: appController.voiceHistoryModel
                         ScrollBar.vertical: ScrollBar { }
                         delegate: Rectangle {
-                            required property var modelData
+                            required property var entry
+                            property bool editEntry: entry.mode === "edit"
+                            property bool undoneEntry: entry.outcome === "undone"
+                            property bool resultAvailable: Boolean(entry.candidateAvailable)
+                                                           || Boolean(entry.candidateText)
+                            property bool resultEmpty: Boolean(entry.candidateEmpty)
                             width: voiceHistoryList.width
-                            height: Math.max(68, historyContent.implicitHeight + 18)
+                            height: Math.max(82, historyContent.implicitHeight + 18)
                             radius: 10
-                            color: root.panelAlt
-                            border.color: root.border
+                            color: undoneEntry
+                                   ? "#241F1B"
+                                   : (editEntry ? "#211E2C" : root.panelAlt)
+                            border.color: undoneEntry
+                                          ? "#795A35"
+                                          : (editEntry ? "#5D507C" : root.border)
+                            border.width: editEntry || undoneEntry ? 1.2 : 1
 
                             RowLayout {
                                 anchors.fill: parent
@@ -768,35 +1040,131 @@ ApplicationWindow {
                                 ColumnLayout {
                                     id: historyContent
                                     Layout.fillWidth: true
-                                    spacing: 4
-                                    Label {
-                                        text: modelData.displayTime + "  ·  "
-                                              + modelData.durationLabel
-                                              + (modelData.backend ? "  ·  " + modelData.backend : "")
-                                        color: root.textMuted
-                                        font.pixelSize: 10
+                                    spacing: 5
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: 8
+                                        Label {
+                                            objectName: "voiceHistoryMetadata"
+                                            Layout.fillWidth: true
+                                            text: entry.displayTime + "  ·  "
+                                                  + entry.durationLabel
+                                                  + (entry.backend ? "  ·  " + entry.backend : "")
+                                                  + (entry.application ? "  ·  " + entry.application : "")
+                                            color: root.textMuted
+                                            font.pixelSize: 10
+                                            elide: Text.ElideRight
+                                        }
+                                        Rectangle {
+                                            implicitWidth: historyModeLabel.implicitWidth + 14
+                                            implicitHeight: 22
+                                            radius: 11
+                                            color: undoneEntry
+                                                   ? "#4A3521"
+                                                   : (editEntry ? "#392F50" : "#203B4D")
+                                            border.color: undoneEntry
+                                                          ? "#A77943"
+                                                          : (editEntry ? "#75639D" : "#37647F")
+                                            Label {
+                                                id: historyModeLabel
+                                                anchors.centerIn: parent
+                                                text: undoneEntry
+                                                      ? (editEntry ? "已撤回编辑" : "已撤回听写")
+                                                      : (entry.modeLabel
+                                                         || (editEntry ? "编辑指令" : "听写输入"))
+                                                color: undoneEntry
+                                                       ? "#F1B36A"
+                                                       : (editEntry ? "#C9B2F2" : "#85C9ED")
+                                                font.pixelSize: 10
+                                                font.bold: true
+                                            }
+                                        }
                                     }
                                     Label {
-                                        text: modelData.dataSummary
-                                        color: modelData.hasImu ? "#4DD4AC" : root.textMuted
+                                        text: entry.dataSummary
+                                        color: entry.hasImu ? "#4DD4AC" : root.textMuted
                                         font.pixelSize: 10
                                     }
                                     Label {
                                         id: historyText
+                                        objectName: "voiceHistoryPrimaryText"
                                         Layout.fillWidth: true
-                                        text: modelData.text
-                                        color: modelData.recognized ? root.textMain : root.textMuted
+                                        text: undoneEntry
+                                              ? ((editEntry ? "原编辑指令：" : "原听写内容：")
+                                                 + entry.text)
+                                              : (editEntry
+                                                 ? "编辑指令：" + entry.text
+                                                 : "输入内容："
+                                                   + (resultAvailable
+                                                      ? (resultEmpty
+                                                         ? "（空文本）"
+                                                         : entry.candidateText)
+                                                      : entry.text))
+                                        color: entry.recognized ? root.textMain : root.textMuted
                                         font.pixelSize: 13
+                                        font.bold: editEntry && !undoneEntry
                                         wrapMode: Text.Wrap
                                     }
                                     Label {
+                                        objectName: "voiceHistorySourceText"
                                         Layout.fillWidth: true
-                                        visible: Boolean(modelData.candidateText)
-                                                 && modelData.candidateText !== modelData.text
-                                        text: "处理结果：" + modelData.candidateText
+                                        visible: !editEntry
+                                                 && !undoneEntry
+                                                 && resultAvailable
+                                                 && !resultEmpty
+                                                 && entry.candidateText !== entry.text
+                                        text: "识别原文：" + entry.text
+                                        color: root.textMuted
+                                        font.pixelSize: 11
+                                        wrapMode: Text.Wrap
+                                    }
+                                    Label {
+                                        objectName: "voiceHistoryEditSummary"
+                                        Layout.fillWidth: true
+                                        visible: editEntry
+                                                 && (Boolean(entry.editSummary)
+                                                     || (!undoneEntry && resultAvailable))
+                                        text: (undoneEntry ? "已撤回的修改：" : "修改摘要：")
+                                              + (entry.editSummary || "修改已应用")
+                                        color: undoneEntry ? "#F1B36A" : "#BFA7EA"
+                                        font.pixelSize: 12
+                                        font.bold: true
+                                        wrapMode: Text.Wrap
+                                    }
+                                    Label {
+                                        objectName: "voiceHistoryCandidateText"
+                                        Layout.fillWidth: true
+                                        visible: editEntry
+                                                 && !undoneEntry
+                                                 && resultAvailable
+                                        text: resultEmpty
+                                              ? "修改结果：已清空文本"
+                                              : "修改结果：" + entry.candidateText
                                         color: "#C9B2F2"
                                         font.pixelSize: 12
                                         wrapMode: Text.Wrap
+                                    }
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        visible: undoneEntry
+                                        spacing: 7
+                                        Label {
+                                            objectName: "voiceHistoryOutcomeStatus"
+                                            text: "已撤回"
+                                            color: "#F1B36A"
+                                            font.pixelSize: 11
+                                            font.bold: true
+                                        }
+                                        Label {
+                                            objectName: "voiceHistoryOutcomeDetail"
+                                            Layout.fillWidth: true
+                                            text: editEntry
+                                                  ? "文本已恢复到编辑前状态"
+                                                  : "本次听写已从原文本框移除"
+                                            color: root.textMuted
+                                            font.pixelSize: 11
+                                            wrapMode: Text.Wrap
+                                        }
                                     }
                                 }
                                 Button {
@@ -813,13 +1181,13 @@ ApplicationWindow {
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideNone
                                     }
-                                    onClicked: appController.openVoiceHistoryLocation(modelData.recordPath)
+                                    onClicked: appController.openVoiceHistoryLocation(entry.recordPath)
                                 }
                                 Button {
                                     objectName: "voiceHistoryPlayButton"
                                     Layout.minimumWidth: 88
                                     Layout.preferredWidth: 88
-                                    text: appController.playingVoicePath === modelData.audioPath
+                                    text: appController.playingVoicePath === entry.audioPath
                                           ? "停止播放" : "播放录音"
                                     font.pixelSize: 12
                                     contentItem: Label {
@@ -830,7 +1198,7 @@ ApplicationWindow {
                                         verticalAlignment: Text.AlignVCenter
                                         elide: Text.ElideNone
                                     }
-                                    onClicked: appController.playVoiceHistory(modelData.audioPath)
+                                    onClicked: appController.playVoiceHistory(entry.audioPath)
                                 }
                             }
                         }
@@ -878,8 +1246,23 @@ ApplicationWindow {
             height: Math.min(680, parent.height - 48)
             modal: true
             popupType: Popup.Item
-            title: "设备与识别设置"
+            title: "设置"
             closePolicy: Popup.CloseOnEscape
+            readonly property bool deviceSettingsLocked:
+                appController.connected || appController.busy
+            function stage1Sensitivity(threshold) {
+                var safe = Math.max(0.001, Math.min(0.05, Number(threshold)))
+                return 1 + 9 * Math.log(0.05 / safe) / Math.log(50)
+            }
+            function thresholdForSensitivity(sensitivity) {
+                return 0.05 * Math.pow(0.02, (Number(sensitivity) - 1) / 9)
+            }
+            background: Rectangle {
+                radius: 18
+                color: "#0F141D"
+                border.width: 1
+                border.color: "#2A3548"
+            }
 
             function goBack() {
                 runtimeSettingsDialog.close()
@@ -900,12 +1283,25 @@ ApplicationWindow {
                 ColumnLayout {
                     width: runtimeSettingsScroll.availableWidth
                     spacing: 14
-                    enabled: !appController.connected && !appController.busy
-                    opacity: enabled ? 1.0 : 0.55
 
-                    Label { text: "设置会自动保存，下次启动继续使用"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: runtimeSettingsDialog.deviceSettingsLocked
+                              ? "连接期间可调整即时设置；灰色设备和 ASR 设置需断开后修改。"
+                              : "设置会自动保存，下次启动继续使用"
+                        color: runtimeSettingsDialog.deviceSettingsLocked ? "#AFC0D8" : root.textMuted
+                        font.pixelSize: 12
+                        wrapMode: Text.Wrap
+                    }
 
-                    Label { text: "Ring 设备"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    SettingsSectionHeader {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        title: "语音设备"
+                        badge: runtimeSettingsDialog.deviceSettingsLocked ? "断开后修改" : "可修改"
+                        accent: "#6F8BFF"
+                    }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         text: "通过主界面的“选择并连接设备”扫描附近设备，再点击对应设备连接。"
@@ -913,14 +1309,16 @@ ApplicationWindow {
                         font.pixelSize: 12
                         wrapMode: Text.Wrap
                     }
-                    Label { text: "Ring 音频编码"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    Label { text: "连接质量"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
                     ComboBox {
                         id: audioEncodingCombo
                         objectName: "audioEncodingCombo"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        model: ["PCM（原始，高带宽）", "ADPCM（低带宽）", "Opus（推荐，连接更稳定）"]
-                        currentIndex: Math.max(0, ["pcm", "adpcm", "opus"].indexOf(appController.audioEncoding))
-                        onActivated: appController.audioEncoding = ["pcm", "adpcm", "opus"][currentIndex]
+                        Layout.preferredHeight: 44
+                        model: ["稳定优先（推荐）", "平衡模式", "原始音质"]
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                        currentIndex: Math.max(0, ["opus", "adpcm", "pcm"].indexOf(appController.audioEncoding))
+                        onActivated: appController.audioEncoding = ["opus", "adpcm", "pcm"][currentIndex]
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -935,44 +1333,71 @@ ApplicationWindow {
                     }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
-                    Label { text: "ProxiMic 模型"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    TextField {
+                    SettingsSectionHeader {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.modelPath
-                        onEditingFinished: appController.modelPath = text
-                        onActiveFocusChanged: if (!activeFocus) cursorPosition = 0
-                        Component.onCompleted: cursorPosition = 0
+                        title: "靠近说话检测"
+                        badge: "实时生效"
+                        accent: "#55D6AE"
                     }
-                    Label { text: "Stage1 threshold"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    TextField {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.stage1Threshold.toString()
-                        validator: DoubleValidator { bottom: 0.000001; top: 1.0; notation: DoubleValidator.StandardNotation }
-                        onEditingFinished: appController.stage1Threshold = Number(text)
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        Label { text: "声音触发灵敏度"; color: root.textMuted; font.pixelSize: 12 }
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            text: Math.round(stage1SensitivitySlider.value) + " / 10"
+                            color: root.textMain
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                    }
+                    Slider {
+                        id: stage1SensitivitySlider
+                        objectName: "stage1SensitivitySlider"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        from: 1
+                        to: 10
+                        stepSize: 1
+                        value: runtimeSettingsDialog.stage1Sensitivity(appController.stage1Threshold)
+                        onMoved: appController.stage1Threshold = runtimeSettingsDialog.thresholdForSensitivity(value)
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "数值越高越容易触发；连接期间调整会立即生效。"
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
                     }
 
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
-                    Label { text: "ASR 后端"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    ComboBox {
+                    SettingsSectionHeader {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        model: ["streaming_sensevoice", "funasr_nano", "volcengine"]
-                        currentIndex: Math.max(0, model.indexOf(appController.asrBackend))
-                        onActivated: appController.asrBackend = currentText
+                        title: "语音识别"
+                        badge: runtimeSettingsDialog.deviceSettingsLocked ? "部分需断开" : "可修改"
+                        accent: "#8EA4FF"
                     }
-                    Label { text: "ASR 模型"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    TextField {
+                    ComboBox {
+                        id: asrBackendCombo
+                        objectName: "asrBackendCombo"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.asrModel
-                        placeholderText: appController.asrBackend === "funasr_nano" ? "留空则优先使用本地 checkpoint" : ""
-                        onEditingFinished: appController.asrModel = text
+                        Layout.preferredHeight: 44
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                        model: ["实时识别（推荐）", "本地高精度", "在线识别"]
+                        currentIndex: Math.max(0, ["streaming_sensevoice", "funasr_nano", "volcengine"].indexOf(appController.asrBackend))
+                        onActivated: appController.asrBackend = ["streaming_sensevoice", "funasr_nano", "volcengine"][currentIndex]
                     }
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
                         Label {
-                            text: "ASR 输入增益"
+                            text: "识别音量增强"
                             color: root.textMuted
                             font.pixelSize: 12
                         }
@@ -1000,20 +1425,22 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        text: "仅增强送入 ASR 和语音记录的音频，不影响近点模型。默认 0 dB；弱声可先试 +6 dB，过高可能削波，重新连接后生效。"
+                        text: "仅增强送入 ASR 和语音记录的音频，不影响近点模型。默认 0 dB；弱声可先试 +6 dB，过高可能削波。连接期间修改会实时生效。"
                         color: root.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
                     }
                     RowLayout {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; spacing: 10
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
                         ColumnLayout {
                             Layout.fillWidth: true
-                            Label { text: "运行设备（本地 ASR）"; color: root.textMuted; font.pixelSize: 12 }
+                            Label { text: "本地识别性能"; color: root.textMuted; font.pixelSize: 12 }
                             ComboBox {
                                 id: asrDeviceCombo
                                 objectName: "asrDeviceCombo"
                                 Layout.fillWidth: true
+                                Layout.preferredHeight: 42
                                 model: appController.computeDevices
                                 textRole: "label"
                                 valueRole: "value"
@@ -1026,10 +1453,13 @@ ApplicationWindow {
                             Layout.preferredWidth: 110
                             Label { text: "语言"; color: root.textMuted; font.pixelSize: 12 }
                             ComboBox {
+                                id: asrLanguageCombo
+                                objectName: "asrLanguageCombo"
                                 Layout.fillWidth: true
-                                model: ["zh", "auto", "en", "yue", "ja", "ko"]
-                                currentIndex: Math.max(0, model.indexOf(appController.asrLanguage))
-                                onActivated: appController.asrLanguage = currentText
+                                Layout.preferredHeight: 42
+                                model: ["中文", "自动", "英语", "粤语", "日语", "韩语"]
+                                currentIndex: Math.max(0, ["zh", "auto", "en", "yue", "ja", "ko"].indexOf(appController.asrLanguage))
+                                onActivated: appController.asrLanguage = ["zh", "auto", "en", "yue", "ja", "ko"][currentIndex]
                             }
                         }
                     }
@@ -1057,6 +1487,7 @@ ApplicationWindow {
                         Layout.rightMargin: 20
                         spacing: 8
                         visible: appController.asrBackend === "volcengine"
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
 
                         TextField {
                             id: asrApiKeyField
@@ -1087,38 +1518,6 @@ ApplicationWindow {
                         enabled: !appController.connected && !appController.busy
                         onClicked: gpuInstallDialog.open()
                     }
-                    Label {
-                        text: "streaming-sensevoice 目录"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.asrBackend === "streaming_sensevoice"
-                    }
-                    TextField {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.streamingRepo
-                        placeholderText: "留空则使用已安装的包"
-                        onEditingFinished: appController.streamingRepo = text
-                        onActiveFocusChanged: if (!activeFocus) cursorPosition = 0
-                        Component.onCompleted: cursorPosition = 0
-                        visible: appController.asrBackend === "streaming_sensevoice"
-                    }
-                    Label {
-                        text: "Fun-ASR-main 目录"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.asrBackend === "funasr_nano"
-                    }
-                    TextField {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.funasrRepo
-                        placeholderText: "必须包含 model.py"
-                        onEditingFinished: appController.funasrRepo = text
-                        onActiveFocusChanged: if (!activeFocus) cursorPosition = 0
-                        Component.onCompleted: cursorPosition = 0
-                        visible: appController.asrBackend === "funasr_nano"
-                    }
                     RowLayout {
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
@@ -1145,6 +1544,7 @@ ApplicationWindow {
                         Layout.rightMargin: 20
                         Layout.preferredHeight: 116
                         visible: appController.asrBackend === "funasr_nano"
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
                         color: root.panelAlt
                         radius: 9
                         border.width: 1
@@ -1185,7 +1585,7 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        text: "也支持逗号或分号分隔；自动去空和去重，重新连接后生效。"
+                        text: "也支持逗号或分号分隔；自动去空和去重，断开并重新连接后生效。"
                         color: root.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
@@ -1194,14 +1594,73 @@ ApplicationWindow {
 
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
-                    Label { text: "听写 / 指令切换"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    ComboBox {
+                    SettingsSectionHeader {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        title: "使用方式"
+                        badge: "即时保存"
+                        accent: "#C89BFF"
+                    }
+                    Label { text: "撤销浮窗"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    SegmentedChoice {
+                        id: appliedOverlayStyleCombo
+                        objectName: "appliedOverlayStyleCombo"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        options: ["普通浮窗", "极简浮窗"]
+                        currentIndex: appController.appliedOverlayStyle === "compact" ? 1 : 0
+                        onActivated: function(index) {
+                            appController.appliedOverlayStyle = index === 1 ? "compact" : "normal"
+                        }
+                    }
+                    Label {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.appliedOverlayStyle === "compact"
+                              ? "仅保留撤销与语音类型转换按钮，占用更少空间。"
+                              : "在按钮上方显示本次输入或修改的简短摘要；较长内容会自动省略。"
+                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        Label { text: "撤销浮窗显示时长"; color: root.textMuted; font.pixelSize: 12 }
+                        Item { Layout.fillWidth: true }
+                        Label {
+                            text: Math.round(appliedOverlayDurationSlider.value) + " 秒"
+                            color: root.textMain
+                            font.pixelSize: 12
+                            font.bold: true
+                        }
+                    }
+                    Slider {
+                        id: appliedOverlayDurationSlider
+                        objectName: "appliedOverlayDurationSlider"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        from: 1
+                        to: 10
+                        stepSize: 1
+                        value: appController.appliedOverlayDurationSeconds
+                        onMoved: appController.appliedOverlayDurationSeconds = Math.round(value)
+                    }
+                    Label {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: "连接设备期间也可即时调整；仅改变浮窗停留时间，不会清除撤销记录。"
+                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                    }
+
+                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
+
+                    Label { text: "听写与指令识别"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    SegmentedChoice {
                         id: inputRoutingModeCombo
                         objectName: "inputRoutingModeCombo"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        model: ["自动判断（LLM）", "手动切换"]
+                        options: ["自动判断", "手动选择"]
                         currentIndex: appController.inputRoutingMode === "auto" ? 0 : 1
-                        onActivated: appController.inputRoutingMode = currentIndex === 0 ? "auto" : "manual"
+                        onActivated: function(index) {
+                            appController.inputRoutingMode = index === 0 ? "auto" : "manual"
+                        }
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -1211,20 +1670,50 @@ ApplicationWindow {
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
 
-                    Label { text: "文本大模型"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    ComboBox {
+                    Switch {
+                        id: dictationLlmSwitch
+                        objectName: "dictationLlmSwitch"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "使用大模型整理听写文本"
+                        checked: appController.llmEnabled
+                        onToggled: appController.llmEnabled = checked
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "关闭后，普通听写会直接使用语音识别结果；编辑指令和自动判断仍会使用文本模型。"
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
+
+                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
+
+                    SettingsSectionHeader {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        title: "文本助手"
+                        badge: "下一句话生效"
+                        accent: "#F0B85A"
+                    }
+                    Label { text: "运行方式"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    SegmentedChoice {
                         id: llmProviderCombo
                         objectName: "llmProviderCombo"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        model: ["本地 GGUF", "火山方舟（在线）"]
+                        options: ["本地运行", "在线服务"]
                         currentIndex: appController.llmProvider === "local" ? 0 : 1
-                        onActivated: appController.llmProvider = currentIndex === 0 ? "local" : "volcengine"
+                        onActivated: function(index) {
+                            appController.llmProvider = index === 0 ? "local" : "volcengine"
+                        }
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         text: appController.llmProvider === "local"
-                            ? "自动路由和修改模式使用本地 GGUF；听写是否二次整理由上方开关决定。首次处理时自动启动，全程离线。"
-                            : "自动路由和修改模式使用所选在线模型；听写是否二次整理由上方开关决定。Key 会保存在当前用户的应用设置中。"
+                            ? "使用本机文本模型，首次处理时自动启动，内容不会发送到云端。"
+                            : "使用在线文本服务处理编辑指令和听写整理。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
                     RowLayout {
@@ -1249,92 +1738,27 @@ ApplicationWindow {
                         }
                     }
                     Label {
-                        text: "本地 llama-server.exe"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.llmProvider === "local"
-                    }
-                    TextField {
-                        id: llmLocalServerField
-                        objectName: "llmLocalServerField"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.llmLocalServerPath
-                        placeholderText: "llama-server.exe 的完整路径"
-                        onEditingFinished: appController.llmLocalServerPath = text
-                        onActiveFocusChanged: if (!activeFocus) cursorPosition = 0
-                        Component.onCompleted: cursorPosition = 0
-                        visible: appController.llmProvider === "local"
-                    }
-                    Label {
-                        text: "本地 GGUF 模型"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.llmProvider === "local"
-                    }
-                    TextField {
-                        id: llmLocalModelField
-                        objectName: "llmLocalModelField"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.llmLocalModelPath
-                        placeholderText: "Qwen_Qwen3-4B-Instruct-2507-Q4_K_M.gguf 的完整路径"
-                        onEditingFinished: appController.llmLocalModelPath = text
-                        onActiveFocusChanged: if (!activeFocus) cursorPosition = 0
-                        Component.onCompleted: cursorPosition = 0
-                        visible: appController.llmProvider === "local"
-                    }
-                    Label {
-                        text: "方舟 API Base URL"
+                        text: "在线模型"
                         color: root.textMuted
                         font.pixelSize: 12
                         Layout.leftMargin: 20
                         visible: appController.llmProvider !== "local"
                     }
-                    TextField {
-                        id: llmBaseUrlField
-                        objectName: "llmBaseUrlField"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.llmBaseUrl
-                        onEditingFinished: appController.llmBaseUrl = text
-                        visible: appController.llmProvider !== "local"
-                    }
-                    Label {
-                        text: "方舟模型"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.llmProvider !== "local"
-                    }
-                    ComboBox {
+                    SegmentedChoice {
                         id: llmModelCombo
                         objectName: "llmModelCombo"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        model: ["豆包 Seed 2.0 Lite", "DeepSeek V4 Flash"]
+                        options: ["豆包 Seed 2.0", "DeepSeek V4"]
                         currentIndex: appController.llmModel === "deepseek-v4-flash-260425" ? 1 : 0
-                        onActivated: appController.llmModel = currentIndex === 0
-                            ? "doubao-seed-2-0-lite-260215"
-                            : "deepseek-v4-flash-260425"
+                        onActivated: function(index) {
+                            appController.llmModel = index === 0
+                                ? "doubao-seed-2-0-lite-260215"
+                                : "deepseek-v4-flash-260425"
+                        }
                         visible: appController.llmProvider !== "local"
                     }
                     Label {
-                        text: "模型 ID（高级配置）"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.llmProvider !== "local"
-                    }
-                    TextField {
-                        id: llmModelField
-                        objectName: "llmModelField"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.llmModel
-                        placeholderText: "方舟 Model ID"
-                        onEditingFinished: appController.llmModel = text
-                        visible: appController.llmProvider !== "local"
-                    }
-                    Label {
-                        text: "线上大模型 API Key"
+                        text: "在线服务密钥"
                         color: root.textMuted
                         font.pixelSize: 12
                         Layout.leftMargin: 20
@@ -1364,21 +1788,11 @@ ApplicationWindow {
                             text: checked ? "隐藏" : "显示"
                         }
                     }
-                    RowLayout {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        Label { text: "请求超时（秒）"; color: root.textMuted; font.pixelSize: 12 }
-                        Item { Layout.fillWidth: true }
-                        SpinBox {
-                            from: 1
-                            to: 300
-                            value: Math.round(appController.llmTimeoutSeconds)
-                            onValueModified: appController.llmTimeoutSeconds = value
-                        }
-                    }
-
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
                     Switch {
+                        id: desktopOutputSwitch
+                        objectName: "desktopOutputSwitch"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         text: "识别完成后输入到当前光标"
                         checked: appController.desktopOutputEnabled
@@ -1386,7 +1800,10 @@ ApplicationWindow {
                         visible: Qt.platform.os === "windows" || Qt.platform.os === "osx"
                     }
                     Switch {
+                        id: pushToTalkSwitch
+                        objectName: "pushToTalkSwitch"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
                         text: "启用右 Alt 按住说话"
                         checked: appController.pushToTalkEnabled
                         onToggled: appController.pushToTalkEnabled = checked
@@ -1430,7 +1847,7 @@ ApplicationWindow {
                     Label {
                         Layout.fillWidth: true
                         text: appController.connected || appController.busy
-                              ? "使用中仅可查看设置"
+                              ? "即时设置会立即或从下一句话开始生效"
                               : "完成设置后点击应用返回"
                         color: root.textMuted
                         font.pixelSize: 11
@@ -1452,7 +1869,6 @@ ApplicationWindow {
                         Layout.preferredHeight: 38
                         text: "应用"
                         highlighted: true
-                        enabled: !appController.connected && !appController.busy
                         onClicked: runtimeSettingsDialog.applyAndClose()
                     }
                 }
@@ -1466,7 +1882,16 @@ ApplicationWindow {
         transientParent: null
         readonly property bool showsRecognizedInstruction:
             appController.transcriptText.indexOf(" · 指令：") >= 0
-        width: showsRecognizedInstruction
+        readonly property bool showsProcessingModeSwitch:
+            showsRecognizedInstruction
+            || appController.processingModeCorrectionAvailable
+        readonly property string statusText: {
+            var marker = appController.transcriptText.indexOf(" · 指令：")
+            return marker >= 0
+                ? appController.transcriptText.substring(0, marker)
+                : appController.transcriptText
+        }
+        width: showsProcessingModeSwitch
             ? Math.min(620, Screen.width - 32)
             : (appController.interactionCanCancel ? 366 : 300)
         height: 64
@@ -1498,15 +1923,31 @@ ApplicationWindow {
                 anchors.leftMargin: 18
                 anchors.rightMargin: 12
                 spacing: 10
-                Label {
-                    id: overlayText
-                    objectName: "statusOverlayText"
+                ColumnLayout {
                     Layout.fillWidth: true
-                    text: appController.transcriptText
-                    color: appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB"
-                    font.family: root.uiFontFamily
-                    font.pixelSize: 15
-                    elide: Text.ElideRight
+                    Layout.alignment: Qt.AlignVCenter
+                    spacing: 2
+                    Label {
+                        id: overlayStatusText
+                        objectName: "statusOverlayText"
+                        Layout.fillWidth: true
+                        text: transcriptOverlay.statusText
+                        color: "#93A0B4"
+                        font.family: root.uiFontFamily
+                        font.pixelSize: 10
+                        elide: Text.ElideRight
+                    }
+                    Label {
+                        id: overlayText
+                        objectName: "asrOverlayText"
+                        Layout.fillWidth: true
+                        text: appController.transcriptPrimaryText
+                        visible: text.length > 0
+                        color: appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB"
+                        font.family: root.uiFontFamily
+                        font.pixelSize: 15
+                        elide: Text.ElideRight
+                    }
                 }
                 OverlayActionButton {
                     id: processingSwitchModeButton
@@ -1514,13 +1955,13 @@ ApplicationWindow {
                     // Reserve the slot as soon as the edit instruction is
                     // known. After three seconds only opacity changes, so the
                     // status text and window do not visibly jump or resize.
-                    visible: transcriptOverlay.showsRecognizedInstruction
+                    visible: transcriptOverlay.showsProcessingModeSwitch
                     enabled: appController.processingModeCorrectionAvailable
                     opacity: enabled ? 1 : 0
                     Layout.preferredWidth: 132
                     Layout.preferredHeight: 44
                     title: "刚刚是输入内容"
-                    shortcut: "Tab"
+                    shortcut: "F8"
                     fillColor: "#17302D"
                     hoverColor: "#1D3D38"
                     pressedColor: "#244B44"
@@ -1558,15 +1999,34 @@ ApplicationWindow {
     Window {
         id: appliedActionOverlay
         objectName: "appliedActionOverlay"
+        property bool userPositioned: false
+        property bool systemDragActive: false
+        property real userX: 0
+        property real userY: 0
+        property var rememberedApplicationPositions: ({})
+        readonly property string placementKey:
+            appController.appliedPopupPlacementKey
+        readonly property string applicationKey:
+            appController.appliedPopupApplicationKey
+        readonly property bool compactStyle:
+            appController.appliedOverlayStyle === "compact"
+        readonly property bool showsModeCorrection:
+            appController.modeCorrectionAvailable
+            || appController.modeCorrectionFailed
         transientParent: null
         readonly property bool hasTargetBounds:
             appController.appliedPopupTargetWidth > 0
             && appController.appliedPopupTargetHeight > 0
         readonly property bool hasCaretBounds:
             appController.appliedPopupCaretHeight > 0
-        width: appController.modeCorrectionAvailable ? 284 : 102
-        height: 56
-        x: {
+        width: Math.min(
+            compactStyle
+                ? (showsModeCorrection ? 316 : 134)
+                : (showsModeCorrection ? 430 : 360),
+            Screen.width - 16
+        )
+        height: compactStyle ? 56 : 120
+        function automaticX() {
             if (!hasCaretBounds)
                 return Math.round((Screen.width - width) / 2)
             var right = appController.appliedPopupCaretX
@@ -1579,7 +2039,7 @@ ApplicationWindow {
             return Math.round(Math.max(8, Math.min(Screen.width - width - 8,
                                                    right)))
         }
-        y: {
+        function automaticY() {
             if (!hasCaretBounds)
                 return Math.round(Screen.height - height - 96)
             var gap = 16
@@ -1604,6 +2064,62 @@ ApplicationWindow {
             return Math.round(Math.max(8, Math.min(Screen.height - height - 8,
                                                    preferred)))
         }
+        function finishSystemDrag() {
+            userX = appliedActionOverlay.x
+            userY = appliedActionOverlay.y
+            if (applicationKey !== "") {
+                rememberedApplicationPositions[applicationKey] = {
+                    "x": userX,
+                    "y": userY
+                }
+            }
+            systemDragActive = false
+            appliedActionDragSafetyTimer.stop()
+            appController.endAppliedOverlayDrag()
+        }
+        function restoreApplicationPosition() {
+            var remembered = applicationKey !== ""
+                           ? rememberedApplicationPositions[applicationKey]
+                           : undefined
+            if (remembered !== undefined) {
+                userX = remembered.x
+                userY = remembered.y
+                userPositioned = true
+            } else {
+                userPositioned = false
+                userX = 0
+                userY = 0
+            }
+        }
+        x: userPositioned
+            ? Math.round(Math.max(8, Math.min(Screen.width - width - 8, userX)))
+            : automaticX()
+        y: userPositioned
+            ? Math.round(Math.max(8, Math.min(Screen.height - height - 8, userY)))
+            : automaticY()
+        onXChanged: {
+            if (systemDragActive)
+                userX = x
+        }
+        onYChanged: {
+            if (systemDragActive)
+                userY = y
+        }
+        onPlacementKeyChanged: {
+            if (systemDragActive) {
+                systemDragActive = false
+                appliedActionDragSafetyTimer.stop()
+                appController.endAppliedOverlayDrag()
+            }
+            // A new utterance in the same application reuses the position the
+            // user chose there. A different application keeps an independent
+            // position and otherwise starts from its live caret.
+            restoreApplicationPosition()
+        }
+        onApplicationKeyChanged: {
+            if (!systemDragActive)
+                restoreApplicationPosition()
+        }
         visible: appController.appliedActionVisible
         color: "transparent"
         // The controller hides this when the target app leaves the foreground;
@@ -1613,42 +2129,230 @@ ApplicationWindow {
                | Qt.WindowStaysOnTopHint
                | Qt.WindowDoesNotAcceptFocus
 
+        Timer {
+            id: appliedActionDragSafetyTimer
+            interval: 3000
+            repeat: false
+            onTriggered: appliedActionOverlay.finishSystemDrag()
+        }
+
         Rectangle {
             anchors.fill: parent
-            radius: 14
-            color: "#F0141922"
+            radius: appliedActionOverlay.compactStyle ? 14 : 16
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: "#F2161C27" }
+                GradientStop { position: 1.0; color: "#F0111720" }
+            }
             border.width: 1
-            border.color: "#465267"
-            RowLayout {
+            border.color: appliedActionOverlay.compactStyle ? "#465267" : "#52627A"
+
+            Rectangle {
+                visible: !appliedActionOverlay.compactStyle
+                width: 3
+                height: parent.height - 28
+                anchors.left: parent.left
+                anchors.leftMargin: 1
+                anchors.verticalCenter: parent.verticalCenter
+                radius: 1.5
+                color: appController.modeCorrectionPending ? "#F0B85A" : "#7892FF"
+            }
+
+            Rectangle {
+                visible: !appliedActionOverlay.compactStyle
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: 18
+                anchors.rightMargin: 18
+                height: 1
+                color: "#53647D"
+                opacity: 0.45
+            }
+
+            // Every exposed part of the pill moves the native window.  The
+            // button MouseAreas are declared above this background handler and
+            // therefore retain their normal click behavior.
+            MouseArea {
+                id: appliedActionBackgroundDragArea
+                objectName: "appliedActionBackgroundDragArea"
                 anchors.fill: parent
-                anchors.margins: 6
-                spacing: 6
-                OverlayActionButton {
-                    id: undoAppliedButton
-                    objectName: "undoAppliedButton"
-                    Layout.preferredWidth: 90
-                    Layout.preferredHeight: 44
-                    title: appController.undoDepth > 1
-                           ? "撤销（" + appController.undoDepth + "）"
-                           : "撤销"
-                    shortcut: Qt.platform.os === "osx" ? "⌘ Z" : "Ctrl Z"
-                    onTriggered: appController.dispatchVoiceAction("undo")
+                hoverEnabled: true
+                cursorShape: Qt.SizeAllCursor
+                onPressed: function(mouse) {
+                    appliedActionOverlay.userX = appliedActionOverlay.x
+                    appliedActionOverlay.userY = appliedActionOverlay.y
+                    appliedActionOverlay.userPositioned = true
+                    appliedActionOverlay.systemDragActive = true
+                    appController.beginAppliedOverlayDrag()
+                    appliedActionOverlay.startSystemMove()
+                    appliedActionDragSafetyTimer.restart()
+                    mouse.accepted = true
                 }
-                OverlayActionButton {
-                    id: switchModeButton
-                    objectName: "switchModeButton"
-                    visible: appController.modeCorrectionAvailable
-                    Layout.preferredWidth: 176
+                onReleased: {
+                    appliedActionOverlay.finishSystemDrag()
+                }
+                onCanceled: {
+                    appliedActionOverlay.finishSystemDrag()
+                }
+            }
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: appliedActionOverlay.compactStyle ? 6 : 10
+                spacing: appliedActionOverlay.compactStyle ? 0 : 8
+
+                RowLayout {
+                    id: appliedActionSummaryRow
+                    objectName: "appliedActionSummaryRow"
+                    visible: !appliedActionOverlay.compactStyle
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: visible ? 48 : 0
+                    spacing: 10
+
+                    Rectangle {
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 30
+                        radius: 15
+                        color: appController.modeCorrectionPending ? "#362D1D" : "#1B2A42"
+                        border.width: 1
+                        border.color: appController.modeCorrectionPending ? "#7A6231" : "#3D5682"
+
+                        Text {
+                            anchors.centerIn: parent
+                            text: appController.modeCorrectionPending ? "↻" : "✓"
+                            color: appController.modeCorrectionPending ? "#F0C56D" : "#9DB3FF"
+                            font.family: root.uiFontFamily
+                            font.pixelSize: 16
+                            font.weight: Font.DemiBold
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Text {
+                            id: appliedActionTitle
+                            objectName: "appliedActionTitle"
+                            Layout.fillWidth: true
+                            text: appController.appliedActionTitle
+                            color: "#F5F7FB"
+                            font.family: root.uiFontFamily
+                            font.pixelSize: 13
+                            font.weight: Font.DemiBold
+                            elide: Text.ElideRight
+                        }
+                        Text {
+                            id: appliedActionSummary
+                            objectName: "appliedActionSummary"
+                            Layout.fillWidth: true
+                            text: appController.appliedActionText
+                            color: "#AAB6C8"
+                            font.family: root.uiFontFamily
+                            font.pixelSize: 11
+                            elide: Text.ElideRight
+                        }
+                    }
+
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
                     Layout.preferredHeight: 44
-                    title: appController.modeCorrectionLabel
-                    shortcut: "Tab"
-                    fillColor: "#17302D"
-                    hoverColor: "#1D3D38"
-                    pressedColor: "#244B44"
-                    outlineColor: "#35675F"
-                    titleColor: "#A7ECD7"
-                    shortcutColor: "#73AD9D"
-                    onTriggered: appController.dispatchVoiceAction("switch_mode")
+                    spacing: 6
+
+                    Item {
+                        id: appliedActionDragSpace
+                        objectName: "appliedActionDragSpace"
+                        Layout.preferredWidth: appliedActionOverlay.compactStyle ? 26 : 70
+                        Layout.fillWidth: !appliedActionOverlay.compactStyle
+                        Layout.preferredHeight: 44
+
+                        Grid {
+                            visible: appliedActionOverlay.compactStyle
+                            anchors.centerIn: parent
+                            columns: 2
+                            spacing: 3
+                            Repeater {
+                                model: 6
+                                Rectangle {
+                                    width: 2
+                                    height: 2
+                                    radius: 1
+                                    color: "#68758A"
+                                }
+                            }
+                        }
+
+                        Row {
+                            visible: !appliedActionOverlay.compactStyle
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            spacing: 6
+
+                            Grid {
+                                anchors.verticalCenter: parent.verticalCenter
+                                columns: 2
+                                spacing: 3
+                                Repeater {
+                                    model: 6
+                                    Rectangle {
+                                        width: 2
+                                        height: 2
+                                        radius: 1
+                                        color: "#718097"
+                                    }
+                                }
+                            }
+                            Text {
+                                anchors.verticalCenter: parent.verticalCenter
+                                text: "拖动"
+                                color: "#718097"
+                                font.family: root.uiFontFamily
+                                font.pixelSize: 10
+                            }
+                        }
+                    }
+
+                    OverlayActionButton {
+                        id: undoAppliedButton
+                        objectName: "undoAppliedButton"
+                        Layout.preferredWidth: appliedActionOverlay.compactStyle ? 90 : 104
+                        Layout.preferredHeight: 44
+                        title: appController.undoDepth > 1
+                               ? "撤销（" + appController.undoDepth + "）"
+                               : "撤销"
+                        shortcut: "Esc"
+                        onTriggered: appController.dispatchVoiceAction("undo")
+                    }
+                    OverlayActionButton {
+                        id: switchModeButton
+                        objectName: "switchModeButton"
+                        visible: appliedActionOverlay.showsModeCorrection
+                        enabled: appController.modeCorrectionAvailable
+                                 && !appController.modeCorrectionPending
+                        Layout.preferredWidth: 176
+                        Layout.preferredHeight: 44
+                        title: appController.modeCorrectionFailed
+                               ? "指令转换失败"
+                               : appController.modeCorrectionLabel
+                        shortcut: "F8"
+                        busy: appController.modeCorrectionPending
+                        fillColor: appController.modeCorrectionFailed
+                                   ? "#382027" : "#17302D"
+                        hoverColor: appController.modeCorrectionFailed
+                                    ? "#382027" : "#1D3D38"
+                        pressedColor: appController.modeCorrectionFailed
+                                      ? "#382027" : "#244B44"
+                        outlineColor: appController.modeCorrectionFailed
+                                      ? "#8D4757" : "#35675F"
+                        titleColor: appController.modeCorrectionFailed
+                                    ? "#FFB5C1" : "#A7ECD7"
+                        shortcutColor: appController.modeCorrectionFailed
+                                       ? "#D57C8B" : "#73AD9D"
+                        onTriggered: appController.dispatchVoiceAction("switch_mode")
+                    }
                 }
             }
         }

@@ -867,7 +867,7 @@ def test_deepseek_v4_flash_reuses_ark_edit_pipeline(monkeypatch):
     assert captured[0].full_url.endswith("/api/v3/responses")
     assert body["model"] == "deepseek-v4-flash-260425"
     assert body["tools"][0]["name"] == "submit_text_edit"
-    assert "thinking" not in body
+    assert body["thinking"] == {"type": "disabled"}
     assert "original_text：从待修改文本逐字复制" in (
         body["input"][0]["content"][0]["text"]
     )

@@ -28,6 +28,13 @@ text is applied is the supported explicit negative label for the near-field
 detector. An empty/error ASR result labels ASR only and never labels the
 near-field detector.
 
+For a Doubao ASR session, `record.json` also stores `asr.context`: the exact
+newest-first `dialog_ctx` items prepared for the request, their source/sent
+character counts, truncation flag, focused-target identity, and send status.
+`events.jsonl` and the persistent diagnostic log store only the status and size
+summary, not a second copy of the context text. Other ASR backends leave this
+field null.
+
 The Voice History UI is a projection of InteractionRecords. New utterances are
 written only to this unified representation; no Episode/Attempt compatibility
 directories or duplicate edit records are created.
@@ -94,7 +101,9 @@ to 300 ms before WAV sample zero and ends at the last sample covered by the WAV;
 there is no fictitious post-roll margin.
 
 IMU start, callback, or dataset-write failures are isolated from the microphone
-path. Detector status lines
-are stored as events; Stage 1/2 score and threshold values are also extracted
-into `near_field`. These are evidence fields only. They do not introduce a hard
+path. Detector status lines are stored as events. `near_field` keeps only compact
+training metadata: activation and Stage 1/2 summary scores and thresholds,
+optional fusion/model metadata, and the eventual training label. It does not
+duplicate the per-window Stage 2 sequence, logits, timestamps, or sample ranges
+from `events.jsonl`. These are evidence fields only. They do not introduce a hard
 motion gate or change the current near-field recognition path.

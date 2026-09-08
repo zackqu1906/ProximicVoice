@@ -45,6 +45,112 @@ ASR_GAIN_DB_DEFAULT = 0.0
 IMU_SAMPLE_RATE_HZ = 50
 IMU_BUFFER_SECONDS = 45.0
 IMU_LEAD_IN_MS = 300.0
+_ASR_CONTEXT_CAPTURE_MAX_CHARS = 1600
+
+
+class _ReadOnlyContextClipboard:
+    """Fail closed if a context read ever tries to disturb the clipboard."""
+
+    @staticmethod
+    def _unsupported(*_args, **_kwargs):
+        raise RuntimeError("ASR context capture forbids clipboard access")
+
+    snapshot = _unsupported
+    restore = _unsupported
+    set_text = _unsupported
+    text = _unsupported
+
+
+def _context_target_key(target: object) -> str:
+    accessibility_id = str(getattr(target, "accessibility_id", "") or "")
+    uia_control = getattr(target, "uia_control", None)
+    control_handle = int(getattr(target, "control_handle", 0) or 0)
+    if accessibility_id:
+        control_identity = accessibility_id
+    elif uia_control is not None:
+        control_identity = "uia:" + ".".join(
+            str(value) for value in getattr(uia_control, "runtime_id", ())
+        )
+    elif control_handle:
+        control_identity = f"control:{control_handle}"
+    else:
+        control_identity = ":".join(
+            (
+                "bounds",
+                str(int(getattr(target, "screen_x", 0) or 0)),
+                str(int(getattr(target, "screen_y", 0) or 0)),
+                str(int(getattr(target, "screen_width", 0) or 0)),
+                str(int(getattr(target, "screen_height", 0) or 0)),
+            )
+        )
+    return ":".join(
+        (
+            str(int(getattr(target, "process_id", 0) or 0)),
+            str(int(getattr(target, "window_handle", 0) or 0)),
+            control_identity,
+        )
+    )
+
+
+def _volcengine_context_provider() -> Callable[[], dict[str, object]]:
+    """Create a worker-thread reader for the currently focused text field."""
+
+    adapter = None
+
+    def capture() -> dict[str, object]:
+        nonlocal adapter
+        if not DESKTOP_TEXT_INJECTION_SUPPORTED:
+            return {
+                "status": "unavailable",
+                "source": "focused_text",
+                "reason": "platform_unsupported",
+            }
+        try:
+            if adapter is None:
+                if sys.platform == "darwin":
+                    from .desktop_target import MacOSDesktopTextTarget
+
+                    adapter = MacOSDesktopTextTarget(_ReadOnlyContextClipboard())
+                else:
+                    from .desktop_target import WindowsDesktopTextTarget
+
+                    adapter = WindowsDesktopTextTarget(_ReadOnlyContextClipboard())
+            target = adapter.capture_reference()
+            # Context capture is deliberately observation-only.  It never
+            # falls back to Select-All/Copy, so it cannot move the caret,
+            # replace a selection, or modify the user's clipboard.
+            snapshot = adapter.observe_text(target)
+            full_text = str(snapshot.text or "").rstrip()
+        except BaseException as exc:
+            return {
+                "status": "unavailable",
+                "source": "focused_text",
+                "reason": f"focused_text_unreadable:{type(exc).__name__}",
+            }
+        application = str(
+            getattr(target, "process_name", "")
+            or getattr(target, "window_title", "")
+            or "unknown"
+        )
+        if not full_text:
+            return {
+                "status": "empty",
+                "source": "focused_text",
+                "reason": "empty_focused_text",
+                "source_char_count": 0,
+                "target_key": _context_target_key(target),
+                "application": application,
+            }
+        return {
+            "status": "captured",
+            "source": "focused_text",
+            "text": full_text[-_ASR_CONTEXT_CAPTURE_MAX_CHARS:],
+            "source_char_count": len(full_text),
+            "target_key": _context_target_key(target),
+            "application": application,
+        }
+
+    return capture
 
 
 class _ImuSampleBuffer:
@@ -241,7 +347,8 @@ class RuntimeSettings:
     detector_model: Path | None = None
     stage1_threshold: float = 0.005
     stage2_threshold: float | None = None
-    stage2_delay_s: float = 0.50
+    stage2_delay_s: float = 0.30
+    stage2_active_interval_s: float = 0.20
 
     asr_backend: str = "streaming_sensevoice"
     asr_model: str = "iic/SenseVoiceSmall"
@@ -253,7 +360,7 @@ class RuntimeSettings:
     asr_gain_db: float = ASR_GAIN_DB_DEFAULT
 
     asr_pre_roll_s: float = 1.0
-    asr_end_rejects: int = 2
+    asr_end_rejects: int = 5
     asr_stage1_inactivity_s: float = 1.25
     asr_min_duration_s: float = 0.40
     asr_max_duration_s: float = 15.0
@@ -298,6 +405,7 @@ class RuntimeSettings:
             stage1_threshold=self.stage1_threshold,
             stage2_threshold=self.stage2_threshold,
             stage2_delay=self.stage2_delay_s,
+            stage2_active_interval=self.stage2_active_interval_s,
             show_stage1=False,
             asr=[backend],
             asr_model=[model_entry] if model_entry else None,
@@ -350,10 +458,26 @@ class RecognitionRuntime:
         on_started: Callable[[], None],
         on_push_to_talk: Callable[[bool], None] | None = None,
         on_session_started: Callable[[int], None] | None = None,
+        on_session_ended: Callable[[], None] | None = None,
+        on_asr_context: Callable[[int, dict[str, object]], None] | None = None,
         on_raw_audio: Callable[[int, object], None] | None = None,
         on_raw_imu: Callable[[int, object, dict], None] | None = None,
+        on_battery: Callable[
+            [int | None, int | None, int | None], None
+        ]
+        | None = None,
+        asr_gain_db_provider: Callable[[], float] | None = None,
+        stage1_threshold_provider: Callable[[], float] | None = None,
     ) -> None:
         args = self.settings.to_namespace()
+        selected_backend = self.settings.asr_backend.strip().lower().replace(
+            "-", "_"
+        )
+        asr_context_provider = (
+            _volcengine_context_provider()
+            if selected_backend == "volcengine"
+            else None
+        )
         imu_buffer = (
             _ImuSampleBuffer(sample_rate_hz=self.settings.imu_sample_rate_hz)
             if self.settings.collect_imu and on_raw_imu is not None
@@ -367,6 +491,7 @@ class RecognitionRuntime:
             encoding=args.encoding,
             data_root=args.data_dir,
             imu_observer=imu_buffer.append if imu_buffer is not None else None,
+            battery_observer=on_battery,
             imu_hz=self.settings.imu_sample_rate_hz,
         )
         detector = None
@@ -470,6 +595,9 @@ class RecognitionRuntime:
                     else None
                 ),
                 raw_session_start_observer=on_session_started,
+                session_end_observer=on_session_ended,
+                asr_context_provider=asr_context_provider,
+                asr_context_observer=on_asr_context,
             )
             if source.error is not None:
                 raise RuntimeError(str(source.error)) from source.error
@@ -519,6 +647,19 @@ class RecognitionRuntime:
                     detector.reset()
                     controller.reset()
                 recognition_was_enabled = True
+                if stage1_threshold_provider is not None:
+                    try:
+                        live_threshold = float(stage1_threshold_provider())
+                        if (
+                            np.isfinite(live_threshold)
+                            and live_threshold > 0
+                            and live_threshold != detector.config.stage1_threshold
+                        ):
+                            detector.config = detector.config.with_overrides(
+                                stage1_threshold=live_threshold
+                            )
+                    except (TypeError, ValueError):
+                        pass
                 # ProxiMic always evaluates the untouched Ring waveform.  Gain
                 # is applied only after detection, so both ASR and the raw
                 # utterance observer/history receive the same enhanced audio.
@@ -526,11 +667,26 @@ class RecognitionRuntime:
                 for event in events:
                     if isinstance(event, Stage2Event):
                         on_state(format_event(event))
+                live_asr_gain_db = self.settings.asr_gain_db
+                if asr_gain_db_provider is not None:
+                    try:
+                        candidate_gain_db = float(asr_gain_db_provider())
+                        if np.isfinite(candidate_gain_db):
+                            live_asr_gain_db = candidate_gain_db
+                    except (TypeError, ValueError):
+                        pass
                 controller.process(
-                    apply_asr_gain(block, self.settings.asr_gain_db),
+                    apply_asr_gain(block, live_asr_gain_db),
                     events,
                     block_end_monotonic_ns=block_end_monotonic_ns,
                 )
+                set_continuation_mode = getattr(
+                    detector, "set_continuation_mode", None
+                )
+                if callable(set_continuation_mode):
+                    set_continuation_mode(
+                        bool(getattr(controller, "active", False))
+                    )
 
             if recognition_was_enabled and not disconnect_event.is_set():
                 controller.flush()

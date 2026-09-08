@@ -34,6 +34,7 @@ _MIC_RECOVERY_PAUSE_S = 0.75
 _MIC_RESTART_PAUSE_S = 0.25
 _DEFAULT_IMU_HZ = 50
 _DEFAULT_IMU_FRAMES_PER_PACKET = 10
+_BATTERY_REFRESH_INTERVAL_S = 60.0
 
 
 class RingAudioSource(AudioSource):
@@ -69,6 +70,10 @@ class RingAudioSource(AudioSource):
         data_root: str | Path = "data",
         queue_blocks: int = 256,
         imu_observer: Callable[[dict], None] | None = None,
+        battery_observer: Callable[
+            [int | None, int | None, int | None], None
+        ]
+        | None = None,
         imu_hz: int = _DEFAULT_IMU_HZ,
     ) -> None:
         encoding = encoding.lower()
@@ -88,6 +93,7 @@ class RingAudioSource(AudioSource):
         self.encoding = encoding
         self.data_root = Path(data_root)
         self.imu_observer = imu_observer
+        self.battery_observer = battery_observer
         self.imu_hz = int(imu_hz)
 
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_blocks)
@@ -522,14 +528,15 @@ class RingAudioSource(AudioSource):
         return await self._wait_for_new_pcm(baseline_callbacks, timeout_s)
 
     async def _print_battery_status(self, session, *, timeout_s: float = 1.5) -> None:
-        """Query and print Ring battery after a BLE connection is established."""
+        """Query, publish, and print one fresh Ring battery reading."""
         try:
             from ring_python_sdk.core.battery_status import format_battery
 
-            # ConnectionMixin already starts an immediate battery poll, but its
-            # reply is routed to the SDK live-log queue rather than stdout.
-            # Query once more here and wait briefly for the notify reply so the
-            # command-line Ring source always shows battery status on connect.
+            # Clear the previous reply first so a failed refresh cannot leave a
+            # stale percentage visible indefinitely.
+            session.battery_pct = None
+            session.battery_mv = None
+            session.charge_status = None
             await session.query_battery()
             deadline = time.monotonic() + timeout_s
             while (
@@ -541,8 +548,14 @@ class RingAudioSource(AudioSource):
 
             if session.battery_pct is None or session.battery_mv is None:
                 print("Ring battery: unavailable (no BATTERY STATUS reply)")
+                self._publish_battery_status(None, None, None)
                 return
 
+            self._publish_battery_status(
+                session.battery_pct,
+                session.battery_mv,
+                session.charge_status,
+            )
             text = format_battery(
                 battery_pct=session.battery_pct,
                 battery_mv=session.battery_mv,
@@ -551,6 +564,34 @@ class RingAudioSource(AudioSource):
             print(f"Ring battery: {text}")
         except Exception as exc:
             print(f"Ring battery query failed: {exc}")
+            self._publish_battery_status(None, None, None)
+
+    async def _battery_refresh_loop(self, session) -> None:
+        """Refresh battery state at the SDK's low-frequency polling cadence."""
+        while not self._stop.is_set():
+            await asyncio.sleep(_BATTERY_REFRESH_INTERVAL_S)
+            if self._stop.is_set():
+                return
+            client = getattr(session, "client", None)
+            if client is not None and not bool(
+                getattr(client, "is_connected", False)
+            ):
+                return
+            await self._print_battery_status(session)
+
+    def _publish_battery_status(
+        self,
+        battery_pct: int | None,
+        battery_mv: int | None,
+        charge_status: int | None,
+    ) -> None:
+        """Publish battery state without letting presentation code affect BLE."""
+        if self.battery_observer is None:
+            return
+        try:
+            self.battery_observer(battery_pct, battery_mv, charge_status)
+        except Exception as exc:
+            print(f"Ring battery observer failed: {exc}")
 
     @staticmethod
     def _sdk_mic_diagnostics(session) -> str:
@@ -674,6 +715,7 @@ class RingAudioSource(AudioSource):
             auto_reconnect=False,
             battery_poll_enabled=False,
         )
+        battery_refresh_task: asyncio.Task[None] | None = None
 
         try:
             if self.device is not None:
@@ -695,6 +737,10 @@ class RingAudioSource(AudioSource):
             # connection phase before doing battery queries or starting audio.
             self._connected_ready.set()
             await self._print_battery_status(session)
+            battery_refresh_task = asyncio.create_task(
+                self._battery_refresh_loop(session),
+                name="proximic-ring-battery-refresh",
+            )
 
             while not self._stop.is_set() and not self._start_stream.is_set():
                 client = getattr(session, "client", None)
@@ -890,6 +936,12 @@ class RingAudioSource(AudioSource):
                 )
                 stall_reported = True
         finally:
+            if battery_refresh_task is not None:
+                battery_refresh_task.cancel()
+                try:
+                    await battery_refresh_task
+                except asyncio.CancelledError:
+                    pass
             await self._shutdown_session(session)
 
     async def _start_imu_best_effort(self, session) -> None:

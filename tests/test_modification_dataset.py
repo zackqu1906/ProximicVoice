@@ -148,9 +148,280 @@ def test_application_and_acceptance_persist_without_feedback_prompt(tmp_path):
     assert Path(history_entry["audioPath"]).parent == Path(
         history_entry["recordPath"]
     ).parent
+    assert history_entry["modeLabel"] == "编辑指令"
+    assert history_entry["candidateAvailable"] is True
+    assert history_entry["candidateEmpty"] is False
+    assert history_entry["editBeforeText"] == "原文。"
+    assert history_entry["editSummary"] == "已将“原”改为“正式”"
     assert {path.name for path in collector.user_root.iterdir()} == {"interactions"}
     with pytest.raises(ValueError, match="unsupported feedback action"):
         collector.feedback(10, "retry")
+
+
+def test_history_distinguishes_successful_edit_that_clears_text(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    collector.record_audio(1, np.zeros(1600, dtype=np.float32))
+    collector.record_asr_update(_update(1, "清空这段话", final=True))
+    request = TextProcessingRequest(
+        request_id=10,
+        session_id=1,
+        mode="edit",
+        raw_text="清空这段话",
+        target_text="需要删除的原文。",
+        settings=LLMSettings(enabled=True, provider="local", model="qwen.gguf"),
+    )
+    collector.record_text_request(request)
+    collector.record_llm_result(
+        10,
+        replace(
+            _result(10, 1, "", "fragment"),
+            raw_text=request.raw_text,
+            target_text=request.target_text,
+            model_output='{"modified_text":""}',
+        ),
+    )
+    collector.record_application(
+        action="applied",
+        session_id=1,
+        request_id=10,
+        mode="edit",
+        before_text=request.target_text,
+        candidate_text="",
+        final_text="",
+    )
+
+    history_entry = collector.load_entries()[0]
+    assert history_entry["candidateText"] == ""
+    assert history_entry["candidateAvailable"] is True
+    assert history_entry["candidateEmpty"] is True
+    assert history_entry["editSummary"] == "已清空当前文本"
+
+    collector.record_application(
+        action="undone",
+        session_id=1,
+        request_id=10,
+        mode="edit",
+        final_text=request.target_text,
+        method="explicit_user",
+    )
+    undone_entry = collector.load_entries()[0]
+    assert undone_entry["mode"] == "edit"
+    assert undone_entry["outcome"] == "undone"
+    assert undone_entry["candidateText"] == ""
+    assert undone_entry["candidateAvailable"] is False
+    assert undone_entry["editSummary"] == "已清空当前文本"
+
+
+def test_final_applied_mode_is_stable_and_undo_invalidates_training_target(
+    tmp_path,
+):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    collector.record_audio(1, np.zeros(1600, dtype=np.float32))
+    collector.record_asr_update(_update(1, "今天下午开会", final=True))
+    collector.record_application(
+        action="applied",
+        session_id=1,
+        mode="dictation",
+        final_text="今天下午开会",
+    )
+
+    # A speculative alternate request must not overwrite the applied class.
+    collector.record_text_request(
+        TextProcessingRequest(
+            request_id=11,
+            session_id=1,
+            mode="edit",
+            raw_text="今天下午开会",
+            target_text="原文",
+            settings=LLMSettings(enabled=True, model="test-model"),
+        )
+    )
+    record_path = next(collector.interactions_root.glob("*/record.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["mode"]["selected"] == "dictation"
+    assert record["mode"]["final_applied"] == "dictation"
+    assert record["mode"]["training_target"] == "dictation"
+    assert record["mode"]["training_target_source"] == "successful_application"
+
+    # A correction callback without a successful alternate application cannot
+    # turn the previous application into a positive label for another mode.
+    collector.record_mode_correction(
+        1, previous_mode="dictation", corrected_mode="edit"
+    )
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["mode"]["selected"] == "dictation"
+    assert record["mode"]["final_applied"] == "dictation"
+    assert record["mode"]["negative_mode"] == ""
+
+    # Even if a failed alternate attempt records its attempted mode, history
+    # must describe the last mode that was actually applied.
+    collector.record_application(
+        action="apply_failed",
+        session_id=1,
+        mode="edit",
+        error="目标未接收修改",
+    )
+    assert collector.load_entries()[0]["mode"] == "dictation"
+
+    collector.record_application(
+        action="undone",
+        session_id=1,
+        mode="dictation",
+    )
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["mode"]["final_applied"] == ""
+    assert record["mode"]["training_target"] is None
+    assert record["mode"]["training_target_source"] is None
+
+
+def test_history_republishes_authoritative_mode_after_application(tmp_path):
+    saved = []
+    collector = ModificationDatasetCollector(
+        tmp_path / "dataset", "anonymous-1", on_saved=saved.append
+    )
+    collector.record_audio(1, np.zeros(1600, dtype=np.float32))
+    collector.record_asr_update(_update(1, "删掉这一段", final=True))
+
+    assert saved[-1]["mode"] == ""
+
+    collector.record_application(
+        action="applied",
+        session_id=1,
+        mode="edit",
+        before_text="旧文本",
+        candidate_text="新文本",
+        final_text="新文本",
+    )
+
+    assert len({entry["interactionId"] for entry in saved}) == 1
+    assert saved[-1]["mode"] == "edit"
+    assert saved[-1]["outcome"] == "applied"
+
+    publish_count = len(saved)
+    collector.record_mode_correction(
+        1,
+        previous_mode="dictation",
+        corrected_mode="edit",
+    )
+
+    assert len(saved) == publish_count + 1
+    assert saved[-1]["mode"] == "edit"
+    record_path = next(collector.interactions_root.glob("*/record.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["mode"]["label_source"] == "explicit_mode_switch"
+    assert record["outcome"]["manually_corrected"] is True
+
+
+def test_mode_acceptance_cannot_relabel_a_different_applied_mode(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    collector.record_audio(1, np.zeros(1600, dtype=np.float32))
+    collector.record_asr_update(_update(1, "删掉这一段", final=True))
+    collector.record_application(
+        action="applied",
+        session_id=1,
+        mode="edit",
+        final_text="新文本",
+    )
+
+    collector.record_mode_acceptance(1, mode="dictation")
+
+    record_path = next(collector.interactions_root.glob("*/record.json"))
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    assert record["mode"]["selected"] == "edit"
+    assert record["mode"]["final_applied"] == "edit"
+    assert record["mode"]["training_label"] is None
+
+
+def test_pending_runtime_events_preserve_session_identity(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    collector.record_runtime_event(
+        "[ASR TIMING] session=2 ASR模型开始接收音频", session_id=2
+    )
+    collector.begin_session(1)
+    first_id = collector.interaction_id_for_session(1)
+    first_events = (collector.interactions_root / first_id / "events.jsonl").read_text(
+        encoding="utf-8"
+    )
+    assert "session=2" not in first_events
+
+    collector.begin_session(2)
+    second_id = collector.interaction_id_for_session(2)
+    second_events = (
+        collector.interactions_root / second_id / "events.jsonl"
+    ).read_text(encoding="utf-8")
+    assert "session=2" in second_events
+
+
+def test_new_runtime_window_discards_stale_unbound_detector_evidence(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    collector.record_runtime_event("STAGE2 score=-0.1 reject")
+    collector.begin_runtime_evidence_window()
+    collector.record_runtime_event("STAGE2 score=+0.9 ACTIVATE")
+    collector.begin_session(1)
+
+    interaction_id = collector.interaction_id_for_session(1)
+    events = (
+        collector.interactions_root / interaction_id / "events.jsonl"
+    ).read_text(encoding="utf-8")
+    assert "score=-0.1" not in events
+    assert "score=+0.9" in events
+
+
+def test_near_field_keeps_compact_training_summary_not_stage2_windows(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    collector.begin_runtime_evidence_window()
+    collector.record_runtime_event(
+        "STAGE2 sample=320 t=0.020s window=[-0.980,0.020] "
+        "score=+0.900000 logits=(+1.000000,-1.000000) decision=ACTIVATE"
+    )
+    collector.record_runtime_event("[ASR] START t=0.020s (pre-roll=1.00s)")
+    collector.begin_session(7)
+    collector.record_runtime_event(
+        "STAGE2 sample=640 t=0.040s window=[-0.960,0.040] "
+        "score=-0.100000 logits=(-0.100000,+0.100000) decision=REJECT",
+        session_id=7,
+    )
+    collector.record_runtime_event(
+        "[ASR] END reason=2-rejects duration=1.40s rejects=2",
+        session_id=7,
+    )
+    collector.record_runtime_event(
+        "STAGE2 sample=960 t=0.060s window=[-0.940,0.060] "
+        "score=-0.200000 logits=(-0.200000,+0.200000) decision=reject",
+        session_id=7,
+    )
+
+    interaction_id = collector.interaction_id_for_session(7)
+    record = json.loads(
+        (collector.interactions_root / interaction_id / "record.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert record["near_field"]["activation_score"] == 0.9
+    assert record["near_field"]["audio_score"] == 0.9
+    assert record["near_field"]["detector_decision"] == "activate"
+    assert "stage2_events" not in record["near_field"]
+    assert "last_stage2_score" not in record["near_field"]
+    assert "last_stage2_decision" not in record["near_field"]
+    events = [
+        json.loads(line)
+        for line in (
+            collector.interactions_root / interaction_id / "events.jsonl"
+        ).read_text(encoding="utf-8").splitlines()
+    ]
+    stage2_events = [event for event in events if event.get("stage") == "stage2"]
+    assert [event["decision"] for event in stage2_events] == [
+        "activate",
+        "reject",
+        "reject",
+    ]
+    assert [event["session_id"] for event in stage2_events] == [7, 7, 7]
+    lifecycle = [event for event in events if event.get("component") == "asr_session"]
+    assert [event["phase"] for event in lifecycle] == ["start", "end"]
+    assert lifecycle[0]["session_id"] == 7
+    assert lifecycle[1]["reason"] == "2-rejects"
+    assert lifecycle[1]["duration_s"] == 1.4
+    assert lifecycle[1]["reject_count"] == 2
 
 
 def test_cancel_records_objective_action_without_reason_prompt_data(tmp_path):
@@ -203,6 +474,62 @@ def test_early_cancel_keeps_audio_and_imu_visible_without_asr_final(tmp_path):
     assert entry["hasImu"] is True
     assert entry["dataSummary"] == "音频已保存 · IMU 1 条"
     assert saved[-1]["hasImu"] is True
+
+
+def test_asr_context_records_sent_structure_but_event_only_keeps_summary(tmp_path):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "anonymous-1")
+    collector.record_asr_context(
+        22,
+        {
+            "status": "sent",
+            "source": "focused_text",
+            "context_type": "dialog_ctx",
+            "context_data": [
+                {"text": "最新一句。"},
+                {"text": "较早一句。"},
+            ],
+            "item_count": 2,
+            "source_char_count": 80,
+            "sent_char_count": 10,
+            "truncated": True,
+            "reason": "",
+            "target_key": "10:20:field",
+            "application": "测试编辑器",
+        },
+    )
+
+    interaction_dir = next(collector.interactions_root.iterdir())
+    record = json.loads(
+        (interaction_dir / "record.json").read_text(encoding="utf-8")
+    )
+    events = [
+        json.loads(line)
+        for line in (interaction_dir / "events.jsonl")
+        .read_text(encoding="utf-8")
+        .splitlines()
+    ]
+
+    assert record["asr"]["context"] == {
+        "status": "sent",
+        "source": "focused_text",
+        "context_type": "dialog_ctx",
+        "context_data": [
+            {"text": "最新一句。"},
+            {"text": "较早一句。"},
+        ],
+        "item_count": 2,
+        "source_char_count": 80,
+        "sent_char_count": 10,
+        "truncated": True,
+        "reason": "",
+        "target_key": "10:20:field",
+        "application": "测试编辑器",
+    }
+    context_event = next(event for event in events if event["type"] == "asr_context")
+    assert context_event["session_id"] == 22
+    assert context_event["item_count"] == 2
+    assert context_event["sent_char_count"] == 10
+    assert "context_data" not in context_event
 
 
 def test_slow_branch_trace_updates_the_same_interaction(tmp_path):
@@ -300,7 +627,7 @@ def test_unified_interaction_collects_history_llm_outcome_reason_and_imu(tmp_pat
         alignment_method="device_uptime_packet_tail_v2",
     )
 
-    assert len(saved) == 1
+    assert len({entry["interactionId"] for entry in saved}) == 1
     assert len(collector.load_entries()) == 1
     record_path = next(collector.interactions_root.glob("*/record.json"))
     record = json.loads(record_path.read_text(encoding="utf-8"))
@@ -311,6 +638,9 @@ def test_unified_interaction_collects_history_llm_outcome_reason_and_imu(tmp_pat
     assert record["outcome"]["status"] == "undone"
     assert record["outcome"]["accepted"] is False
     assert "failure_reason" not in record["outcome"]
+    history_entry = collector.load_entries()[0]
+    assert history_entry["outcome"] == "undone"
+    assert history_entry["candidateText"] == ""
     assert record["near_field"]["audio_score"] == 0.9
     assert record["near_field"]["stage2_threshold"] == 0.7
     assert record["near_field"]["detector_decision"] == "activate"

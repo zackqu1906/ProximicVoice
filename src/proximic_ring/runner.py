@@ -15,12 +15,18 @@ class AudioObserver(Protocol):
 
 def format_event(event) -> str:
     if isinstance(event, Stage1Event):
-        return f"STAGE1 t={event.time_s:8.3f}s max_amp={event.max_amplitude:.5f}"
-    if isinstance(event, Stage2Event):
-        label = "ACTIVATE" if event.activated else "reject"
         return (
-            f"STAGE2 t={event.time_s:8.3f}s window=[{event.window_start_s:.3f}, {event.window_end_s:.3f}] "
-            f"score={event.score:+.6f} logits=({event.logits[0]:+.6f},{event.logits[1]:+.6f}) {label}"
+            f"STAGE1 sample={event.sample_index} t={event.time_s:.3f}s "
+            f"max_amp={event.max_amplitude:.5f}"
+        )
+    if isinstance(event, Stage2Event):
+        label = "ACTIVATE" if event.activated else "REJECT"
+        return (
+            f"STAGE2 sample={event.sample_index} t={event.time_s:.3f}s "
+            f"window=[{event.window_start_s:.3f},{event.window_end_s:.3f}] "
+            f"score={event.score:+.6f} "
+            f"logits=({event.logits[0]:+.6f},{event.logits[1]:+.6f}) "
+            f"decision={label}"
         )
     return repr(event)
 

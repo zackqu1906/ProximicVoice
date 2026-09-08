@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import datetime, timezone
+from difflib import SequenceMatcher
 import json
 from pathlib import Path
 import re
@@ -44,6 +45,39 @@ def _json_value(value):
     return value
 
 
+def _short_history_text(value: str, limit: int = 20) -> str:
+    text = " ".join(str(value or "").split())
+    if len(text) <= limit:
+        return text
+    return text[: max(0, limit - 1)].rstrip() + "…"
+
+
+def _edit_change_summary(before: str, after: str, *, result_known: bool) -> str:
+    """Create a compact UI-only description of one applied edit."""
+
+    if not result_known:
+        return ""
+    original = str(before or "")
+    modified = str(after or "")
+    if not modified:
+        return "已清空当前文本"
+    if not original:
+        return f"已生成修改结果（{len(modified)} 个字符）"
+    for tag, i1, i2, j1, j2 in SequenceMatcher(
+        None, original, modified
+    ).get_opcodes():
+        if tag == "equal":
+            continue
+        old = _short_history_text(original[i1:i2])
+        new = _short_history_text(modified[j1:j2])
+        if tag == "insert":
+            return f"已添加：“{new}”"
+        if tag == "delete":
+            return f"已删除：“{old}”"
+        return f"已将“{old}”改为“{new}”"
+    return "修改已应用"
+
+
 class ModificationDatasetCollector:
     """Thread-safe persistence for one InteractionRecord per ASR session."""
 
@@ -65,7 +99,14 @@ class ModificationDatasetCollector:
         self._lock = threading.RLock()
         self._pending_audio: dict[int, np.ndarray] = {}
         self._pending_asr: dict[int, list[dict]] = {}
+        # Detector evidence immediately preceding activation has no session id
+        # yet. Keep only the current activation window here and bind it when
+        # the raw-audio sink announces the new session.
         self._pending_runtime_events: list[dict] = []
+        # ASR timing messages already carry a session id, but their UI signal
+        # can race interaction creation. Preserve that identity while pending
+        # instead of attaching them to whichever interaction is created next.
+        self._pending_runtime_events_by_session: dict[int, list[dict]] = {}
         self._session_interactions: dict[int, str] = {}
         self._request_interactions: dict[int, str] = {}
         self._routing_interactions: dict[int, str] = {}
@@ -77,6 +118,7 @@ class ModificationDatasetCollector:
             self._pending_audio.clear()
             self._pending_asr.clear()
             self._pending_runtime_events.clear()
+            self._pending_runtime_events_by_session.clear()
             self._session_interactions.clear()
             self._request_interactions.clear()
             self._routing_interactions.clear()
@@ -92,6 +134,11 @@ class ModificationDatasetCollector:
             return ""
         with self._lock:
             return self._ensure_interaction_locked(session_id)
+
+    def begin_runtime_evidence_window(self) -> None:
+        """Start the detector evidence window for the next ASR session."""
+        with self._lock:
+            self._pending_runtime_events.clear()
 
     def record_near_field_label(
         self,
@@ -167,6 +214,76 @@ class ModificationDatasetCollector:
                 },
             )
 
+    def record_asr_context(self, session_id: int, context: dict) -> None:
+        """Record the semantic context actually prepared for one ASR request.
+
+        The interaction record retains the sent text for reproducibility and
+        training analysis.  The event stream stores only a compact summary so
+        diagnostic logs do not duplicate potentially long editor contents.
+        """
+
+        session_id = int(session_id)
+        if session_id <= 0:
+            return
+        supplied = dict(context) if isinstance(context, dict) else {}
+        raw_context_data = supplied.get("context_data", [])
+        context_data: list[dict[str, str]] = []
+        if isinstance(raw_context_data, list):
+            for item in raw_context_data:
+                if not isinstance(item, dict):
+                    continue
+                normalized_item = {
+                    key: str(item.get(key, "") or "")
+                    for key in ("text", "image_url")
+                    if str(item.get(key, "") or "")
+                }
+                if normalized_item:
+                    context_data.append(normalized_item)
+        normalized = {
+            "status": str(supplied.get("status", "unknown") or "unknown"),
+            "source": str(supplied.get("source", "unknown") or "unknown"),
+            "context_type": str(
+                supplied.get("context_type", "dialog_ctx") or "dialog_ctx"
+            ),
+            "context_data": context_data,
+            "item_count": len(context_data),
+            "source_char_count": max(
+                0, int(supplied.get("source_char_count", 0) or 0)
+            ),
+            "sent_char_count": sum(
+                len(str(item.get("text", "") or "")) for item in context_data
+            ),
+            "truncated": bool(supplied.get("truncated", False)),
+            "reason": str(supplied.get("reason", "") or ""),
+        }
+        for key in ("target_key", "application"):
+            value = str(supplied.get(key, "") or "")
+            if value:
+                normalized[key] = value
+
+        with self._lock:
+            interaction_id = self._ensure_interaction_locked(session_id)
+            record = self._interaction_data(interaction_id)
+            occurred_at = _utc_now()
+            record.setdefault("asr", {})["context"] = normalized
+            record["updated_at"] = occurred_at
+            self._write_json(self._interaction_path(interaction_id), record)
+            event = {
+                "type": "asr_context",
+                "occurred_at": occurred_at,
+                "session_id": session_id,
+                "status": normalized["status"],
+                "source": normalized["source"],
+                "context_type": normalized["context_type"],
+                "item_count": normalized["item_count"],
+                "source_char_count": normalized["source_char_count"],
+                "sent_char_count": normalized["sent_char_count"],
+                "truncated": normalized["truncated"],
+            }
+            if normalized["reason"]:
+                event["reason"] = normalized["reason"]
+            self._append_event_locked(interaction_id, event)
+
     def record_mode_acceptance(self, session_id: int, *, mode: str) -> None:
         """Record the routed mode as an implicit positive after application."""
         session_id = int(session_id)
@@ -175,10 +292,20 @@ class ModificationDatasetCollector:
         with self._lock:
             interaction_id = self._ensure_interaction_locked(session_id)
             record = self._interaction_data(interaction_id)
+            normalized_mode = str(mode)
+            # The application event is the sole authority for the training
+            # target.  Refuse a late/mismatched acceptance callback instead of
+            # allowing it to relabel an interaction whose other mode was the
+            # one that actually changed the text field.
+            if (
+                str(record.get("mode", {}).get("final_applied", ""))
+                != normalized_mode
+            ):
+                return
             occurred_at = _utc_now()
             record.setdefault("mode", {}).update(
                 {
-                    "selected": str(mode),
+                    "selected": normalized_mode,
                     "training_label": "positive",
                     "negative_mode": "",
                     "label_source": "implicit_application",
@@ -193,7 +320,7 @@ class ModificationDatasetCollector:
                     "type": "model_label",
                     "model": "input_mode",
                     "label": "positive",
-                    "mode": str(mode),
+                    "mode": normalized_mode,
                     "source": "implicit_application",
                     "occurred_at": occurred_at,
                 },
@@ -248,17 +375,33 @@ class ModificationDatasetCollector:
 
     def record_runtime_event(self, message: str, session_id: int = 0) -> None:
         """Persist detector/timing evidence without parsing it into hard gates."""
+        normalized_session_id = int(session_id)
         event = {
             "type": "runtime_evidence",
             "occurred_at": _utc_now(),
             "message": str(message),
         }
+        if normalized_session_id > 0:
+            event["session_id"] = normalized_session_id
         event.update(self._runtime_evidence_fields(str(message)))
         with self._lock:
-            interaction_id = self._session_interactions.get(int(session_id))
+            interaction_id = self._session_interactions.get(normalized_session_id)
             if interaction_id is None:
-                self._pending_runtime_events.append(event)
-                del self._pending_runtime_events[:-64]
+                if normalized_session_id > 0:
+                    pending = self._pending_runtime_events_by_session.setdefault(
+                        normalized_session_id, []
+                    )
+                    pending.append(event)
+                    del pending[:-64]
+                    for stale_session_id in sorted(
+                        self._pending_runtime_events_by_session
+                    )[:-_MAX_PENDING_SESSIONS]:
+                        self._pending_runtime_events_by_session.pop(
+                            stale_session_id, None
+                        )
+                else:
+                    self._pending_runtime_events.append(event)
+                    del self._pending_runtime_events[:-64]
                 return
             self._append_event_locked(interaction_id, event)
             self._apply_runtime_evidence_locked(interaction_id, event)
@@ -329,6 +472,7 @@ class ModificationDatasetCollector:
                 {
                     "type": "routing_started",
                     "occurred_at": _utc_now(),
+                    "session_id": session_id,
                     "request_id": request_id,
                 },
             )
@@ -360,6 +504,7 @@ class ModificationDatasetCollector:
                 {
                     "type": "routing_completed",
                     "occurred_at": _utc_now(),
+                    "session_id": int(getattr(result, "session_id", 0)),
                     "request_id": request_id,
                     "predicted_mode": str(getattr(result, "mode", "")),
                     "error": getattr(result, "error", None),
@@ -391,7 +536,6 @@ class ModificationDatasetCollector:
                 "status": "processing",
             }
             record = self._interaction_data(interaction_id)
-            record["mode"]["selected"] = mode
             requests = record["llm"].setdefault("requests", [])
             requests[:] = [
                 item for item in requests if int(item.get("request_id", 0)) != request_id
@@ -404,6 +548,7 @@ class ModificationDatasetCollector:
                 {
                     "type": "llm_started",
                     "occurred_at": _utc_now(),
+                    "session_id": session_id,
                     "request_id": request_id,
                     "mode": mode,
                 },
@@ -441,7 +586,9 @@ class ModificationDatasetCollector:
                 {
                     "type": "llm_completed",
                     "occurred_at": _utc_now(),
+                    "session_id": int(getattr(result, "session_id", 0)),
                     "request_id": int(request_id),
+                    "mode": str(getattr(result, "mode", "")),
                     "error": getattr(result, "error", None),
                 },
             )
@@ -562,6 +709,7 @@ class ModificationDatasetCollector:
                 "type": "application",
                 "action": str(action),
                 "occurred_at": occurred_at,
+                "session_id": int(session_id),
                 "request_id": int(request_id),
                 "mode": str(mode),
                 "method": str(method),
@@ -579,31 +727,59 @@ class ModificationDatasetCollector:
             if error:
                 event["error"] = str(error)
             record = self._interaction_data(interaction_id)
-            if mode:
-                record["mode"]["selected"] = str(mode)
+            normalized_action = str(action)
+            normalized_mode = str(mode)
+            if normalized_mode:
+                record["mode"]["selected"] = normalized_mode
+            if normalized_action == "applied" and normalized_mode in {
+                "dictation",
+                "edit",
+            }:
+                # This is the stable binary-classification target. Unlike
+                # ``selected``, it is written only by a real application and
+                # cannot be changed by speculative/background LLM requests.
+                record["mode"].update(
+                    {
+                        "final_applied": normalized_mode,
+                        "final_applied_at": occurred_at,
+                        "training_target": normalized_mode,
+                        "training_target_source": "successful_application",
+                    }
+                )
+            elif normalized_action in {"cancelled", "undone"}:
+                # An undone application is no longer a reliable accepted mode
+                # label. A later successful conversion will populate it again.
+                record["mode"].update(
+                    {
+                        "final_applied": "",
+                        "final_applied_at": None,
+                        "training_target": None,
+                        "training_target_source": None,
+                    }
+                )
             if application:
                 record.setdefault("target", {})["application"] = str(application)
             if target_key:
                 record.setdefault("target", {})["key"] = str(target_key)
             record["outcome"].update(
                 {
-                    "status": str(action),
+                    "status": normalized_action,
                     "application_method": str(method),
                     "final_text": (
                         str(final_text) if final_text is not None else None
                     ),
                     "accepted": (
                         False
-                        if str(action) in {"cancelled", "undone", "apply_failed"}
+                        if normalized_action in {"cancelled", "undone", "apply_failed"}
                         else None
-                        if str(action) == "applied"
+                        if normalized_action == "applied"
                         else record["outcome"].get("accepted")
                     ),
                     "acceptance_strength": (
                         "explicit"
-                        if str(action) in {"cancelled", "undone"}
+                        if normalized_action in {"cancelled", "undone"}
                         else "pending_undo"
-                        if str(action) == "applied"
+                        if normalized_action == "applied"
                         else record["outcome"].get("acceptance_strength")
                     ),
                 }
@@ -613,7 +789,10 @@ class ModificationDatasetCollector:
             self._append_event_locked(interaction_id, event)
             self._publish_history_locked(
                 interaction_id,
-                force=str(action) == "cancelled",
+                # History is a live projection, not the first ASR snapshot.
+                # Republish every terminal application outcome so consumers
+                # cannot remain stuck on the pre-routing fallback mode.
+                force=True,
             )
             return interaction_id
 
@@ -668,16 +847,25 @@ class ModificationDatasetCollector:
         with self._lock:
             interaction_id = self._ensure_interaction_locked(session_id)
             record = self._interaction_data(interaction_id)
+            # A correction becomes a training label only after that
+            # interpretation was actually applied. A failed or unsafe mode-switch
+            # attempt must not replace the last successful mode.
+            if (
+                str(record.get("mode", {}).get("final_applied", ""))
+                != str(corrected_mode)
+            ):
+                return
             record["mode"].update(
                 {
                     "selected": str(corrected_mode),
                     "user_corrected": True,
                     "training_label": "positive",
                     "negative_mode": str(previous_mode),
-                    "label_source": "explicit_tab",
+                    "label_source": "explicit_mode_switch",
                     "label_recorded_at": _utc_now(),
                 }
             )
+            record.setdefault("outcome", {})["manually_corrected"] = True
             record["updated_at"] = _utc_now()
             self._write_json(self._interaction_path(interaction_id), record)
             self._append_event_locked(
@@ -689,6 +877,10 @@ class ModificationDatasetCollector:
                     "corrected_mode": str(corrected_mode),
                 },
             )
+            # Mode correction is the terminal semantic state of an F8 action.
+            # Publish after every field above is committed so UI consumers never
+            # have to infer completion from the earlier application callback.
+            self._publish_history_locked(interaction_id, force=True)
 
     def interaction_id_for_session(self, session_id: int) -> str:
         with self._lock:
@@ -918,7 +1110,12 @@ class ModificationDatasetCollector:
     ) -> dict:
         asr = record.get("asr", {})
         outcome = record.get("outcome", {})
-        selected_mode = str(mode or record.get("mode", {}).get("selected", ""))
+        mode_record = record.get("mode", {})
+        selected_mode = str(
+            mode
+            or mode_record.get("final_applied")
+            or mode_record.get("selected", "")
+        )
         requests = record.get("llm", {}).get("requests", [])
         selected_request = next(
             (
@@ -1061,6 +1258,7 @@ class ModificationDatasetCollector:
             },
             "asr": {
                 "updates_file": "asr_updates.jsonl",
+                "context": None,
                 "backend": final_update.get("backend", ""),
                 "model": final_update.get("model", ""),
                 "final_text": final_update.get("text", ""),
@@ -1081,6 +1279,7 @@ class ModificationDatasetCollector:
             },
             "near_field": {
                 "audio_score": None,
+                "activation_score": None,
                 "imu_evidence_score": None,
                 "context_score": None,
                 "fusion_score": None,
@@ -1095,6 +1294,10 @@ class ModificationDatasetCollector:
                 "fallback": "",
                 "predicted": "",
                 "selected": "",
+                "final_applied": "",
+                "final_applied_at": None,
+                "training_target": None,
+                "training_target_source": None,
                 "user_corrected": False,
                 "label_source": "system",
                 "training_label": None,
@@ -1121,9 +1324,17 @@ class ModificationDatasetCollector:
         self._session_interactions[session_id] = interaction_id
         if self._pending_runtime_events:
             for event in self._pending_runtime_events:
-                self._append_event_locked(interaction_id, event)
-                self._apply_runtime_evidence_locked(interaction_id, event)
+                bound_event = {**event, "session_id": session_id}
+                self._append_event_locked(interaction_id, bound_event)
+                self._apply_runtime_evidence_locked(interaction_id, bound_event)
             self._pending_runtime_events.clear()
+        session_runtime_events = self._pending_runtime_events_by_session.pop(
+            session_id, []
+        )
+        for event in session_runtime_events:
+            bound_event = {**event, "session_id": session_id}
+            self._append_event_locked(interaction_id, bound_event)
+            self._apply_runtime_evidence_locked(interaction_id, bound_event)
         audio = self._pending_audio.pop(session_id, None)
         if audio is not None:
             self._write_interaction_audio_locked(interaction_id, audio)
@@ -1214,6 +1425,21 @@ class ModificationDatasetCollector:
         imu = record.get("imu", {})
         imu_path = interaction_dir / str(imu.get("samples_file") or "imu.jsonl")
         imu_sample_count = max(0, int(imu.get("sample_count", 0) or 0))
+        mode = record.get("mode", {})
+        display_mode = str(
+            mode.get("final_applied") or mode.get("selected") or ""
+        )
+        outcome_status = str(
+            record.get("outcome", {}).get("status", "") or ""
+        )
+        candidate_available = (
+            ModificationDatasetCollector._display_candidate_available(record)
+        )
+        edit_before_text, edit_summary = (
+            ModificationDatasetCollector._display_edit_details(
+                record, display_mode
+            )
+        )
         return {
             "id": str(record.get("interaction_id", interaction_dir.name)),
             "interactionId": str(
@@ -1237,24 +1463,51 @@ class ModificationDatasetCollector:
                 else "音频已保存 · IMU 未采集"
             ),
             "error": str(asr.get("error", "") or ""),
-            "mode": str(record.get("mode", {}).get("selected", "") or ""),
-            "outcome": str(record.get("outcome", {}).get("status", "") or ""),
+            "mode": display_mode,
+            "modeLabel": (
+                "编辑指令"
+                if display_mode == "edit"
+                else "听写输入"
+                if display_mode == "dictation"
+                else "语音记录"
+            ),
+            "outcome": outcome_status,
             "candidateText": candidate_text,
+            "candidateAvailable": candidate_available,
+            "candidateEmpty": candidate_available and not bool(candidate_text),
+            "editBeforeText": edit_before_text,
+            "editSummary": edit_summary,
+            "application": str(
+                record.get("target", {}).get("application", "") or ""
+            ),
             "preferenceEligible": preference_eligible,
         }
 
     @staticmethod
     def _display_candidate_text(record: dict) -> str:
         outcome = record.get("outcome", {})
-        final_text = str(outcome.get("final_text", "") or "").strip()
-        if str(outcome.get("status", "")) in {"applied", "confirm"} and final_text:
+        # Undo keeps its restoration text in the raw Interaction record for
+        # diagnostics, but Voice History must not present that snapshot as a
+        # still-active LLM/edit result.
+        if str(outcome.get("status", "")) == "undone":
+            return ""
+        outcome_status = str(outcome.get("status", ""))
+        final_value = outcome.get("final_text")
+        final_text = str(final_value or "").strip()
+        if outcome_status in {"applied", "confirm"} and final_value is not None:
             return final_text
         requests = record.get("llm", {}).get("requests", [])
-        selected_mode = str(record.get("mode", {}).get("selected", ""))
+        mode = record.get("mode", {})
+        selected_mode = str(
+            mode.get("final_applied") or mode.get("selected") or ""
+        )
         for request in reversed(requests):
-            candidate = str(request.get("candidate_text", "") or "").strip()
-            if candidate and str(request.get("mode", "")) == selected_mode:
-                return candidate
+            if (
+                str(request.get("mode", "")) == selected_mode
+                and request.get("status") == "completed"
+                and "candidate_text" in request
+            ):
+                return str(request.get("candidate_text") or "").strip()
         for request in reversed(requests):
             candidate = str(request.get("candidate_text", "") or "").strip()
             if candidate:
@@ -1265,6 +1518,76 @@ class ModificationDatasetCollector:
         return str(
             asr.get("corrected_text") or asr.get("final_text") or ""
         ).strip()
+
+    @staticmethod
+    def _display_candidate_available(record: dict) -> bool:
+        outcome = record.get("outcome", {})
+        outcome_status = str(outcome.get("status", ""))
+        if outcome_status == "undone":
+            return False
+        if (
+            outcome_status in {"applied", "confirm"}
+            and outcome.get("final_text") is not None
+        ):
+            return True
+        mode = record.get("mode", {})
+        selected_mode = str(
+            mode.get("final_applied") or mode.get("selected") or ""
+        )
+        return any(
+            str(request.get("mode", "")) == selected_mode
+            and request.get("status") == "completed"
+            and "candidate_text" in request
+            for request in reversed(record.get("llm", {}).get("requests", []))
+        )
+
+    @staticmethod
+    def _display_edit_details(
+        record: dict, display_mode: str
+    ) -> tuple[str, str]:
+        if str(display_mode) != "edit":
+            return "", ""
+        selected_request = next(
+            (
+                request
+                for request in reversed(
+                    record.get("llm", {}).get("requests", [])
+                )
+                if str(request.get("mode", "")) == "edit"
+                and request.get("status") == "completed"
+                and "candidate_text" in request
+            ),
+            None,
+        )
+        before_text = ""
+        request_result = ""
+        request_result_known = False
+        if selected_request is not None:
+            request_input = selected_request.get("input", {})
+            if isinstance(request_input, dict):
+                before_text = str(request_input.get("target_text", "") or "")
+            request_result = str(
+                selected_request.get("candidate_text", "") or ""
+            )
+            request_result_known = True
+
+        outcome = record.get("outcome", {})
+        outcome_status = str(outcome.get("status", ""))
+        if (
+            outcome_status in {"applied", "confirm"}
+            and outcome.get("final_text") is not None
+        ):
+            after_text = str(outcome.get("final_text") or "")
+            result_known = True
+        else:
+            # An undo stores the restored original text in outcome.final_text.
+            # Its edit summary must describe the result that was undone, not
+            # compare the original text with itself.
+            after_text = request_result
+            result_known = request_result_known
+        return before_text, _edit_change_summary(
+            before_text, after_text, result_known=result_known
+        )
 
     def _update_llm_request_locked(
         self, interaction_id: str, request_id: int, updates: dict
@@ -1295,24 +1618,72 @@ class ModificationDatasetCollector:
     @staticmethod
     def _runtime_evidence_fields(message: str) -> dict:
         summary = str(message).splitlines()[0].strip()
-        stage_match = re.match(r"^(STAGE[12])\b", summary)
+        stage_match = re.match(r"^(STAGE[12])\b", summary, re.IGNORECASE)
         fields: dict[str, object] = {}
         if stage_match:
             fields["stage"] = stage_match.group(1).lower()
-        for key in ("sample", "score", "probability", "threshold"):
+            fields["component"] = "detector"
+        asr_match = re.match(
+            r"^\[ASR\]\s+(START|END|ABORT|CANCEL)\b",
+            summary,
+            re.IGNORECASE,
+        )
+        if asr_match:
+            fields["component"] = "asr_session"
+            fields["phase"] = asr_match.group(1).lower()
+        elif summary.startswith("[ASR TIMING]"):
+            fields["component"] = "asr_timing"
+        for key in ("sample", "score", "probability", "threshold", "t"):
             match = re.search(
-                rf"\b{key}=([+-]?(?:\d+(?:\.\d*)?|\.\d+))",
+                rf"\b{key}=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))",
                 summary,
+                re.IGNORECASE,
             )
             if match is None:
                 continue
-            fields[key] = (
+            field_name = "time_s" if key == "t" else key
+            fields[field_name] = (
                 int(float(match.group(1)))
                 if key == "sample"
                 else float(match.group(1))
             )
+        window_match = re.search(
+            r"\bwindow=\[\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*"
+            r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\]",
+            summary,
+            re.IGNORECASE,
+        )
+        if window_match is not None:
+            fields["window_start_s"] = float(window_match.group(1))
+            fields["window_end_s"] = float(window_match.group(2))
+        logits_match = re.search(
+            r"\blogits=\(\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*,\s*"
+            r"([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*\)",
+            summary,
+            re.IGNORECASE,
+        )
+        if logits_match is not None:
+            fields["logits"] = [
+                float(logits_match.group(1)),
+                float(logits_match.group(2)),
+            ]
+        duration_match = re.search(
+            r"\bduration=\s*([+-]?(?:\d+(?:\.\d*)?|\.\d+))s\b",
+            summary,
+            re.IGNORECASE,
+        )
+        if duration_match is not None:
+            fields["duration_s"] = float(duration_match.group(1))
+        rejects_match = re.search(r"\brejects=(\d+)\b", summary, re.IGNORECASE)
+        if rejects_match is not None:
+            fields["reject_count"] = int(rejects_match.group(1))
+        reason_match = re.search(r"\breason=([^\s]+)", summary, re.IGNORECASE)
+        if reason_match is not None:
+            fields["reason"] = reason_match.group(1)
         decision = re.search(
-            r"\b(ACTIVATE|REJECT|ACCEPT|TRIGGER|PASS)\b", summary
+            r"\b(ACTIVATE|REJECT|ACCEPT|TRIGGER|PASS)\b",
+            summary,
+            re.IGNORECASE,
         )
         if decision is not None:
             fields["decision"] = decision.group(1).lower()
@@ -1326,14 +1697,28 @@ class ModificationDatasetCollector:
             return
         record = self._interaction_data(interaction_id)
         near_field = record["near_field"]
-        if event.get("score") is not None:
-            near_field[f"{stage}_score"] = float(event["score"])
-            if stage == "stage2":
-                near_field["audio_score"] = float(event["score"])
+        score = event.get("score")
+        decision = str(event.get("decision", "") or "").lower()
+        if stage == "stage2":
+            # ``near_field`` is compact training metadata. Per-window Stage2
+            # evidence remains available in events.jsonl for diagnostics and
+            # must not be duplicated into every Interaction record.
+            activation_missing = near_field.get("activation_score") is None
+            if decision in {"activate", "accept"} and activation_missing:
+                if score is not None:
+                    near_field["activation_score"] = float(score)
+                    near_field["stage2_score"] = float(score)
+                    near_field["audio_score"] = float(score)
+                near_field["detector_decision"] = decision
+            elif not decision and score is not None:
+                near_field["stage2_score"] = float(score)
+                near_field["audio_score"] = float(score)
+        elif score is not None:
+            near_field[f"{stage}_score"] = float(score)
         if event.get("threshold") is not None:
             near_field[f"{stage}_threshold"] = float(event["threshold"])
-        if event.get("decision"):
-            near_field["detector_decision"] = str(event["decision"])
+        if decision and stage != "stage2":
+            near_field["detector_decision"] = decision
         record["updated_at"] = _utc_now()
         self._write_json(self._interaction_path(interaction_id), record)
 

@@ -48,10 +48,25 @@ def _open_startup_log() -> tuple[Path, object]:
 
         log_path = app_data_root() / "logs" / "startup.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
-        return log_path, log_path.open("a", encoding="utf-8", buffering=1)
     except BaseException:
         log_path = Path(tempfile.gettempdir()) / "ProximicVoice-startup.log"
-        return log_path, log_path.open("a", encoding="utf-8", buffering=1)
+    try:
+        from proximic_ring.diagnostic_log import (
+            STARTUP_LOG_BACKUP_COUNT,
+            STARTUP_LOG_MAX_BYTES,
+            rotate_existing_log,
+        )
+
+        rotate_existing_log(
+            log_path,
+            max_bytes=STARTUP_LOG_MAX_BYTES,
+            backup_count=STARTUP_LOG_BACKUP_COUNT,
+        )
+    except BaseException:
+        # A damaged/partially upgraded installation should still be able to
+        # create a startup traceback even when the rotation helper is absent.
+        pass
+    return log_path, log_path.open("a", encoding="utf-8", buffering=1)
 
 
 def _show_fatal_startup_error(error: BaseException, log_path: Path) -> None:

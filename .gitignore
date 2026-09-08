@@ -24,6 +24,7 @@ dataset/
 datasets/
 noise_preview/
 run.log
+logs/
 
 # Reproducible training outputs. The release detector is stored in
 # src/proximic_ring/assets/ringo-near-v1.model instead.

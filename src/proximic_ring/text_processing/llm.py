@@ -125,7 +125,6 @@ class OpenAICompatibleTextProcessor:
             temperature=0.0,
             max_tokens=32,
             edit_tool=None,
-            disable_thinking=True,
         )
         model_output = self._model_output_text(response)
         try:
@@ -696,7 +695,6 @@ class OpenAICompatibleTextProcessor:
         temperature: float,
         max_tokens: int,
         edit_tool: dict[str, Any] | None = None,
-        disable_thinking: bool = False,
     ) -> str | dict[str, Any]:
         provider = normalize_llm_provider(settings.provider)
         use_ark_responses = provider == LLM_PROVIDER_VOLCENGINE
@@ -743,14 +741,12 @@ class OpenAICompatibleTextProcessor:
                     },
                 ],
                 "max_output_tokens": int(max_tokens),
+                # ProxiMic's text tasks are short, deterministic, and
+                # latency-sensitive.  Hidden reasoning also consumes the same
+                # output budget as function arguments, which can truncate an
+                # otherwise valid edit JSON response.
+                "thinking": {"type": "disabled"},
             }
-            # Simple dictation requests already disable Doubao reasoning.
-            # Callers such as the binary mode router may explicitly disable
-            # reasoning for any Ark Responses model, including DeepSeek.
-            if disable_thinking or settings.model.strip().lower().startswith(
-                "doubao-"
-            ):
-                request_body["thinking"] = {"type": "disabled"}
             if edit_tool is not None:
                 function = edit_tool["function"]
                 request_body["tools"] = [

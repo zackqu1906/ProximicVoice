@@ -66,6 +66,7 @@ class DesktopTargetRef:
     caret_y: int = 0
     caret_width: int = 0
     caret_height: int = 0
+    accessibility_id: str = ""
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ class DesktopTextTarget(Protocol):
     def undo(self, target: DesktopTargetRef) -> None: ...
     def release_selection(self, target: DesktopTargetRef) -> None: ...
     def is_foreground(self, target: DesktopTargetRef) -> bool: ...
+    def is_application_foreground(self, target: DesktopTargetRef) -> bool: ...
     def caret_bounds(self, target: DesktopTargetRef) -> tuple[int, int, int, int]: ...
 
 
@@ -180,9 +182,31 @@ class _MacOSAccessibilityTextBridge:
         core_foundation.CFGetTypeID.restype = ctypes.c_ulong
         core_foundation.CFStringGetTypeID.argtypes = ()
         core_foundation.CFStringGetTypeID.restype = ctypes.c_ulong
+        core_foundation.CFHash.argtypes = (ctypes.c_void_p,)
+        core_foundation.CFHash.restype = ctypes.c_ulong
         core_foundation.CFRelease.argtypes = (ctypes.c_void_p,)
         self._application_services = application_services
         self._core_foundation = core_foundation
+
+    def focused_control_id(self, process_id: int) -> str:
+        """Return a stable in-process identity for the focused AX element."""
+
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        focused = ctypes.c_void_p()
+        focused_attribute = None
+        try:
+            if not application:
+                return ""
+            focused_attribute = self._cf_string("AXFocusedUIElement")
+            if self._application_services.AXUIElementCopyAttributeValue(
+                application, focused_attribute, ctypes.byref(focused)
+            ) or not focused.value:
+                return ""
+            return f"ax:{int(self._core_foundation.CFHash(focused.value))}"
+        finally:
+            self._release(focused.value, focused_attribute, application)
 
     def read_focused_value(self, process_id: int) -> str | None:
         application, focused, value = self._focused_value(int(process_id))
@@ -564,6 +588,28 @@ class MacOSDesktopTextTarget:
     KEY_DELETE = 51
     KEY_RIGHT = 124
 
+    @staticmethod
+    def _same_text_field_geometry(
+        expected: tuple[int, int, int, int],
+        current: tuple[int, int, int, int],
+    ) -> bool:
+        """Match one editor while allowing content-driven vertical resizing."""
+
+        ex, ey, ew, eh = (int(value) for value in expected)
+        cx, cy, cw, ch = (int(value) for value in current)
+        if min(ew, eh, cw, ch) <= 0:
+            return False
+        horizontal_tolerance = max(12, min(48, round(max(ew, cw) * 0.08)))
+        width_tolerance = max(18, min(80, round(max(ew, cw) * 0.15)))
+        if abs(ex - cx) > horizontal_tolerance or abs(ew - cw) > width_tolerance:
+            return False
+        edge_tolerance = max(12, min(36, round(max(eh, ch) * 0.2)))
+        same_top = abs(ey - cy) <= edge_tolerance
+        same_bottom = abs((ey + eh) - (cy + ch)) <= edge_tolerance
+        overlap = max(0, min(ey + eh, cy + ch) - max(ey, cy))
+        enough_overlap = overlap >= min(eh, ch) * 0.5
+        return bool(enough_overlap and (same_top or same_bottom))
+
     def __init__(
         self,
         clipboard: ClipboardBridge,
@@ -618,6 +664,15 @@ class MacOSDesktopTextTarget:
         process_id, name = self._frontmost_application()
         bounds = (0, 0, 0, 0)
         caret = (0, 0, 0, 0)
+        accessibility_id = ""
+        focused_control_id = getattr(
+            self._accessibility_text, "focused_control_id", None
+        )
+        if callable(focused_control_id):
+            try:
+                accessibility_id = str(focused_control_id(process_id) or "")
+            except BaseException:
+                accessibility_id = ""
         focused_bounds = getattr(self._accessibility_text, "focused_bounds", None)
         if callable(focused_bounds):
             try:
@@ -658,9 +713,55 @@ class MacOSDesktopTextTarget:
             caret_y=caret[1],
             caret_width=max(0, caret[2]),
             caret_height=max(0, caret[3]),
+            accessibility_id=accessibility_id,
         )
 
     def is_foreground(self, target: DesktopTargetRef) -> bool:
+        process_id, _name = self._frontmost_application()
+        if not process_id or process_id != int(target.process_id):
+            return False
+        focused_control_id = getattr(
+            self._accessibility_text, "focused_control_id", None
+        )
+        if target.accessibility_id and callable(focused_control_id):
+            try:
+                current_id = str(focused_control_id(target.process_id) or "")
+            except BaseException:
+                current_id = ""
+            if current_id:
+                if current_id == target.accessibility_id:
+                    return True
+                # Some Electron/WebKit editors recreate their AX wrapper while
+                # keeping the same focused field. Confirm with geometry before
+                # treating a changed wrapper hash as a different text field.
+        if target.screen_width <= 0 or target.screen_height <= 0:
+            # Some macOS web editors expose neither AX bounds nor a persistent
+            # focused-element identity. The owning application is still
+            # reliable, and the undo path separately compares the focused
+            # field's current contents with the saved applied state before it
+            # changes anything. Keeping the action usable here is therefore
+            # safer than making every successful input lose its undo control.
+            return True
+        focused_bounds = getattr(self._accessibility_text, "focused_bounds", None)
+        if not callable(focused_bounds):
+            return True
+        try:
+            current_bounds = tuple(
+                int(item) for item in focused_bounds(target.process_id)
+            )
+        except BaseException:
+            return False
+        expected_bounds = (
+            target.screen_x,
+            target.screen_y,
+            target.screen_width,
+            target.screen_height,
+        )
+        return self._same_text_field_geometry(expected_bounds, current_bounds)
+
+    def is_application_foreground(self, target: DesktopTargetRef) -> bool:
+        """Check the owning app without relying on a transient AX element."""
+
         process_id, _name = self._frontmost_application()
         return bool(process_id and process_id == int(target.process_id))
 
@@ -776,11 +877,24 @@ class MacOSDesktopTextTarget:
         if not process_id or process_id != int(target.process_id):
             raise RuntimeError("目标文本框当前不在前台")
 
-        # A process can contain several editable fields.  Bounds are the only
-        # stable identity available through the lightweight AX bridge; refuse
-        # to observe a different field instead of recording the wrong result.
+        # A process can contain several editable fields. Prefer the stable AX
+        # element identity; bounds are a fallback for older/custom bridges.
+        identity_verified = False
+        focused_control_id = getattr(
+            self._accessibility_text, "focused_control_id", None
+        )
+        if target.accessibility_id and callable(focused_control_id):
+            try:
+                current_id = str(focused_control_id(target.process_id) or "")
+            except BaseException as exc:
+                raise RuntimeError("无法无干扰定位目标文本框") from exc
+            identity_verified = current_id == target.accessibility_id
         focused_bounds = getattr(self._accessibility_text, "focused_bounds", None)
-        if target.screen_width > 0 and target.screen_height > 0:
+        if (
+            not identity_verified
+            and target.screen_width > 0
+            and target.screen_height > 0
+        ):
             if not callable(focused_bounds):
                 raise RuntimeError("目标文本框不支持无干扰定位")
             try:
@@ -795,12 +909,32 @@ class MacOSDesktopTextTarget:
                 target.screen_width,
                 target.screen_height,
             )
-            if any(
-                abs(current - expected) > 8
-                for current, expected in zip(current_bounds, expected_bounds)
+            if not self._same_text_field_geometry(
+                expected_bounds,
+                current_bounds,
             ):
                 raise RuntimeError("用户焦点已经离开原文本框")
 
+        try:
+            value = self._accessibility_text.read_focused_value(target.process_id)
+        except BaseException as exc:
+            raise RuntimeError("当前文本框不支持无干扰读取") from exc
+        if value is None:
+            raise RuntimeError("当前文本框不支持无干扰读取")
+        return DesktopTextSnapshot(target=target, text=str(value))
+
+    def observe_focused_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
+        """Read the current field when a stale AX identity is being revalidated.
+
+        This deliberately verifies only the owning foreground application.  The
+        caller must compare the returned text with its saved applied state before
+        performing any mutation.  Unlike ``capture_text`` this path never moves
+        the selection or touches the clipboard.
+        """
+
+        process_id, _name = self._frontmost_application()
+        if not process_id or process_id != int(target.process_id):
+            raise RuntimeError("目标应用当前不在前台")
         try:
             value = self._accessibility_text.read_focused_value(target.process_id)
         except BaseException as exc:
@@ -896,7 +1030,7 @@ class MacOSDesktopTextTarget:
         """Undo the most recent edit in the locked external text control."""
         self._activate(target)
         self._injector.command_key(self.KEY_Z)
-        time.sleep(max(self._shortcut_settle_s, 0.12))
+        time.sleep(max(self._shortcut_settle_s, 0.06))
 
     def release_selection(self, target: DesktopTargetRef) -> None:
         try:
@@ -908,6 +1042,9 @@ class MacOSDesktopTextTarget:
     def _activate(self, target: DesktopTargetRef) -> None:
         if not target.process_id or target.process_id == os.getpid():
             raise RuntimeError("请先把光标放入另一个应用的文本框，再开始听写")
+        process_id, _name = self._frontmost_application()
+        if process_id == int(target.process_id):
+            return
         try:
             from AppKit import (
                 NSApplicationActivateAllWindows,
@@ -964,6 +1101,12 @@ class WindowsDesktopTextTarget:
     VK_END = 0x23
     KEYEVENTF_KEYUP = 0x0002
 
+    @staticmethod
+    def _uia_control_id(control: UIATextControlRef | None) -> str:
+        if control is None:
+            return ""
+        return "uia:" + ".".join(str(value) for value in control.runtime_id)
+
     def __init__(
         self,
         clipboard: ClipboardBridge,
@@ -1017,6 +1160,14 @@ class WindowsDesktopTextTarget:
         focus = int(info.hwndFocus)
         process_name = self._process_name(int(process_id.value))
         uia_control = None
+        focused_uia_control = None
+        if self._uia is not None:
+            try:
+                focused_uia_control = self._uia.capture_focused_text_control(
+                    int(process_id.value)
+                )
+            except Exception:
+                focused_uia_control = None
         # Preserve the established clipboard behavior for WeChat and browsers.
         # Codex needs UIA because its native focus HWND represents the entire
         # Chromium renderer rather than the ProseMirror composer.
@@ -1024,12 +1175,7 @@ class WindowsDesktopTextTarget:
             process_name.casefold() == "chatgpt.exe"
             and self._uia is not None
         ):
-            try:
-                uia_control = self._uia.capture_focused_text_control(
-                    int(process_id.value)
-                )
-            except Exception:
-                uia_control = None
+            uia_control = focused_uia_control
         title_length = int(self._user32.GetWindowTextLengthW(window))
         title_buffer = ctypes.create_unicode_buffer(title_length + 1)
         if title_length:
@@ -1049,6 +1195,7 @@ class WindowsDesktopTextTarget:
             int(bounds.top),
             max(0, int(bounds.right - bounds.left)),
             max(0, int(bounds.bottom - bounds.top)),
+            accessibility_id=self._uia_control_id(focused_uia_control),
         )
         caret = self.caret_bounds(target)
         if caret[3] > 0:
@@ -1221,6 +1368,43 @@ class WindowsDesktopTextTarget:
             return
 
     def is_foreground(self, target: DesktopTargetRef) -> bool:
+        foreground = int(self._user32.GetForegroundWindow() or 0)
+        if foreground != int(target.window_handle):
+            return False
+        if target.accessibility_id.startswith("uia:") and self._uia is not None:
+            try:
+                focused = self._uia.capture_focused_text_control(
+                    int(target.process_id)
+                )
+            except Exception:
+                return False
+            return self._uia_control_id(focused) == target.accessibility_id
+        if target.uia_control is not None and self._uia is not None:
+            try:
+                focused = self._uia.capture_focused_text_control(
+                    int(target.process_id)
+                )
+            except Exception:
+                return False
+            return bool(
+                focused is not None
+                and focused.runtime_id == target.uia_control.runtime_id
+            )
+        process_id = wintypes.DWORD()
+        thread_id = int(
+            self._user32.GetWindowThreadProcessId(
+                foreground, ctypes.byref(process_id)
+            )
+        )
+        info = _GUITHREADINFO(cbSize=ctypes.sizeof(_GUITHREADINFO))
+        if (
+            not thread_id
+            or not self._user32.GetGUIThreadInfo(thread_id, ctypes.byref(info))
+        ):
+            return False
+        return int(info.hwndFocus or 0) == int(target.control_handle)
+
+    def is_application_foreground(self, target: DesktopTargetRef) -> bool:
         return int(self._user32.GetForegroundWindow() or 0) == int(
             target.window_handle
         )

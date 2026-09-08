@@ -50,6 +50,30 @@ def test_packaged_qml_runtime_check_requires_every_imported_module(tmp_path) -> 
         launcher._verify_bundled_qml_runtime(tmp_path)
 
 
+def test_open_startup_log_rotates_oversized_previous_run(
+    monkeypatch, tmp_path
+) -> None:
+    launcher = _load_launcher()
+    import proximic_ring.diagnostic_log as diagnostic_log
+
+    runtime_paths = types.ModuleType("proximic_ring.runtime_paths")
+    runtime_paths.app_data_root = lambda: tmp_path
+    monkeypatch.setitem(sys.modules, "proximic_ring.runtime_paths", runtime_paths)
+    monkeypatch.setattr(diagnostic_log, "STARTUP_LOG_MAX_BYTES", 64)
+    monkeypatch.setattr(diagnostic_log, "STARTUP_LOG_BACKUP_COUNT", 2)
+
+    log_path = tmp_path / "logs" / "startup.log"
+    log_path.parent.mkdir(parents=True)
+    log_path.write_text("previous run\n" * 8, encoding="utf-8")
+
+    opened_path, handle = launcher._open_startup_log()
+    handle.close()
+
+    assert opened_path == log_path
+    assert log_path.exists()
+    assert log_path.with_name("startup.log.1").exists()
+
+
 def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> None:
     launcher = _load_launcher()
     output = io.StringIO()

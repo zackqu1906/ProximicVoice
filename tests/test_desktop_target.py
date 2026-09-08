@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 
 import pytest
 
@@ -59,6 +60,10 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
             calls.append(("press", key))
 
     class AccessibilityText:
+        def focused_control_id(self, process_id):
+            calls.append(("ax-id", process_id))
+            return "ax:123"
+
         def focused_bounds(self, process_id):
             calls.append(("ax-bounds", process_id))
             return 120, 240, 500, 180
@@ -106,6 +111,7 @@ def test_macos_target_reads_injects_and_replaces_external_text(monkeypatch) -> N
         target.caret_width,
         target.caret_height,
     ) == (410, 286, 2, 19)
+    assert target.accessibility_id == "ax:123"
     snapshot = adapter.capture_text(target)
     adapter.inject(target, "听写内容")
     adapter.replace(snapshot, "修改后内容")
@@ -271,6 +277,50 @@ def test_macos_manual_observation_never_activates_selects_or_copies(monkeypatch)
     assert calls == [("bounds", 4321), ("read", 4321)]
 
 
+def test_macos_focused_observation_revalidates_a_rebuilt_web_field(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class Clipboard:
+        def snapshot(self):
+            raise AssertionError("focused observation must not touch the clipboard")
+
+    class Injector:
+        def command_key(self, _key):
+            raise AssertionError("focused observation must not send shortcuts")
+
+    class AccessibilityText:
+        def focused_bounds(self, _process_id):
+            raise AssertionError("stale geometry must not block revalidation")
+
+        def read_focused_value(self, process_id):
+            calls.append(("read", process_id))
+            return "刚才应用后的文本"
+
+    adapter = MacOSDesktopTextTarget(
+        Clipboard(),
+        injector=Injector(),
+        accessibility_text=AccessibilityText(),
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "网页"))
+    target = DesktopTargetRef(
+        0,
+        0,
+        "网页",
+        process_id=4321,
+        accessibility_id="ax:stale-wrapper",
+        screen_x=100,
+        screen_y=200,
+        screen_width=500,
+        screen_height=80,
+    )
+
+    assert adapter.observe_focused_text(target).text == "刚才应用后的文本"
+    assert calls == [("read", 4321)]
+
+
 def test_macos_injection_waits_for_current_clipboard_before_paste(monkeypatch) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
     calls: list[object] = []
@@ -383,6 +433,94 @@ def test_macos_target_reads_live_caret_bounds_without_moving_focus(monkeypatch) 
     target = DesktopTargetRef(0, 0, "编辑器", process_id=4321)
 
     assert adapter.caret_bounds(target) == (410, 242, 2, 19)
+
+
+def test_macos_foreground_requires_the_same_text_field_when_bounds_are_known(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    class AccessibilityText:
+        def __init__(self):
+            self.bounds = (100, 200, 500, 80)
+            self.control_id = "ax:field-a"
+
+        def focused_control_id(self, _process_id):
+            return self.control_id
+
+        def focused_bounds(self, _process_id):
+            return self.bounds
+
+    accessibility = AccessibilityText()
+    adapter = MacOSDesktopTextTarget(
+        object(),
+        injector=object(),
+        accessibility_text=accessibility,
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "编辑器"))
+    target = DesktopTargetRef(
+        0,
+        0,
+        "编辑器",
+        process_id=4321,
+        screen_x=100,
+        screen_y=200,
+        screen_width=500,
+        screen_height=80,
+        accessibility_id="ax:field-a",
+    )
+
+    assert adapter.is_foreground(target) is True
+    # Resizing the same accessibility field does not break its identity.
+    accessibility.bounds = (100, 400, 500, 80)
+    assert adapter.is_foreground(target) is True
+    accessibility.control_id = "ax:field-b"
+    assert adapter.is_foreground(target) is False
+    # Electron editors may recreate the AX wrapper and expand upward as text is
+    # inserted. Matching top/bottom geometry keeps this as the same field.
+    accessibility.bounds = (100, 160, 500, 120)
+    assert adapter.is_foreground(target) is True
+    accessibility.bounds = (100, 400, 500, 80)
+    assert adapter.is_foreground(target) is False
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (9999, "其他"))
+    assert adapter.is_foreground(target) is False
+
+
+def test_macos_foreground_keeps_an_unresolved_web_editor_usable(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    adapter = MacOSDesktopTextTarget(
+        object(),
+        injector=object(),
+        accessibility_text=object(),
+    )
+    target = DesktopTargetRef(0, 0, "ChatGPT", process_id=4321)
+
+    monkeypatch.setattr(
+        adapter, "_frontmost_application", lambda: (4321, "ChatGPT")
+    )
+    assert adapter.is_foreground(target) is True
+    assert adapter.is_application_foreground(target) is True
+
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (9999, "其他"))
+    assert adapter.is_foreground(target) is False
+    assert adapter.is_application_foreground(target) is False
+
+
+def test_macos_activate_has_no_delay_when_target_is_already_frontmost(
+    monkeypatch,
+) -> None:
+    adapter = object.__new__(MacOSDesktopTextTarget)
+    target = DesktopTargetRef(0, 0, "微信", process_id=4321)
+    adapter._frontmost_application = lambda: (4321, "微信")
+    monkeypatch.setattr(
+        time,
+        "sleep",
+        lambda _seconds: (_ for _ in ()).throw(
+            AssertionError("already-frontmost activation must not sleep")
+        ),
+    )
+
+    adapter._activate(target)
 
 
 def test_macos_target_uses_last_pointer_when_editor_hides_ax_caret(monkeypatch) -> None:

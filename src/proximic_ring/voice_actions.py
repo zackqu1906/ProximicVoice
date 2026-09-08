@@ -55,6 +55,7 @@ class WindowsVoiceActionHotkeys:
     VK_MENU = 0x12
     VK_CONTROL = 0x11
     VK_SHIFT = 0x10
+    VK_MODE_SWITCH = 0x77  # F8
     _ALT_ACTIONS = {
         0x31: ACTION_INPUT,      # Alt+1
         0x32: ACTION_EDIT,       # Alt+2
@@ -190,12 +191,20 @@ class WindowsVoiceActionHotkeys:
             action = cls._ALT_ACTIONS.get(int(key))
             if action is not None:
                 return action
-        if correction_active and int(key) == 0x09:  # Tab
-            return ACTION_SWITCH_MODE
-        if undo_active and control_down and not shift_down and int(key) == 0x5A:
+        # A visible applied action owns Escape even if an alternate-mode
+        # background request has not finished clearing its interaction state.
+        if undo_active and int(key) == 0x1B:  # Escape
             return ACTION_UNDO
         if interaction_active and int(key) == 0x1B:  # Escape
             return ACTION_CANCEL
+        if (
+            correction_active
+            and int(key) == cls.VK_MODE_SWITCH
+            and not alt_down
+            and not control_down
+            and not shift_down
+        ):
+            return ACTION_SWITCH_MODE
         return None
 
     @staticmethod
@@ -246,9 +255,8 @@ class WindowsVoiceActionHotkeys:
 class MacOSVoiceActionHotkeys:
     """Consume active-utterance and result-correction shortcuts on macOS."""
 
-    KEY_TAB = 48
+    KEY_MODE_SWITCH = 100  # F8
     KEY_ESCAPE = 53
-    KEY_Z = 6
 
     def __init__(
         self,
@@ -303,22 +311,28 @@ class MacOSVoiceActionHotkeys:
         key_code: int,
         *,
         command_down: bool = False,
+        control_down: bool = False,
+        option_down: bool = False,
         shift_down: bool = False,
         interaction_active: bool = False,
         correction_active: bool = False,
         undo_active: bool = False,
     ) -> str | None:
-        if correction_active and int(key_code) == cls.KEY_TAB:
-            return ACTION_SWITCH_MODE
-        if (
-            undo_active
-            and command_down
-            and not shift_down
-            and int(key_code) == cls.KEY_Z
-        ):
+        # A visible applied action owns Escape even if an alternate-mode
+        # background request has not finished clearing its interaction state.
+        if undo_active and int(key_code) == cls.KEY_ESCAPE:
             return ACTION_UNDO
         if interaction_active and int(key_code) == cls.KEY_ESCAPE:
             return ACTION_CANCEL
+        if (
+            correction_active
+            and int(key_code) == cls.KEY_MODE_SWITCH
+            and not command_down
+            and not control_down
+            and not option_down
+            and not shift_down
+        ):
+            return ACTION_SWITCH_MODE
         return None
 
     def _run(self) -> None:
@@ -337,18 +351,6 @@ class MacOSVoiceActionHotkeys:
                         return event
                     if int(event_type) != int(quartz.kCGEventKeyDown):
                         return event
-                    repeat_field = getattr(
-                        quartz, "kCGKeyboardEventAutorepeat", None
-                    )
-                    if repeat_field is not None and quartz.CGEventGetIntegerValueField(
-                        event, repeat_field
-                    ):
-                        active = (
-                            self._is_interaction_active()
-                            or self._is_mode_correction_active()
-                            or self._is_undo_active()
-                        )
-                        return None if active else event
                     key_code = quartz.CGEventGetIntegerValueField(
                         event, quartz.kCGKeyboardEventKeycode
                     )
@@ -358,6 +360,14 @@ class MacOSVoiceActionHotkeys:
                         command_down=bool(
                             flags & int(quartz.kCGEventFlagMaskCommand)
                         ),
+                        control_down=bool(
+                            flags
+                            & int(getattr(quartz, "kCGEventFlagMaskControl", 0))
+                        ),
+                        option_down=bool(
+                            flags
+                            & int(getattr(quartz, "kCGEventFlagMaskAlternate", 0))
+                        ),
                         shift_down=bool(
                             flags & int(quartz.kCGEventFlagMaskShift)
                         ),
@@ -365,6 +375,17 @@ class MacOSVoiceActionHotkeys:
                         correction_active=self._is_mode_correction_active(),
                         undo_active=self._is_undo_active(),
                     )
+                    repeat_field = getattr(
+                        quartz, "kCGKeyboardEventAutorepeat", None
+                    )
+                    if (
+                        repeat_field is not None
+                        and quartz.CGEventGetIntegerValueField(event, repeat_field)
+                    ):
+                        # Suppress repeats only for a key this hook owns. A held
+                        # letter, Backspace, or Tab must continue reaching the
+                        # foreground application while an overlay is visible.
+                        return None if action is not None else event
                     if action is None:
                         return event
                     self._on_action(action)

@@ -10,6 +10,7 @@ import numpy as np
 from proximic_ring.asr.backends.volcengine import (
     DEFAULT_RESOURCE_ID,
     VolcengineStreamingASR,
+    _dialog_context_data,
     _pcm16,
 )
 from proximic_ring.asr.factory import (
@@ -60,6 +61,14 @@ class ClosingAfterFinalWebSocket(FakeWebSocket):
         raise ConnectionError("Connection to remote host was lost")
 
 
+def _client_request(frame: bytes) -> dict:
+    assert frame[0] == 0x11
+    assert frame[1] >> 4 == 0x1
+    payload_size = struct.unpack_from(">I", frame, 8)[0]
+    payload = gzip.decompress(frame[12 : 12 + payload_size])
+    return json.loads(payload)
+
+
 def test_pcm16_quantization_matches_saved_voice_history_wav_samples():
     audio = np.array([-1.0, -0.25, 0.0, 0.25, 1.0], dtype=np.float32)
     saved_pcm = np.rint(np.clip(audio, -1.0, 1.0) * 32767.0).astype("<i2")
@@ -101,6 +110,98 @@ def test_native_streaming_uses_new_console_headers_and_returns_partial(monkeypat
     assert struct.unpack_from(">i", ws.sent[0], 4)[0] == 1
     assert ws.sent[-1][1] == 0x23
     assert struct.unpack_from(">i", ws.sent[-1], 4)[0] < 0
+
+
+def test_dialog_context_is_sent_as_stringified_corpus_newest_first(monkeypatch):
+    monkeypatch.setenv("TEST_VOLC_KEY", "speech-app-key")
+    ws = FakeWebSocket()
+    backend = VolcengineStreamingASR(
+        api_key_env="TEST_VOLC_KEY",
+        ws_factory=lambda *_args, **_kwargs: ws,
+    )
+    source_text = "较早一句。\n更新一句！最新一句？"
+    backend.set_session_context(
+        {
+            "status": "captured",
+            "source": "focused_text",
+            "text": source_text,
+            "source_char_count": len(source_text),
+            "target_key": "123:456:field",
+            "application": "测试应用",
+        }
+    )
+
+    backend.start()
+    request = _client_request(ws.sent[0])
+    serialized = request["request"]["corpus"]["context"]
+
+    assert isinstance(serialized, str)
+    assert json.loads(serialized) == {
+        "context_type": "dialog_ctx",
+        "context_data": [
+            {"text": "最新一句？"},
+            {"text": "更新一句！"},
+            {"text": "较早一句。"},
+        ],
+    }
+    assert backend.session_context_metadata == {
+        "status": "sent",
+        "source": "focused_text",
+        "context_type": "dialog_ctx",
+        "context_data": [
+            {"text": "最新一句？"},
+            {"text": "更新一句！"},
+            {"text": "较早一句。"},
+        ],
+        "item_count": 3,
+        "source_char_count": len(source_text),
+        "sent_char_count": len(source_text.replace("\n", "")),
+        "truncated": False,
+        "reason": "",
+        "target_key": "123:456:field",
+        "application": "测试应用",
+    }
+    backend.abort()
+
+
+def test_empty_context_is_omitted_and_old_context_does_not_leak(monkeypatch):
+    monkeypatch.setenv("TEST_VOLC_KEY", "speech-app-key")
+    sockets = [FakeWebSocket(), FakeWebSocket()]
+    backend = VolcengineStreamingASR(
+        api_key_env="TEST_VOLC_KEY",
+        ws_factory=lambda *_args, **_kwargs: sockets.pop(0),
+    )
+    backend.set_session_context({"status": "captured", "text": "第一句。"})
+    backend.start()
+    first_socket = backend._ws
+    backend.abort()
+
+    backend.set_session_context(
+        {
+            "status": "unavailable",
+            "source": "focused_text",
+            "reason": "focused_text_unreadable:RuntimeError",
+        }
+    )
+    backend.start()
+    second_socket = backend._ws
+
+    assert "corpus" in _client_request(first_socket.sent[0])["request"]
+    assert "corpus" not in _client_request(second_socket.sent[0])["request"]
+    assert backend.session_context_metadata["status"] == "unavailable"
+    assert backend.session_context_metadata["context_data"] == []
+    backend.abort()
+
+
+def test_dialog_context_clips_items_and_character_budget_from_the_oldest_end():
+    context_data, truncated = _dialog_context_data(
+        "第一句。第二句。第三句。",
+        max_items=2,
+        max_chars=8,
+    )
+
+    assert context_data == [{"text": "第三句。"}, {"text": "第二句。"}]
+    assert truncated
 
 
 def test_server_close_after_final_is_not_reported_as_connection_loss(monkeypatch):
