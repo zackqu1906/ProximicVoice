@@ -1,0 +1,1330 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-09T03:38:16+00:00",
+  "cases": {
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T025826Z__take-001__20260811T025857194527Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T025826Z__take-001__20260811T025857194527Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "12345。",
+          "elapsed_s": 0.925,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "一二三四五",
+          "elapsed_s": 1.899,
+          "error": null
+        },
+        "doubao": {
+          "text": "12345。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_live.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T025826Z__take-002__20260811T025923439674Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T025826Z__take-002__20260811T025923439674Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "67891。",
+          "elapsed_s": 0.93,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "六七八九十",
+          "elapsed_s": 1.574,
+          "error": null
+        },
+        "doubao": {
+          "text": "6七八九十。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-001__20260811T031052790747Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-001__20260811T031052790747Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "今天北京天气不错，我准备出门买杯咖啡，然后继续处理电脑上的工作。",
+          "elapsed_s": 0.931,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "今天北京天气不错我准备出门买杯咖啡然后继续处理电脑上的工作",
+          "elapsed_s": 2.936,
+          "error": null
+        },
+        "doubao": {
+          "text": "今天北京天气不错，我准备出门买杯咖啡。继续注意电脑上的工作。",
+          "elapsed_s": 8.724,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-002__20260811T031109712583Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-002__20260811T031109712583Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "请帮我打开这个文件，把刚才的内容保存下来，然后继续输入一下。",
+          "elapsed_s": 0.933,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "请帮我打开这个文件，把刚才的内容保存下来，然后继续输入。",
+          "elapsed_s": 2.959,
+          "error": null
+        },
+        "doubao": {
+          "text": "请帮我打开这个文件，把刚才的内容保存下来，然后继续输入。",
+          "elapsed_s": 8.21,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-003__20260811T031127736962Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-003__20260811T031127736962Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "我正在使用戒指进行语音输入，希望说话的时候不是自然。",
+          "elapsed_s": 0.936,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我正在使用截屏进行语音输入希望说话的时候不是自然",
+          "elapsed_s": 2.641,
+          "error": null
+        },
+        "doubao": {
+          "text": "我正在使用截止进行语音输入，希望说话的时候不是自然。",
+          "elapsed_s": 8.33,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-004__20260811T031142921153Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-004__20260811T031142921153Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "桌子旁边放着一本蓝色的书，我把被子拿起来，然后打开电脑，却含心的笑。",
+          "elapsed_s": 0.928,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "桌子旁边放着一本蓝色的书，我把杯子拿起来，然后打开电脑去看新的小。",
+          "elapsed_s": 3.5,
+          "error": null
+        },
+        "doubao": {
+          "text": "桌子旁边放着一本蓝色的书，被子拿起来，然后打开电脑查看新的。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-005__20260811T031158791003Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-005__20260811T031158791003Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "朋友刚才给我发了一条信息，说明天下，明天下午可以见面，然后。",
+          "elapsed_s": 0.95,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "朋友刚才给我发了一条信息，说明天下明天下午可以见面。",
+          "elapsed_s": 2.84,
+          "error": null
+        },
+        "doubao": {
+          "text": "朋友刚才给我发了一条信息，说明天下，明天下午可以见面。",
+          "elapsed_s": 8.181,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-006__20260811T031214721224Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-006__20260811T031214721224Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "苹果葡萄香蕉橙次都放在桌面上，就把旁边的白色盒塞一起拿起来。",
+          "elapsed_s": 0.914,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "苹果葡萄香蕉橙子都放在桌面上请把旁边的白色盒子一起拿起来",
+          "elapsed_s": 3.073,
+          "error": null
+        },
+        "doubao": {
+          "text": "苹果、葡萄、香蕉、橙子都放在桌面上，白色和黑色拿起来。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_live.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-007__20260811T031230886120Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-007__20260811T031230886120Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "8爸把白色被子摆在旁边，打开电脑，把刚才编辑的文件重新保存一遍。",
+          "elapsed_s": 0.949,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "把把把白色杯子摆在旁边我打开电脑把刚才编辑的文件重新保存一",
+          "elapsed_s": 3.179,
+          "error": null
+        },
+        "doubao": {
+          "text": "白色被子，白色旁边打开电脑，把刚才编辑的文件重新保存一。",
+          "elapsed_s": 8.248,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-008__20260811T031245830979Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-002cm__style-normal__angle-000deg__session-20260811T031027Z__take-008__20260811T031245830979Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "不之后，我准备回家，打开冰箱，拿瓶水，然后坐起来处理今天。",
+          "elapsed_s": 0.932,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "跑步之后我准备回家打开冰箱拿瓶水然后坐起来处理今天",
+          "elapsed_s": 2.857,
+          "error": null
+        },
+        "doubao": {
+          "text": "不知道，我准备回家打开冰箱拿瓶水，然后缩写来处理，今天。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-001__20260811T083255388993Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-001__20260811T083255388993Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "今天北京的心心情不错，我准备出门去买一杯咖啡，然后。",
+          "elapsed_s": 0.93,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "今天北京的心情不错我准备出门去买一杯咖啡然后",
+          "elapsed_s": 2.428,
+          "error": null
+        },
+        "doubao": {
+          "text": "今天北京的心，心情不错。川剧买一杯咖啡。",
+          "elapsed_s": 8.167,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-002__20260811T083310933326Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-002__20260811T083310933326Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "请帮我打开这个文件好吗？把刚才的内容保存下来，然后继续输入下一段文。",
+          "elapsed_s": 0.921,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "请帮我打开这个文件好吗？把刚才的内容保存下来，然后继续输入下一段。",
+          "elapsed_s": 3.3,
+          "error": null
+        },
+        "doubao": {
+          "text": "请帮我打开这个文件好吗？把刚才的内容保存下来，然后继续输入下一段。",
+          "elapsed_s": 8.497,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-003__20260811T083326319416Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-003__20260811T083326319416Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "我正在使用戒指进行语音输入，希望说话的时候，你可以保持治安。",
+          "elapsed_s": 0.943,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我正在使用戒指进行语音输入，希望说话的时候你可以保持自然。",
+          "elapsed_s": 2.873,
+          "error": null
+        },
+        "doubao": {
+          "text": "我正在使用戒指进行语音输入，希望说话的时候你可以保持自然。",
+          "elapsed_s": 8.214,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-004__20260811T083340628343Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-004__20260811T083340628343Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "桌子桌子旁边放了一本蓝色的书，我去把杯子拿起来，然后打开电脑查看新的消息。",
+          "elapsed_s": 0.919,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "桌子，桌子旁边放了一本蓝色的书。我去把杯子拿起来，然后打开电脑查看新的消息。",
+          "elapsed_s": 3.827,
+          "error": null
+        },
+        "doubao": {
+          "text": "桌子，桌子旁边放了一盆蓝色的书，我去把杯子拿起来，然后打开电脑查看新的消息。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-005__20260811T083357603107Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-005__20260811T083357603107Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "朋友刚才给我发了一条消息，说明天下午可以见面，具体的时间我们到时候再定吧。",
+          "elapsed_s": 0.94,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "朋友刚才给我发了一条消息，说明天下午可以见面，具体时间我们到时候再定吧。",
+          "elapsed_s": 3.612,
+          "error": null
+        },
+        "doubao": {
+          "text": "朋友刚才给我发了一条消息，说明天下午可以见面。具体时间我们到时候再定吧。",
+          "elapsed_s": 8.336,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-006__20260811T083412390507Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-006__20260811T083412390507Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "苹果菠萝、橡蕉、橙子全部都放在桌子上，请把旁边一侧的白色象三形。",
+          "elapsed_s": 0.929,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "苹果、菠萝、香蕉、橙子全部都放在桌子上，请把旁边一侧的白色箱子一清。",
+          "elapsed_s": 3.733,
+          "error": null
+        },
+        "doubao": {
+          "text": "苹果、菠萝、香蕉、橙子全部都放在桌子上，请把旁边一侧的白色箱子。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_live.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-007__20260811T083428029398Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-007__20260811T083428029398Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "爸爸把白色的杯子放在了旁边，我打开了屏幕，把刚才编辑的文件重新保存一遍。",
+          "elapsed_s": 0.938,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "爸爸把白色的杯子放在了旁边我打开了屏幕把刚才编辑的文件重新保存一遍",
+          "elapsed_s": 3.189,
+          "error": null
+        },
+        "doubao": {
+          "text": "八八八，白色的杯子放在了旁边，我打开了屏幕，把刚才编辑的文件重新保存一遍。",
+          "elapsed_s": 8.31,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-008__20260811T083442219281Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260811T083228Z__take-008__20260811T083442219281Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 8.0,
+      "results": {
+        "sensevoice": {
+          "text": "跑步之后，准备回家，打开冰箱拿瓶水，然后坐起来处理今天的工作和事情。",
+          "elapsed_s": 0.928,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "跑步之后我准备回家打开冰箱拿瓶水然后坐下来处理今天的工作和事情",
+          "elapsed_s": 3.185,
+          "error": null
+        },
+        "doubao": {
+          "text": "不知道，我准备回家打开冰箱拿瓶水，然后坐下来处理今天的工作和事情。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T034039Z__take-001__20260813T034248356105Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T034039Z__take-001__20260813T034248356105Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 15.0,
+      "results": {
+        "sensevoice": {
+          "text": "什么是世界模型定义AI对环境的内部的预测和模拟。世界模型是一个人物智能领域一个至魂重要的概念。",
+          "elapsed_s": 1.095,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "什么是世界模型？定义AI对环境的内部的预测和模拟。世界模型是一个人工智能领域一个至关重要的概念。",
+          "elapsed_s": 4.1,
+          "error": null
+        },
+        "doubao": {
+          "text": "什么是世界模型定义 AI 对环境的内部的预测和世界模型是一个人工智能领域一个至关重要的概念。",
+          "elapsed_s": 15.355,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T034039Z__take-002__20260813T034508806162Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T034039Z__take-002__20260813T034508806162Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 15.0,
+      "results": {
+        "sensevoice": {
+          "text": "实现模型的构建通常依赖于大量的交互数据，使场题在环境中执行各种动作，并观察这些动作带来的结果。通过这些观察模型。",
+          "elapsed_s": 1.063,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "时间模型的构建通常依赖于大量的交互数据，使人体在环境中执行各种动作，并观察这些动作带来的结果。通过这些观察模型",
+          "elapsed_s": 4.526,
+          "error": null
+        },
+        "doubao": {
+          "text": "世界模型的构建通常依赖于大量的交互数据智能体在环境中执行各种动作，并观察这些动作带来的结果。这些观察。",
+          "elapsed_s": 15.239,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T034039Z__take-003__20260813T034757126527Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T034039Z__take-003__20260813T034757126527Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 15.0,
+      "results": {
+        "sensevoice": {
+          "text": "这种想象力和规划能力的实现，依赖于实界模型对于环境的首想标准和动态预测。我星许要能够从高位的感位输出，如何推向音频中提取关键性。",
+          "elapsed_s": 1.091,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "这种想象力和规划能力的实现，依赖于世界模型对于环境的抽象标准和动态预测。模型需要能够从高维的感官输出图像、音频中提取关键性。",
+          "elapsed_s": 5.519,
+          "error": null
+        },
+        "doubao": {
+          "text": "这种想象力和规划能力的实现参与世界模型对有环境的抽象标准和动态预测。我姓许啊，那个从高位的感官输入。不相信滨州地区，关键。",
+          "elapsed_s": 15.159,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T063013Z__take-001__20260813T063055483930Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T063013Z__take-001__20260813T063055483930Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 10.0,
+      "results": {
+        "sensevoice": {
+          "text": "今天北京的天气不错，我准备出门买杯咖啡，然后继续理收伤的工作。今天北京的天气。",
+          "elapsed_s": 0.966,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "今天北京的天气不错，我准备出门买杯咖啡，然后继续处理手头的工作。今天北京的天气不错。",
+          "elapsed_s": 4.249,
+          "error": null
+        },
+        "doubao": {
+          "text": "北京的天气不错。咖啡，然后继续处理手上的工作。今天不行。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T063013Z__take-002__20260813T063155033526Z.wav": {
+      "path": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near/class-near__target-0__speaker-p01__dist-005cm__style-normal__angle-000deg__session-20260813T063013Z__take-002__20260813T063155033526Z.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 10.0,
+      "results": {
+        "sensevoice": {
+          "text": "帮我把这个文件打开，帮我把这个文件打开，然后使用工作栏进行答题自己的质量题。",
+          "elapsed_s": 0.972,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "帮我把这个文件打开帮我把这个文件打开然后使用工具栏进行搭建自己的智能体",
+          "elapsed_s": 3.149,
+          "error": null
+        },
+        "doubao": {
+          "text": "80个分解打开，帮我把这个分解打开，然后使用大千世界的质量题。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_live.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-32-21-658/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-32-21-658/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_11-32-21-658",
+      "prior_doubao_text": "",
+      "audio_duration_s": 1.32,
+      "results": {
+        "sensevoice": {
+          "text": "厕所。",
+          "elapsed_s": 0.785,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "是不是？",
+          "elapsed_s": 1.342,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-32-19-432/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-32-19-432/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_11-32-19-432",
+      "prior_doubao_text": "",
+      "audio_duration_s": 1.12,
+      "results": {
+        "sensevoice": {
+          "text": "西裤。",
+          "elapsed_s": 0.791,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "厕所",
+          "elapsed_s": 1.194,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-32-17-854/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-32-17-854/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_11-32-17-854",
+      "prior_doubao_text": "",
+      "audio_duration_s": 1.4,
+      "results": {
+        "sensevoice": {
+          "text": "。",
+          "elapsed_s": 0.789,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "",
+          "elapsed_s": 1.333,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-12-31-523/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-12-31-523/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_11-12-31-523",
+      "prior_doubao_text": "",
+      "audio_duration_s": 2.0,
+      "results": {
+        "sensevoice": {
+          "text": "。",
+          "elapsed_s": 0.789,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我操。",
+          "elapsed_s": 1.422,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-12-27-121/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-12-27-121/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_11-12-27-121",
+      "prior_doubao_text": "",
+      "audio_duration_s": 2.6,
+      "results": {
+        "sensevoice": {
+          "text": "。",
+          "elapsed_s": 0.803,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "快跑。",
+          "elapsed_s": 1.438,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-12-23-056/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-12-23-056/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_11-12-23-056",
+      "prior_doubao_text": "",
+      "audio_duration_s": 2.6,
+      "results": {
+        "sensevoice": {
+          "text": "我要多粗。",
+          "elapsed_s": 0.806,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我要陪我父母。",
+          "elapsed_s": 1.658,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-12-07-285/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-12-07-285/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_11-12-07-285",
+      "prior_doubao_text": "",
+      "audio_duration_s": 2.8,
+      "results": {
+        "sensevoice": {
+          "text": "就笑话。",
+          "elapsed_s": 0.796,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "你居然不喜欢我？",
+          "elapsed_s": 1.658,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-50-14-299/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-50-14-299/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-50-14-299",
+      "prior_doubao_text": "",
+      "audio_duration_s": 3.4,
+      "results": {
+        "sensevoice": {
+          "text": "什么是？",
+          "elapsed_s": 0.833,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "你不是。",
+          "elapsed_s": 1.454,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_live.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-50-08-906/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-50-08-906/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-50-08-906",
+      "prior_doubao_text": "",
+      "audio_duration_s": 2.52,
+      "results": {
+        "sensevoice": {
+          "text": "是不是。",
+          "elapsed_s": 0.792,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "不是不是。",
+          "elapsed_s": 1.439,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_live.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-50-02-860/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-50-02-860/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-50-02-860",
+      "prior_doubao_text": "",
+      "audio_duration_s": 1.6,
+      "results": {
+        "sensevoice": {
+          "text": "有。",
+          "elapsed_s": 0.792,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "",
+          "elapsed_s": 1.305,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_live.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-57-780/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-57-780/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-49-57-780",
+      "prior_doubao_text": "",
+      "audio_duration_s": 4.34,
+      "results": {
+        "sensevoice": {
+          "text": "不是。",
+          "elapsed_s": 0.833,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "那就不需要了，不需要了。",
+          "elapsed_s": 2.033,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-43-111/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-43-111/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-49-43-111",
+      "prior_doubao_text": "",
+      "audio_duration_s": 4.86,
+      "results": {
+        "sensevoice": {
+          "text": "我是之线宝宝。",
+          "elapsed_s": 0.874,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我这不是痴情不报。",
+          "elapsed_s": 1.949,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "/private/tmp/proximic_doubao_more.json"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-38-020/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-38-020/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-49-38-020",
+      "prior_doubao_text": "",
+      "audio_duration_s": 4.0,
+      "results": {
+        "sensevoice": {
+          "text": "中是吃序宝报。",
+          "elapsed_s": 0.841,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我准备去试试，去补补。",
+          "elapsed_s": 2.145,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-33-451/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-33-451/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-49-33-451",
+      "prior_doubao_text": "",
+      "audio_duration_s": 2.4,
+      "results": {
+        "sensevoice": {
+          "text": "吃试吃鸡不好。",
+          "elapsed_s": 0.82,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我出去吃吃吃，也走不动。",
+          "elapsed_s": 2.18,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-27-554/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-49-27-554/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-49-27-554",
+      "prior_doubao_text": "",
+      "audio_duration_s": 3.8,
+      "results": {
+        "sensevoice": {
+          "text": "是星小宝包。",
+          "elapsed_s": 0.84,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我准备去旅行。",
+          "elapsed_s": 1.677,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-34-59-317/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-34-59-317/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-34-59-317",
+      "prior_doubao_text": "",
+      "audio_duration_s": 2.2,
+      "results": {
+        "sensevoice": {
+          "text": "。",
+          "elapsed_s": 0.805,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "",
+          "elapsed_s": 1.329,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-34-50-051/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-34-50-051/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-34-50-051",
+      "prior_doubao_text": "",
+      "audio_duration_s": 2.88,
+      "results": {
+        "sensevoice": {
+          "text": "别是元宝。",
+          "elapsed_s": 0.808,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "路边摘元宝。",
+          "elapsed_s": 1.538,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-34-40-177/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-34-40-177/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-34-40-177",
+      "prior_doubao_text": "",
+      "audio_duration_s": 3.88,
+      "results": {
+        "sensevoice": {
+          "text": "我弟你在远方。",
+          "elapsed_s": 0.893,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "我听你在远方。",
+          "elapsed_s": 1.72,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-32-50-623/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_10-32-50-623/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-09_10-32-50-623",
+      "prior_doubao_text": "",
+      "audio_duration_s": 3.08,
+      "results": {
+        "sensevoice": {
+          "text": "帮我改兄电。",
+          "elapsed_s": 0.802,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "把壶盖松掉。",
+          "elapsed_s": 1.739,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-08_18-03-41-496/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-08_18-03-41-496/audio.wav",
+      "group": "recent-empty",
+      "interaction_id": "interaction_2026-09-08_18-03-41-496",
+      "prior_doubao_text": "",
+      "audio_duration_s": 1.4,
+      "results": {
+        "sensevoice": {
+          "text": "啊。",
+          "elapsed_s": 0.8,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "不可能。",
+          "elapsed_s": 1.334,
+          "error": null
+        },
+        "doubao": {
+          "text": "",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-33-20-824/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-33-20-824/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-33-20-824",
+      "prior_doubao_text": "把这个东西放下。",
+      "audio_duration_s": 3.0,
+      "results": {
+        "sensevoice": {
+          "text": "把这个东西放下。",
+          "elapsed_s": 0.808,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "把这个东西放下。",
+          "elapsed_s": 1.524,
+          "error": null
+        },
+        "doubao": {
+          "text": "把这个东西放下。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-32-24-315/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-32-24-315/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-32-24-315",
+      "prior_doubao_text": "12345。",
+      "audio_duration_s": 2.78,
+      "results": {
+        "sensevoice": {
+          "text": "12345。",
+          "elapsed_s": 0.836,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "想死死我。",
+          "elapsed_s": 1.655,
+          "error": null
+        },
+        "doubao": {
+          "text": "12345。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-17-30-144/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-17-30-144/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-17-30-144",
+      "prior_doubao_text": "6七八九十。",
+      "audio_duration_s": 3.28,
+      "results": {
+        "sensevoice": {
+          "text": "6七8小时。",
+          "elapsed_s": 0.818,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "六七八九十",
+          "elapsed_s": 1.455,
+          "error": null
+        },
+        "doubao": {
+          "text": "6七八九十。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-16-38-791/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-16-38-791/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-16-38-791",
+      "prior_doubao_text": "把别人抱。",
+      "audio_duration_s": 5.0,
+      "results": {
+        "sensevoice": {
+          "text": "爸爸比老婆爸爸比老婆。",
+          "elapsed_s": 0.855,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "爸爸比爸爸，爸爸比老婆。",
+          "elapsed_s": 2.047,
+          "error": null
+        },
+        "doubao": {
+          "text": "把别人抱。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-16-33-485/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-16-33-485/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-16-33-485",
+      "prior_doubao_text": "生生打老虎。",
+      "audio_duration_s": 2.4,
+      "results": {
+        "sensevoice": {
+          "text": "什是大老虎？",
+          "elapsed_s": 0.791,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "你是不是大老虎？",
+          "elapsed_s": 1.644,
+          "error": null
+        },
+        "doubao": {
+          "text": "生生打老虎。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-16-26-397/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-16-26-397/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-16-26-397",
+      "prior_doubao_text": "12345。",
+      "audio_duration_s": 3.0,
+      "results": {
+        "sensevoice": {
+          "text": "12345。",
+          "elapsed_s": 0.815,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "你不是说是我。",
+          "elapsed_s": 1.643,
+          "error": null
+        },
+        "doubao": {
+          "text": "12345。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-15-05-740/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-15-05-740/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-15-05-740",
+      "prior_doubao_text": "12345。",
+      "audio_duration_s": 1.4,
+      "results": {
+        "sensevoice": {
+          "text": "12345。",
+          "elapsed_s": 0.769,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "一二三四五",
+          "elapsed_s": 1.427,
+          "error": null
+        },
+        "doubao": {
+          "text": "12345。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-14-20-883/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-14-20-883/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-14-20-883",
+      "prior_doubao_text": "黑色围巾。",
+      "audio_duration_s": 2.6,
+      "results": {
+        "sensevoice": {
+          "text": "黑色围巾。",
+          "elapsed_s": 0.817,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "绿色围巾",
+          "elapsed_s": 1.438,
+          "error": null
+        },
+        "doubao": {
+          "text": "黑色围巾。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-13-49-165/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-13-49-165/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-13-49-165",
+      "prior_doubao_text": "周围的喧哗。",
+      "audio_duration_s": 2.2,
+      "results": {
+        "sensevoice": {
+          "text": "周一的生活。",
+          "elapsed_s": 0.782,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "周一的生活",
+          "elapsed_s": 1.32,
+          "error": null
+        },
+        "doubao": {
+          "text": "周围的喧哗。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-13-08-582/audio.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-09_11-13-08-582/audio.wav",
+      "group": "recent-recognized",
+      "interaction_id": "interaction_2026-09-09_11-13-08-582",
+      "prior_doubao_text": "选我。",
+      "audio_duration_s": 4.4,
+      "results": {
+        "sensevoice": {
+          "text": "是唯一的漩涡，唯一的漩涡。",
+          "elapsed_s": 0.853,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "是唯一的漩涡，唯一的漩涡。",
+          "elapsed_s": 2.144,
+          "error": null
+        },
+        "doubao": {
+          "text": "选我。",
+          "elapsed_s": null,
+          "error": null,
+          "source": "interaction_record"
+        }
+      }
+    }
+  },
+  "configuration": {
+    "backends": [
+      "doubao"
+    ],
+    "dataset": "/Users/admin/Downloads/ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near",
+    "dataset_limit": -1,
+    "recent_empty": 20,
+    "recent_recognized": 10,
+    "max_seconds": 15.0,
+    "doubao_pace": 1.0
+  },
+  "updated_at": "2026-09-09T03:51:28+00:00"
+}

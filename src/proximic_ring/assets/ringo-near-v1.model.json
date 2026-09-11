@@ -1,5 +1,6 @@
 {
-  "recommended_stage2_threshold": -0.006574936211109161,
+  "model_version": "v1",
+  "recommended_stage2_threshold": -0.17572301626205444,
   "label_mapping": {
     "near": 0,
     "far": 1,
@@ -10,5 +11,14 @@
     "1": "realistic_non_target_audio"
   },
   "score_definition": "logits[0] - logits[1]",
-  "metrics_file": "metrics.json"
+  "model_revision": "near_vs_nontarget_plus24db_hard_negative_v2",
+  "model_sha256": "66c94757ccc187b7d655bf184b8a1dec39505c67980fdbd3bb8b03e6f4208106",
+  "training": {
+    "device": "mps",
+    "init": "pretrained",
+    "init_checkpoint_revision": "near_vs_nontarget_plus24db_random_gain_v1",
+    "source_record_count": 111,
+    "hard_negative_window_count": 52,
+    "best_epoch": 5
+  }
 }

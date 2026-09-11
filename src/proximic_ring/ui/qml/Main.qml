@@ -1014,7 +1014,8 @@ ApplicationWindow {
                         delegate: Rectangle {
                             required property var entry
                             property bool editEntry: entry.mode === "edit"
-                            property bool undoneEntry: entry.outcome === "undone"
+                            property bool nativeUndoSent: entry.outcome === "native_undo_sent"
+                            property bool undoneEntry: entry.outcome === "undone" || nativeUndoSent
                             property bool resultAvailable: Boolean(entry.candidateAvailable)
                                                            || Boolean(entry.candidateText)
                             property bool resultEmpty: Boolean(entry.candidateEmpty)
@@ -1068,7 +1069,9 @@ ApplicationWindow {
                                             Label {
                                                 id: historyModeLabel
                                                 anchors.centerIn: parent
-                                                text: undoneEntry
+                                                text: nativeUndoSent
+                                                      ? "已发送撤销"
+                                                      : undoneEntry
                                                       ? (editEntry ? "已撤回编辑" : "已撤回听写")
                                                       : (entry.modeLabel
                                                          || (editEntry ? "编辑指令" : "听写输入"))
@@ -1124,7 +1127,8 @@ ApplicationWindow {
                                         visible: editEntry
                                                  && (Boolean(entry.editSummary)
                                                      || (!undoneEntry && resultAvailable))
-                                        text: (undoneEntry ? "已撤回的修改：" : "修改摘要：")
+                                        text: (nativeUndoSent ? "原修改摘要："
+                                               : undoneEntry ? "已撤回的修改：" : "修改摘要：")
                                               + (entry.editSummary || "修改已应用")
                                         color: undoneEntry ? "#F1B36A" : "#BFA7EA"
                                         font.pixelSize: 12
@@ -1150,7 +1154,7 @@ ApplicationWindow {
                                         spacing: 7
                                         Label {
                                             objectName: "voiceHistoryOutcomeStatus"
-                                            text: "已撤回"
+                                            text: nativeUndoSent ? "已发送原生撤销" : "已撤回"
                                             color: "#F1B36A"
                                             font.pixelSize: 11
                                             font.bold: true
@@ -1158,7 +1162,9 @@ ApplicationWindow {
                                         Label {
                                             objectName: "voiceHistoryOutcomeDetail"
                                             Layout.fillWidth: true
-                                            text: editEntry
+                                            text: nativeUndoSent
+                                                  ? "结果由目标应用处理，未回读确认"
+                                                  : editEntry
                                                   ? "文本已恢复到编辑前状态"
                                                   : "本次听写已从原文本框移除"
                                             color: root.textMuted
@@ -1649,6 +1655,39 @@ ApplicationWindow {
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
 
+                    Label {
+                        text: "类型转换按键"
+                        color: root.textMuted
+                        font.pixelSize: 12
+                        Layout.leftMargin: 20
+                    }
+                    ComboBox {
+                        id: modeCorrectionShortcutCombo
+                        objectName: "modeCorrectionShortcutCombo"
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        Layout.preferredHeight: 44
+                        model: appController.modeCorrectionShortcutOptions
+                        currentIndex: Math.max(
+                            0,
+                            appController.modeCorrectionShortcutOptions.indexOf(
+                                appController.modeCorrectionShortcut
+                            )
+                        )
+                        onActivated: appController.modeCorrectionShortcut =
+                                     appController.modeCorrectionShortcutOptions[currentIndex]
+                    }
+                    Label {
+                        Layout.fillWidth: true
+                        Layout.leftMargin: 20
+                        Layout.rightMargin: 20
+                        text: "仅在当前结果可以转换时拦截所选功能键；连接期间修改也会立即生效。"
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
+
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
                     Label { text: "听写与指令识别"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
@@ -1961,7 +2000,7 @@ ApplicationWindow {
                     Layout.preferredWidth: 132
                     Layout.preferredHeight: 44
                     title: "刚刚是输入内容"
-                    shortcut: "F8"
+                    shortcut: appController.modeCorrectionShortcut
                     fillColor: "#17302D"
                     hoverColor: "#1D3D38"
                     pressedColor: "#244B44"
@@ -2337,7 +2376,7 @@ ApplicationWindow {
                         title: appController.modeCorrectionFailed
                                ? "指令转换失败"
                                : appController.modeCorrectionLabel
-                        shortcut: "F8"
+                        shortcut: appController.modeCorrectionShortcut
                         busy: appController.modeCorrectionPending
                         fillColor: appController.modeCorrectionFailed
                                    ? "#382027" : "#17302D"

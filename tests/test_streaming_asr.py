@@ -99,6 +99,9 @@ class ContextStreamingBackend(FakeStreamingBackend):
         self._context_metadata = {
             "status": "prepared",
             "source": "focused_text",
+            "read_method": str(context.get("read_method", "") or ""),
+            "application": str(context.get("application", "") or ""),
+            "target_key": str(context.get("target_key", "") or ""),
             "context_type": "dialog_ctx",
             "context_data": [{"text": context["text"]}],
             "item_count": 1,
@@ -159,6 +162,9 @@ def test_streaming_worker_captures_and_publishes_context_for_same_session():
             "status": "captured",
             "source": "focused_text",
             "text": "输入框上文。",
+            "read_method": "system.parent1.AXStringForRange",
+            "application": "微信",
+            "target_key": "475:0:ax:123",
         },
         on_context=lambda session_id, context: contexts.append(
             (session_id, context)
@@ -176,6 +182,12 @@ def test_streaming_worker_captures_and_publishes_context_for_same_session():
     assert any(
         "[ASR CONTEXT] session=1 backend=volcengine status=prepared" in state
         for state in states
+    )
+    assert any(
+        "method=system.parent1.AXStringForRange" in state for state in states
+    )
+    assert any(
+        "app='微信' target=475:0:ax:123" in state for state in states
     )
     assert all("输入框上文。" not in state for state in states)
 

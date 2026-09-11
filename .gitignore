@@ -33,6 +33,7 @@ runs/
 # Downloaded third-party model weights must remain outside Git history.
 pretrained_models/
 *.pt
+!src/ring_python_sdk/gestures/assets/swipe.pt
 *.pth
 *.ckpt
 *.safetensors

@@ -128,6 +128,7 @@ def test_dialog_context_is_sent_as_stringified_corpus_newest_first(monkeypatch):
             "source_char_count": len(source_text),
             "target_key": "123:456:field",
             "application": "测试应用",
+            "read_method": "system.parent1.AXStringForRange",
         }
     )
 
@@ -160,6 +161,7 @@ def test_dialog_context_is_sent_as_stringified_corpus_newest_first(monkeypatch):
         "reason": "",
         "target_key": "123:456:field",
         "application": "测试应用",
+        "read_method": "system.parent1.AXStringForRange",
     }
     backend.abort()
 

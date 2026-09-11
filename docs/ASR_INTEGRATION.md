@@ -104,7 +104,18 @@ Only the Volcengine/Doubao Seed-ASR backend reads the currently focused text
 field before opening each utterance stream. The read uses macOS Accessibility or
 Windows UI Automation only: it does not select text, send copy shortcuts, move
 the caret, or touch the clipboard. If the control cannot be read safely, ASR
-starts normally without context.
+starts normally without context. It never substitutes an application-side text
+cache, because a successful paste request is not proof that the target control
+actually accepted the text.
+
+On macOS the observation checks both the application and system-wide focused AX
+element, walks editable text ancestors, and performs a bounded search for an
+explicitly focused editor below the focused window. A coordinate lookup is a
+last resort and is accepted only when that element or an ancestor independently
+reports AX focus. The reader accepts plain or attributed AXValue and can read a
+bounded standard character range when a custom editor omits AXValue. The
+selected method is recorded as `read_method` in the interaction record and
+compact diagnostic log.
 
 The most recent text is split into sentence-like fragments and sent newest first
 as the documented stringified `request.corpus.context` value with

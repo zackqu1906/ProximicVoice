@@ -1,7 +1,7 @@
-"""Global keyboard adapters for voice interaction actions.
+"""Keyboard and Ring gesture adapters for voice interaction actions.
 
-These action names are deliberately device-neutral.  Ring gestures can emit
-the same values later without knowing anything about QML or desktop text APIs.
+These action names are deliberately device-neutral. Adapters share business
+actions without generating OS keystrokes or sharing key-repeat state.
 """
 
 from __future__ import annotations
@@ -23,6 +23,63 @@ ACTION_CANCEL = "cancel"
 ACTION_SWITCH_MODE = "switch_mode"
 ACTION_UNDO = "undo"
 
+DEFAULT_MODE_SWITCH_SHORTCUT = "F8"
+MODE_SWITCH_SHORTCUTS = tuple(f"F{number}" for number in range(5, 13))
+_WINDOWS_FUNCTION_KEYS = {
+    f"F{number}": 0x6F + number for number in range(5, 13)
+}
+_MACOS_FUNCTION_KEYS = {
+    "F5": 96,
+    "F6": 97,
+    "F7": 98,
+    "F8": 100,
+    "F9": 101,
+    "F10": 109,
+    "F11": 103,
+    "F12": 111,
+}
+
+
+def cancel_or_undo_action(*, interaction_active: bool, undo_active: bool) -> str | None:
+    # An applied result owns cancellation even while its alternate mode loads.
+    if undo_active:
+        return ACTION_UNDO
+    return ACTION_CANCEL if interaction_active else None
+
+
+def voice_action_for_gesture(
+    name: str,
+    *,
+    interaction_active: bool = False,
+    correction_active: bool = False,
+    undo_active: bool = False,
+) -> str | None:
+    """Resolve a recognized gesture against the current UI action availability."""
+    if name in {"swipe-left", "swipe-down"}:
+        return cancel_or_undo_action(
+            interaction_active=interaction_active, undo_active=undo_active
+        )
+    if name in {"swipe-right", "swipe-up"} and correction_active:
+        return ACTION_SWITCH_MODE
+    return None
+
+
+def normalize_mode_switch_shortcut(value: object) -> str:
+    shortcut = str(value or "").strip().upper()
+    return (
+        shortcut
+        if shortcut in MODE_SWITCH_SHORTCUTS
+        else DEFAULT_MODE_SWITCH_SHORTCUT
+    )
+
+
+def windows_mode_switch_key_code(shortcut: object) -> int:
+    return _WINDOWS_FUNCTION_KEYS[normalize_mode_switch_shortcut(shortcut)]
+
+
+def macos_mode_switch_key_code(shortcut: object) -> int:
+    return _MACOS_FUNCTION_KEYS[normalize_mode_switch_shortcut(shortcut)]
+
 
 if os.name == "nt":
     _ULONG_PTR = wintypes.WPARAM
@@ -43,7 +100,7 @@ if os.name == "nt":
 
 
 class WindowsVoiceActionHotkeys:
-    """Map global shortcuts to the same actions future Ring gestures use."""
+    """Map global shortcuts to the same actions Ring gestures use."""
 
     WH_KEYBOARD_LL = 13
     WM_KEYDOWN = 0x0100
@@ -64,6 +121,7 @@ class WindowsVoiceActionHotkeys:
         self,
         on_action: Callable[[str], None],
         *,
+        mode_switch_shortcut: Callable[[], str] | None = None,
         is_interaction_active: Callable[[], bool] | None = None,
         is_mode_correction_active: Callable[[], bool] | None = None,
         is_undo_active: Callable[[], bool] | None = None,
@@ -72,6 +130,9 @@ class WindowsVoiceActionHotkeys:
         if os.name != "nt":
             raise RuntimeError("全局语音动作快捷键目前仅支持 Windows")
         self._on_action = on_action
+        self._mode_switch_shortcut = mode_switch_shortcut or (
+            lambda: DEFAULT_MODE_SWITCH_SHORTCUT
+        )
         self._is_interaction_active = is_interaction_active or (lambda: False)
         self._is_mode_correction_active = (
             is_mode_correction_active or (lambda: False)
@@ -120,6 +181,9 @@ class WindowsVoiceActionHotkeys:
                     is_up = message in (self.WM_KEYUP, self.WM_SYSKEYUP)
                     action = self._action_for_key(
                         key,
+                        mode_switch_key=windows_mode_switch_key_code(
+                            self._mode_switch_shortcut()
+                        ),
                         alt_down=self._alt_down(user32),
                         control_down=self._key_down(user32, self.VK_CONTROL),
                         shift_down=self._key_down(user32, self.VK_SHIFT),
@@ -183,6 +247,7 @@ class WindowsVoiceActionHotkeys:
         alt_down: bool,
         control_down: bool = False,
         shift_down: bool = False,
+        mode_switch_key: int | None = None,
         interaction_active: bool = False,
         correction_active: bool = False,
         undo_active: bool = False,
@@ -193,13 +258,18 @@ class WindowsVoiceActionHotkeys:
                 return action
         # A visible applied action owns Escape even if an alternate-mode
         # background request has not finished clearing its interaction state.
-        if undo_active and int(key) == 0x1B:  # Escape
-            return ACTION_UNDO
-        if interaction_active and int(key) == 0x1B:  # Escape
-            return ACTION_CANCEL
+        if int(key) == 0x1B:  # Escape
+            return cancel_or_undo_action(
+                interaction_active=interaction_active, undo_active=undo_active
+            )
         if (
             correction_active
-            and int(key) == cls.VK_MODE_SWITCH
+            and int(key)
+            == (
+                cls.VK_MODE_SWITCH
+                if mode_switch_key is None
+                else int(mode_switch_key)
+            )
             and not alt_down
             and not control_down
             and not shift_down
@@ -262,6 +332,7 @@ class MacOSVoiceActionHotkeys:
         self,
         on_action: Callable[[str], None],
         *,
+        mode_switch_shortcut: Callable[[], str] | None = None,
         is_interaction_active: Callable[[], bool] | None = None,
         is_mode_correction_active: Callable[[], bool] | None = None,
         is_undo_active: Callable[[], bool] | None = None,
@@ -282,6 +353,9 @@ class MacOSVoiceActionHotkeys:
         self._quartz = quartz
         self._core_foundation = core_foundation
         self._on_action = on_action
+        self._mode_switch_shortcut = mode_switch_shortcut or (
+            lambda: DEFAULT_MODE_SWITCH_SHORTCUT
+        )
         self._is_interaction_active = is_interaction_active or (lambda: False)
         self._is_mode_correction_active = (
             is_mode_correction_active or (lambda: False)
@@ -314,19 +388,25 @@ class MacOSVoiceActionHotkeys:
         control_down: bool = False,
         option_down: bool = False,
         shift_down: bool = False,
+        mode_switch_key: int | None = None,
         interaction_active: bool = False,
         correction_active: bool = False,
         undo_active: bool = False,
     ) -> str | None:
         # A visible applied action owns Escape even if an alternate-mode
         # background request has not finished clearing its interaction state.
-        if undo_active and int(key_code) == cls.KEY_ESCAPE:
-            return ACTION_UNDO
-        if interaction_active and int(key_code) == cls.KEY_ESCAPE:
-            return ACTION_CANCEL
+        if int(key_code) == cls.KEY_ESCAPE:
+            return cancel_or_undo_action(
+                interaction_active=interaction_active, undo_active=undo_active
+            )
         if (
             correction_active
-            and int(key_code) == cls.KEY_MODE_SWITCH
+            and int(key_code)
+            == (
+                cls.KEY_MODE_SWITCH
+                if mode_switch_key is None
+                else int(mode_switch_key)
+            )
             and not command_down
             and not control_down
             and not option_down
@@ -357,6 +437,9 @@ class MacOSVoiceActionHotkeys:
                     flags = int(quartz.CGEventGetFlags(event))
                     action = self._action_for_key(
                         int(key_code),
+                        mode_switch_key=macos_mode_switch_key_code(
+                            self._mode_switch_shortcut()
+                        ),
                         command_down=bool(
                             flags & int(quartz.kCGEventFlagMaskCommand)
                         ),

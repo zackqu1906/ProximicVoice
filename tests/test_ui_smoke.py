@@ -259,11 +259,11 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
 
     controller.undoLastApplied()
 
-    assert desktop_target.undone == []
-    assert desktop_target.replaced == ["原始文本"]
+    assert desktop_target.undone == [target]
+    assert desktop_target.replaced == []
     assert controller.undoAvailable is False
     assert controller.interactionState == "idle"
-    assert "听写 · 已撤回" in controller.sessionHistoryText
+    assert "听写 · 已发送撤销" in controller.sessionHistoryText
 
     controller._hide_overlay_timer.stop()
     controller._edit_review = _EditReview(
@@ -288,11 +288,13 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
     controller.undoLastApplied()
 
     assert desktop_target.current_text == "原始文本"
-    assert desktop_target.replaced == ["原始文本", "正式文本"]
+    assert desktop_target.replaced == ["正式文本"]
+    assert desktop_target.undone == [target, target]
     assert controller.undoAvailable is False
     assert controller.interactionState == "idle"
     assert controller.associationRecommendationVisible is False
-    assert "修改 · 已撤回" in controller.sessionHistoryText
+    assert "修改 · 已发送撤销" in controller.sessionHistoryText
+    controller._close_voice_history()
 
 
 def test_voice_history_can_reveal_audio_file_and_reject_outside_path(
@@ -515,6 +517,9 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     QSettings("ProxiMic", "ProxiMic Voice").remove(
         "ui/appliedOverlayDurationSeconds"
     )
+    QSettings("ProxiMic", "ProxiMic Voice").remove(
+        "input/modeCorrectionShortcut"
+    )
     controller = AppController()
     controller._text_processing_worker.close(wait=True)
     controller._accessibility_timer.stop()
@@ -661,6 +666,15 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert history_candidate.property("visible") is False
     assert history_outcome_detail.property("text") == "文本已恢复到编辑前状态"
 
+    updated_history_entry["outcome"] = "native_undo_sent"
+    controller._voice_history_entries = [dict(updated_history_entry)]
+    controller.voiceHistoryChanged.emit()
+    QTest.qWait(50)
+    assert history_status.property("text") == "已发送原生撤销"
+    assert history_summary.property("text") == "原修改摘要：已清空当前文本"
+    assert history_outcome_detail.property("text") == "结果由目标应用处理，未回读确认"
+    assert history_candidate.property("visible") is False
+
     assert battery_pill.property("visible") is False
     controller._connected = True
     controller.connectedChanged.emit()
@@ -688,6 +702,9 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     applied_overlay_duration_slider = window.findChild(
         QObject, "appliedOverlayDurationSlider"
     )
+    mode_correction_shortcut_combo = window.findChild(
+        QObject, "modeCorrectionShortcutCombo"
+    )
     audio_encoding_combo = window.findChild(QObject, "audioEncodingCombo")
     stage1_sensitivity_slider = window.findChild(
         QObject, "stage1SensitivitySlider"
@@ -707,6 +724,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert settings_apply_button.property("text") == "应用"
     assert applied_overlay_style_combo is not None
     assert applied_overlay_duration_slider is not None
+    assert mode_correction_shortcut_combo is not None
     assert audio_encoding_combo is not None
     assert window.findChild(QObject, "detectorModelPathField") is None
     assert window.findChild(QObject, "asrModelField") is None
@@ -729,6 +747,8 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert controller.appliedOverlayStyle == "normal"
     assert applied_overlay_duration_slider.property("value") == 3
     assert controller.appliedOverlayDurationSeconds == 3
+    assert controller.modeCorrectionShortcut == "F8"
+    assert mode_correction_shortcut_combo.property("currentText") == "F8"
     assert settings_dialog.property("visible") is False
     QMetaObject.invokeMethod(settings_button, "click")
     QTest.qWait(400)
@@ -743,6 +763,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert asr_gain_slider.property("enabled") is True
     assert applied_overlay_style_combo.property("enabled") is True
     assert applied_overlay_duration_slider.property("enabled") is True
+    assert mode_correction_shortcut_combo.property("enabled") is True
     assert input_routing_mode_combo.property("enabled") is True
     assert llm_provider_combo.property("enabled") is True
     assert dictation_llm_switch.property("enabled") is True
@@ -752,17 +773,25 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     controller.asrGainDb = 3.0
     controller.inputRoutingMode = "auto"
     controller.appliedOverlayDurationSeconds = 7
+    controller.modeCorrectionShortcut = "F7"
     app.processEvents()
     assert 1 <= stage1_sensitivity_slider.property("value") <= 10
     assert asr_gain_slider.property("value") == 3.0
     assert input_routing_mode_combo.property("currentIndex") == 0
     assert applied_overlay_duration_slider.property("value") == 7
     assert controller._applied_action_hide_timer.interval() == 7000
+    assert mode_correction_shortcut_combo.property("currentText") == "F7"
     assert int(
         QSettings("ProxiMic", "ProxiMic Voice").value(
             "ui/appliedOverlayDurationSeconds"
         )
     ) == 7
+    assert (
+        QSettings("ProxiMic", "ProxiMic Voice").value(
+            "input/modeCorrectionShortcut"
+        )
+        == "F7"
+    )
     controller._connected = False
     controller.connectedChanged.emit()
     app.processEvents()
@@ -831,7 +860,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     app.processEvents()
     assert processing_switch.property("visible") is True
     assert processing_switch.property("title") == "刚刚是输入内容"
-    assert processing_switch.property("shortcut") == "F8"
+    assert processing_switch.property("shortcut") == "F7"
     assert processing_switch.property("enabled") is False
     controller._reveal_processing_mode_correction()
     app.processEvents()
@@ -870,7 +899,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert window.findChild(QObject, "undoAppliedButton").property("shortcut") == "Esc"
     assert window.findChild(QObject, "switchModeButton") is not None
     assert window.findChild(QObject, "switchModeButton").property("busy") is False
-    assert window.findChild(QObject, "switchModeButton").property("shortcut") == "F8"
+    assert window.findChild(QObject, "switchModeButton").property("shortcut") == "F7"
 
     controller.appliedOverlayStyle = "compact"
     app.processEvents()
@@ -972,6 +1001,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     restarted._accessibility_timer.stop()
     assert restarted.appliedOverlayDurationSeconds == 7
     assert restarted._applied_action_hide_timer.interval() == 7000
+    assert restarted.modeCorrectionShortcut == "F7"
     restarted._close_voice_history()
 
 

@@ -1,0 +1,595 @@
+"""BLE protocol constants and small packet builders."""
+
+from __future__ import annotations
+
+import struct
+
+DEFAULT_NAME_KEYWORD = "Ringo"
+DEFAULT_TIMEOUT_S = 4.0
+DEFAULT_OUTPUT = "ring_audio.wav"
+DEFAULT_IMU_OUTPUT = "ring_imu.csv"
+DEFAULT_COMBO_AUDIO_OUTPUT = "ring_combo.wav"
+DEFAULT_COMBO_IMU_OUTPUT = "ring_combo_imu.csv"
+DEFAULT_MIC_BLOCK_RATE_HZ = 10.0
+DEFAULT_SAMPLE_RATE = 16000
+DEFAULT_SAMPLE_WIDTH_BYTES = 2
+DEFAULT_CHANNELS = 1
+
+NUS_SERVICE_UUID = "6e400001-b5a3-f393-e0a9-e50e24dcca9e"
+NUS_RX_CHAR_UUID = "6e400002-b5a3-f393-e0a9-e50e24dcca9e"  # write to ring
+NUS_TX_CHAR_UUID = "6e400003-b5a3-f393-e0a9-e50e24dcca9e"  # notify from ring
+
+CMD_MIC = 0x20
+SUBCMD_MIC_START = 0x00
+SUBCMD_MIC_STOP = 0x01
+SUBCMD_MIC_PACKET = 0x02
+SUBCMD_MIC_PACKET_ADPCM = 0x03
+SUBCMD_MIC_PACKET_OPUS = 0x04
+SUBCMD_MIC_RECORD_STATUS_GET = 0x06
+SUBCMD_MIC_RECORD_STATUS = 0x07
+SUBCMD_MIC_RECORD_LIST = 0x08
+SUBCMD_MIC_RECORD_LIST_ITEM = 0x09
+SUBCMD_MIC_RECORD_LIST_END = 0x0A
+SUBCMD_MIC_RECORD_READ = 0x0B
+SUBCMD_MIC_RECORD_DATA = 0x0C
+SUBCMD_MIC_RECORD_READ_END = 0x0D
+SUBCMD_MIC_RECORD_START = 0x0E
+SUBCMD_MIC_RECORD_STOP = 0x0F
+MIC_HEADER_SIZE = 12  # cmd+subcmd+seq+frag_idx+frag_count+uptime_ms
+MIC_START_PACKET_LEN = 3
+MIC_START_PACKET_WITH_GAIN_LEN = 5
+MIC_GAIN_DEFAULT_DB_X2 = -128
+MIC_HARDWARE_GAIN_DB_MIN = -20.0
+MIC_HARDWARE_GAIN_DB_MAX = 20.0
+MIC_SOFTWARE_GAIN_DB_MIN = -24.0
+MIC_SOFTWARE_GAIN_DB_MAX = 24.0
+MIC_RECORD_ID_LATEST = 0xFFFFFFFF
+MIC_RECORD_STATUS_PACKET_LEN = 25
+MIC_RECORD_LIST_ITEM_PACKET_LEN = 27
+MIC_RECORD_LIST_END_PACKET_LEN = 6
+MIC_RECORD_READ_PACKET_LEN = 12
+MIC_RECORD_DATA_HEADER_LEN = 12
+MIC_RECORD_READ_END_PACKET_LEN = 13
+MIC_RECORD_FLAG_INTERRUPTED = 1 << 0
+
+MIC_ENCODE_PCM = 0
+MIC_ENCODE_ADPCM = 1
+MIC_ENCODE_OPUS = 2
+
+
+def build_mic_record_status_get() -> bytes:
+    return bytes([CMD_MIC, SUBCMD_MIC_RECORD_STATUS_GET])
+
+
+def build_mic_record_start() -> bytes:
+    return bytes([CMD_MIC, SUBCMD_MIC_RECORD_START])
+
+
+def build_mic_record_stop() -> bytes:
+    return bytes([CMD_MIC, SUBCMD_MIC_RECORD_STOP])
+
+
+def build_mic_record_list() -> bytes:
+    return bytes([CMD_MIC, SUBCMD_MIC_RECORD_LIST])
+
+
+def build_mic_record_read(
+    recording_id: int = MIC_RECORD_ID_LATEST, offset: int = 0, max_len: int = 0
+) -> bytes:
+    return bytes([CMD_MIC, SUBCMD_MIC_RECORD_READ]) + struct.pack(
+        "<IIH", recording_id & 0xFFFFFFFF, offset & 0xFFFFFFFF, max_len & 0xFFFF
+    )
+
+CMD_IMU = 0x21
+SUBCMD_IMU_START = 0x00
+SUBCMD_IMU_STOP = 0x01
+SUBCMD_IMU_PACKET = 0x02
+SUBCMD_IMU_PACKET_DELTA = 0x04
+SUBCMD_IMU_PACKET_TOKEN = 0x05
+SUBCMD_IMU_CALIBRATION_GET = 0x06
+SUBCMD_IMU_CALIBRATION_RUN = 0x07
+SUBCMD_IMU_CALIBRATION_STATUS = 0x08
+IMU_CALIBRATION_STATUS_LEN = 18
+IMU_CALIBRATION_FORMAT_VERSION = 1
+IMU_CAL_FLAG_PERSISTED = 1 << 0
+IMU_CAL_FLAG_CORRECTION_ACTIVE = 1 << 1
+IMU_CAL_FLAG_OWNS_IMU = 1 << 2
+IMU_START_PACKET_LEN = 10
+IMU_START_PACKET_LEN_WITH_ENCODE = 11
+IMU_START_PACKET_LEN_WITH_LP = 12
+IMU_ENCODE_RAW = 0
+IMU_ENCODE_TOKEN = 1
+IMU_ENCODE_DELTA = 2
+IMU_LP_OFF = 0
+IMU_LP_ON = 1
+
+
+def imu_encode_name(encode_mode: int) -> str:
+    if encode_mode == IMU_ENCODE_TOKEN:
+        return "token"
+    if encode_mode == IMU_ENCODE_DELTA:
+        return "delta"
+    return "raw"
+IMU_PACKET_HEADER_LEN = 9  # cmd+subcmd+seq+frame_count+uptime_ms
+IMU_BYTES_PER_FRAME = 12
+IMU_BYTES_PER_FRAME_ACCEL = 6
+IMU_TOKEN_VERSION = 0x01
+IMU_TOKEN_VERSION_LEN = 1
+IMU_DELTA_FIRST_FRAME_BYTES = 12
+IMU_DELTA_WIDTH_BYTES = 3
+IMU_DELTA_FIXED_BYTES = IMU_DELTA_FIRST_FRAME_BYTES + IMU_DELTA_WIDTH_BYTES
+DEFAULT_IMU_FRAMES_PER_PACKET = 10
+
+DEFAULT_IMU_GYRO_HZ = 200
+DEFAULT_IMU_ACCEL_HZ = 200
+DEFAULT_IMU_GYRO_FS_DPS = 2000
+DEFAULT_IMU_ACCEL_FS_G = 16
+IMU_CHIPS = ("icm42688", "icm45686")
+DEFAULT_IMU_CHIP = "icm42688"
+
+
+def imu_bytes_per_frame(*, lp: bool = False) -> int:
+    return IMU_BYTES_PER_FRAME_ACCEL if lp else IMU_BYTES_PER_FRAME
+
+
+def imu_packet_len(frames_per_packet: int, *, lp: bool = False) -> int:
+    return IMU_PACKET_HEADER_LEN + frames_per_packet * imu_bytes_per_frame(lp=lp)
+
+def imu_token_packet_len(frames_per_packet: int) -> int:
+    return (
+        IMU_PACKET_HEADER_LEN
+        + IMU_TOKEN_VERSION_LEN
+        + frames_per_packet * IMU_BYTES_PER_FRAME
+    )
+
+
+def imu_ble_packets_per_second(sample_hz: int, frames_per_packet: int) -> int:
+    if frames_per_packet <= 0:
+        frames_per_packet = DEFAULT_IMU_FRAMES_PER_PACKET
+    return (sample_hz + frames_per_packet - 1) // frames_per_packet
+
+
+CMD_TIME = 0x23
+SUBCMD_TIME_SET = 0x00
+SUBCMD_TIME_GET = 0x01
+SUBCMD_TIME_STATUS = 0x02
+TIME_SET_PACKET_LEN = 10
+TIME_STATUS_PACKET_LEN = 19
+
+
+CMD_PPG = 0x24
+SUBCMD_PPG_START = 0x00
+SUBCMD_PPG_STOP = 0x01
+SUBCMD_PPG_PACKET = 0x02
+SUBCMD_PPG_WEAR_PACKET = 0x04
+SUBCMD_PPG_WEAR_CALIBRATE = 0x05
+SUBCMD_PPG_WEAR_CALIBRATION_GET = 0x06
+SUBCMD_PPG_WEAR_CALIBRATION_STATUS = 0x07
+SUBCMD_PPG_RAW_PACKET = 0x08
+PPG_START_PACKET_LEN_LEGACY = 3
+PPG_START_PACKET_LEN = 4
+PPG_START_FLAG_SEND_RAW = 1 << 0
+PPG_PACKET_LEN = 13
+PPG_PACKET_HRV_LEN = 17
+PPG_WEAR_HEADER_LEN = 20
+PPG_WEAR_BYTES_PER_SAMPLE = 4
+PPG_WEAR_CAL_STATUS_LEN = 14
+PPG_WEAR_FLAG_CALIBRATED = 1 << 0
+PPG_WEAR_FLAG_SAR_VALID = 1 << 1
+PPG_RAW_HEADER_LEN = 12
+PPG_RAW_BYTES_PER_VALUE = 4
+PPG_RAW_CH_GREEN = 1 << 0
+PPG_RAW_CH_RED = 1 << 1
+PPG_RAW_CH_IR = 1 << 2
+DEFAULT_PPG_OUTPUT = "ring_ppg.csv"
+DEFAULT_PPG_RAW_OUTPUT = "ring_ppg_raw.csv"
+DEFAULT_WEAR_OUTPUT = "ring_wear.csv"
+
+CMD_PCBA = 0x25
+SUBCMD_PCBA_STATUS_GET = 0x02
+SUBCMD_PCBA_STATUS = 0x02
+PCBA_STATUS_PACKET_LEN = 15
+# Base 15 + raw_adc(i16)+adc_mv(i16)+cw_cond+cw_cond2 + whoami75+whoami72+imu_init_ret(i16)
+PCBA_STATUS_DEBUG_PACKET_LEN = 25
+PCBA_FLAG_BUTTON_PRESSED = 1 << 6
+
+CMD_BATTERY = 0x29
+SUBCMD_BATTERY_GET = 0x01
+SUBCMD_BATTERY_STATUS = 0x02
+# STATUS: cmd + subcmd + battery_mv(u16) + pct + charge|0x80 + raw(i16) + adc_mv(i16) + magic
+BATTERY_STATUS_PACKET_LEN = 11
+BATTERY_STATUS_MAGIC = 0xA5
+# Host polls ring battery via BATTERY GET.
+BATTERY_POLL_INTERVAL_S = 60.0
+CHARGE_STATUS_IDLE = 0
+CHARGE_STATUS_CHARGING = 1
+CHARGE_STATUS_FULL = 2
+CHARGE_STATUS_LABELS = {
+    CHARGE_STATUS_IDLE: "idle",
+    CHARGE_STATUS_CHARGING: "charging",
+    CHARGE_STATUS_FULL: "full",
+}
+
+# Device / firmware model query (host GET → device STATUS notify).
+CMD_INFO = 0x2A
+SUBCMD_INFO_GET = 0x01
+SUBCMD_INFO_STATUS = 0x02
+INFO_FORMAT_VER = 1
+INFO_HEADER_LEN = 9  # cmd+subcmd+format_ver+hw_rev+fw×4+component_count
+INFO_COMPONENT_LEN = 5
+INFO_COMPONENT_COUNT = 8
+INFO_STATUS_PACKET_LEN = INFO_HEADER_LEN + INFO_COMPONENT_COUNT * INFO_COMPONENT_LEN
+INFO_FLAG_PROBE_OK = 1 << 0
+INFO_FLAG_PROBED = 1 << 1
+
+INFO_COMP_IMU = 1
+INFO_COMP_PPG = 2
+INFO_COMP_MIC = 3
+INFO_COMP_FLASH = 4
+INFO_COMP_PMIC = 5
+INFO_COMP_LED_WHITE = 6
+INFO_COMP_BUTTON = 7
+INFO_COMP_SWIPE = 8
+
+INFO_MODEL_UNKNOWN = 0
+INFO_IMU_MODEL_ICM42688 = 1
+INFO_IMU_MODEL_ICM45686 = 2
+INFO_PPG_MODEL_HX3918 = 1
+INFO_MIC_MODEL_PDM = 1
+INFO_FLASH_MODEL_GD25Q256 = 1
+INFO_PMIC_MODEL_CW6305 = 1
+INFO_GPIO_MODEL = 1
+INFO_PWM_MODEL = 2
+INFO_SWIPE_MODEL_NONE = 0
+INFO_SWIPE_MODEL_TFLM = 2
+
+INFO_COMP_LABELS = {
+    INFO_COMP_IMU: "imu",
+    INFO_COMP_PPG: "ppg",
+    INFO_COMP_MIC: "mic",
+    INFO_COMP_FLASH: "flash",
+    INFO_COMP_PMIC: "pmic",
+    INFO_COMP_LED_WHITE: "led",
+    INFO_COMP_BUTTON: "button",
+    INFO_COMP_SWIPE: "swipe",
+}
+
+INFO_MODEL_LABELS: dict[int, dict[int, str]] = {
+    INFO_COMP_IMU: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_IMU_MODEL_ICM42688: "ICM42688",
+        INFO_IMU_MODEL_ICM45686: "ICM45686",
+    },
+    INFO_COMP_PPG: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_PPG_MODEL_HX3918: "HX3918",
+    },
+    INFO_COMP_MIC: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_MIC_MODEL_PDM: "PDM",
+    },
+    INFO_COMP_FLASH: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_FLASH_MODEL_GD25Q256: "GD25Q256",
+    },
+    INFO_COMP_PMIC: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_PMIC_MODEL_CW6305: "CW6305",
+    },
+    INFO_COMP_LED_WHITE: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_GPIO_MODEL: "GPIO",
+        INFO_PWM_MODEL: "PWM",
+    },
+    INFO_COMP_BUTTON: {
+        INFO_MODEL_UNKNOWN: "unknown",
+        INFO_GPIO_MODEL: "GPIO",
+    },
+    INFO_COMP_SWIPE: {
+        INFO_SWIPE_MODEL_NONE: "none",
+        INFO_SWIPE_MODEL_TFLM: "TFLM",
+    },
+}
+
+CMD_SWIPE = 0x26
+SUBCMD_SWIPE_START = 0x00
+SUBCMD_SWIPE_STOP = 0x01
+SUBCMD_SWIPE_EVENT = 0x02
+SUBCMD_SWIPE_TRIGGER = 0x03
+SUBCMD_SWIPE_PROFILE = 0x04
+# EVENT/TRIGGER: cmd+subcmd+seq(u16)+class_id+scores[7]+uptime(u32)
+SWIPE_EVENT_PACKET_LEN = 16
+SWIPE_TRIGGER_PACKET_LEN = 16
+SWIPE_PROFILE_HEADER_LEN = 10
+SWIPE_PROFILE_ENTRY_LEN = 3
+SWIPE_NUM_SCORES = 7
+DEFAULT_SWIPE_OUTPUT = "ring_swipe.csv"
+DEFAULT_SWIPE_PROFILE_OUTPUT = "ring_swipe_profile.csv"
+TFLITE_OPCODE_NAMES = {
+    0: "ADD",
+    2: "CONCATENATION",
+    3: "CONV_2D",
+    4: "DEPTHWISE_CONV_2D",
+    9: "FULLY_CONNECTED",
+    14: "LOGISTIC",
+    17: "MAX_POOL_2D",
+    18: "MUL",
+    22: "RESHAPE",
+    39: "TRANSPOSE",
+    82: "REDUCE_MAX",
+}
+SWIPE_CLASS_LABELS = {
+    0: "空",
+    1: "上",
+    2: "下",
+    3: "左",
+    4: "右",
+    5: "点击",
+    6: "弹指",
+}
+# Align with weights_lite32.h 7-class model (adds snap).
+SWIPE_EVENT_MAP = {
+    1: "swipe-up",
+    2: "swipe-down",
+    3: "swipe-left",
+    4: "swipe-right",
+    5: "tap",
+    6: "snap",
+}
+
+CMD_BUTTON = 0x27
+SUBCMD_BUTTON_EVENT = 0x02
+BUTTON_EVENT_PACKET_LEN = 9
+DEFAULT_BUTTON_OUTPUT = "ring_button.csv"
+BUTTON_EVENT_LABELS = {
+    0: "PRESS",
+    1: "RELEASE",
+    2: "CLICK",
+    3: "LONG_PRESS",
+    4: "DOUBLE_CLICK",
+}
+
+CMD_RAISE_TO_WAKE = 0x2B
+SUBCMD_RAISE_TO_WAKE_SET = 0x00
+SUBCMD_RAISE_TO_WAKE_GET = 0x01
+SUBCMD_RAISE_TO_WAKE_EVENT = 0x02
+SUBCMD_RAISE_TO_WAKE_STATUS = 0x03
+RAISE_TO_WAKE_SET_PACKET_LEN = 3
+RAISE_TO_WAKE_STATUS_PACKET_LEN = 3
+RAISE_TO_WAKE_EVENT_PACKET_LEN = 9
+DEFAULT_RAISE_TO_WAKE_OUTPUT = "ring_raise_to_wake.csv"
+RAISE_TO_WAKE_EVENT_LABELS = {
+    1: "WAKE",
+    2: "SLEEP",
+}
+
+
+def build_raise_to_wake_set(enabled: bool) -> bytes:
+    return bytes([CMD_RAISE_TO_WAKE, SUBCMD_RAISE_TO_WAKE_SET, 1 if enabled else 0])
+
+
+def build_raise_to_wake_get() -> bytes:
+    return bytes([CMD_RAISE_TO_WAKE, SUBCMD_RAISE_TO_WAKE_GET])
+
+CMD_POWER = 0x2C
+SUBCMD_POWER_SET = 0x00
+SUBCMD_POWER_GET = 0x01
+SUBCMD_POWER_STATUS = 0x02
+POWER_SET_PACKET_LEN = 3
+POWER_STATUS_PACKET_LEN = 3
+POWER_MODE_NORMAL = 0
+POWER_MODE_SENSE = 1
+POWER_MODE_ENCODE_ONLY = 2
+
+# Identity MAC query (host GET → device STATUS notify).
+CMD_MAC = 0x2D
+SUBCMD_MAC_GET = 0x01
+SUBCMD_MAC_STATUS = 0x02
+# STATUS: cmd + subcmd + addr_type(u8) + mac[6] MSB-first
+MAC_STATUS_PACKET_LEN = 9
+MAC_ADDR_TYPE_PUBLIC = 0
+MAC_ADDR_TYPE_RANDOM = 1
+MAC_ADDR_TYPE_LABELS = {
+    MAC_ADDR_TYPE_PUBLIC: "public",
+    MAC_ADDR_TYPE_RANDOM: "random",
+}
+
+
+def build_power_mode_set(mode: int) -> bytes:
+    return bytes([CMD_POWER, SUBCMD_POWER_SET, mode & 0xFF])
+
+
+def build_power_mute_set(muted: bool) -> bytes:
+    """Backward-compatible helper: True->sense, False->normal."""
+    return build_power_mode_set(POWER_MODE_SENSE if muted else POWER_MODE_NORMAL)
+
+
+def build_power_mute_get() -> bytes:
+    return bytes([CMD_POWER, SUBCMD_POWER_GET])
+
+
+# Shipping mode (CM1126B via Shipping_EN). Host ENTER → device may power off.
+# RESULT notify only on reject/failure (charger holding VSYS, bad confirm, …).
+CMD_SHIPMODE = 0x2F
+SUBCMD_SHIPMODE_ENTER = 0x00
+SUBCMD_SHIPMODE_RESULT = 0x01
+SHIPMODE_ENTER_CONFIRM = 0xA5
+SHIPMODE_ENTER_PACKET_LEN = 3
+SHIPMODE_RESULT_PACKET_LEN = 5
+
+
+def build_shipmode_enter() -> bytes:
+    return bytes([CMD_SHIPMODE, SUBCMD_SHIPMODE_ENTER, SHIPMODE_ENTER_CONFIRM])
+
+
+# HID enable gate (HOGP). SET enable → STATUS; default off on device.
+CMD_HID = 0x30
+SUBCMD_HID_SET = 0x00
+SUBCMD_HID_GET = 0x01
+SUBCMD_HID_STATUS = 0x02
+HID_SET_PACKET_LEN = 3
+HID_STATUS_PACKET_LEN = 3
+
+
+def build_hid_set(enabled: bool) -> bytes:
+    return bytes([CMD_HID, SUBCMD_HID_SET, 1 if enabled else 0])
+
+
+def build_hid_get() -> bytes:
+    return bytes([CMD_HID, SUBCMD_HID_GET])
+
+
+# Soft reboot (sys_reboot cold). Host ENTER → device resets.
+# RESULT notify only on reject (bad confirm / short packet).
+CMD_REBOOT = 0x31
+SUBCMD_REBOOT_ENTER = 0x00
+SUBCMD_REBOOT_RESULT = 0x01
+REBOOT_ENTER_CONFIRM = 0xA5
+REBOOT_ENTER_PACKET_LEN = 3
+REBOOT_RESULT_PACKET_LEN = 5
+
+
+def build_reboot_enter() -> bytes:
+    return bytes([CMD_REBOOT, SUBCMD_REBOOT_ENTER, REBOOT_ENTER_CONFIRM])
+
+
+# Health logging (PPG HRS vitals+raw + 50 Hz LP IMU → flash; pull via READ).
+CMD_HEALTH = 0x32
+SUBCMD_HEALTH_START = 0x00
+SUBCMD_HEALTH_STOP = 0x01
+SUBCMD_HEALTH_STATUS_GET = 0x02
+SUBCMD_HEALTH_READ = 0x03
+SUBCMD_HEALTH_STATUS = 0x04
+SUBCMD_HEALTH_DATA = 0x05
+SUBCMD_HEALTH_READ_END = 0x06
+SUBCMD_HEALTH_LIST = 0x07
+SUBCMD_HEALTH_LIST_ITEM = 0x08
+SUBCMD_HEALTH_LIST_END = 0x09
+SUBCMD_HEALTH_REC_VITALS = 0x10
+SUBCMD_HEALTH_REC_RAW = 0x11
+SUBCMD_HEALTH_REC_IMU = 0x12
+HEALTH_START_PACKET_LEN = 2
+HEALTH_STOP_PACKET_LEN = 2
+HEALTH_STATUS_GET_PACKET_LEN = 2
+HEALTH_LIST_PACKET_LEN = 2
+HEALTH_READ_PACKET_LEN = 10
+HEALTH_STATUS_LEGACY_PACKET_LEN = 15
+HEALTH_STATUS_PACKET_LEN = 16
+HEALTH_ERROR_NONE = 0
+HEALTH_ERROR_CHARGING = 1
+HEALTH_ERROR_SENSOR_BUSY = 2
+HEALTH_ERROR_STORAGE_INIT = 3
+HEALTH_ERROR_IMU_START = 4
+HEALTH_ERROR_PPG_START = 5
+HEALTH_ERROR_STORAGE_WRITE = 6
+HEALTH_ERROR_STORAGE_OVERWRITE = 7
+HEALTH_ERROR_REASON_LABELS = {
+    HEALTH_ERROR_NONE: "none",
+    HEALTH_ERROR_CHARGING: "charging",
+    HEALTH_ERROR_SENSOR_BUSY: "sensor_busy",
+    HEALTH_ERROR_STORAGE_INIT: "storage_init",
+    HEALTH_ERROR_IMU_START: "imu_start",
+    HEALTH_ERROR_PPG_START: "ppg_start",
+    HEALTH_ERROR_STORAGE_WRITE: "storage_write",
+    HEALTH_ERROR_STORAGE_OVERWRITE: "storage_overwrite",
+}
+HEALTH_LIST_ITEM_PACKET_LEN = 24
+HEALTH_LIST_END_PACKET_LEN = 3
+HEALTH_SESSION_MAX = 5
+HEALTH_DATA_HEADER_LEN = 8
+HEALTH_READ_END_PACKET_LEN = 7
+HEALTH_VITALS_LEN = 17
+HEALTH_RAW_HEADER_LEN = 12
+HEALTH_IMU_HEADER_LEN = 7
+HEALTH_IMU_HZ = 50
+HEALTH_IMU_FRAMES_PER_RECORD = 10
+HEALTH_IMU_BYTES_PER_FRAME = IMU_BYTES_PER_FRAME_ACCEL
+
+
+def build_health_start() -> bytes:
+    return bytes([CMD_HEALTH, SUBCMD_HEALTH_START])
+
+
+def build_health_stop() -> bytes:
+    return bytes([CMD_HEALTH, SUBCMD_HEALTH_STOP])
+
+
+def build_health_status_get() -> bytes:
+    return bytes([CMD_HEALTH, SUBCMD_HEALTH_STATUS_GET])
+
+
+def build_health_read(
+    session_id: int = 0, offset: int = 0, max_len: int = 0
+) -> bytes:
+    return bytes([CMD_HEALTH, SUBCMD_HEALTH_READ]) + struct.pack(
+        "<HIH", session_id & 0xFFFF, offset & 0xFFFFFFFF, max_len & 0xFFFF
+    )
+
+
+def build_health_list() -> bytes:
+    return bytes([CMD_HEALTH, SUBCMD_HEALTH_LIST])
+
+
+# GXT310W0 temperature query (host GET -> device STATUS notify).
+CMD_TEMPERATURE = 0x33
+SUBCMD_TEMPERATURE_GET = 0x01
+SUBCMD_TEMPERATURE_STATUS = 0x02
+# STATUS: cmd + subcmd + temperature_mc(i32 LE) + err_code(i16 LE) + magic
+TEMPERATURE_STATUS_PACKET_LEN = 9
+TEMPERATURE_STATUS_MAGIC = 0xA5
+
+
+# Per-device production identity (SN + KMU P-256 public identity).
+CMD_IDENTITY = 0x34
+SUBCMD_IDENTITY_PROVISION = 0x00
+SUBCMD_IDENTITY_GET = 0x01
+SUBCMD_IDENTITY_STATUS = 0x02
+SUBCMD_IDENTITY_CHALLENGE = 0x03
+SUBCMD_IDENTITY_SIGNATURE = 0x04
+SUBCMD_IDENTITY_LOCK = 0x05
+SUBCMD_IDENTITY_ERROR = 0x7F
+
+
+CMD_LED = 0x28
+SUBCMD_LED_SET = 0x00
+SUBCMD_LED_BLINK = 0x01
+SUBCMD_LED_MODE = 0x02
+LED_SET_PACKET_LEN = 3
+LED_BLINK_PACKET_LEN = 4
+LED_MODE_PACKET_LEN = 6
+DEFAULT_LED_BLINK_MS = 1500
+DEFAULT_LED_BLINK_PERIOD_MS = 1000
+DEFAULT_LED_BREATHE_PERIOD_MS = 2000
+LED_MODE_OFF = 0
+LED_MODE_ON = 1
+LED_MODE_BLINK = 2
+LED_MODE_BREATHE = 3
+LED_MODE_PULSE = 4
+DEFAULT_LED_BRIGHTNESS = 255
+
+CMD_BLE_TEST = 0x22
+SUBCMD_BLE_TEST_START = 0x00
+SUBCMD_BLE_TEST_STOP = 0x01
+SUBCMD_BLE_TEST_PACKET = 0x02
+SUBCMD_BLE_TEST_REPORT = 0x03
+BLE_TEST_START_PACKET_LEN = 12
+BLE_TEST_PACKET_HEADER_LEN = 10
+BLE_TEST_REPORT_PACKET_LEN = 14
+BLE_TEST_HISTOGRAM_MAX_S = 360
+
+DEFAULT_BLE_TEST_PAYLOAD_SIZE = 32
+DEFAULT_BLE_TEST_PPS = 200
+DEFAULT_BLE_TEST_DURATION_S = 30
+DEFAULT_BLE_TEST_PACKET_COUNT = 0
+
+# imu-like: 10 frames × 12B payload, 200Hz / 10 = 20 BLE packets/s
+_IMU_LIKE_PAYLOAD = IMU_BYTES_PER_FRAME * DEFAULT_IMU_FRAMES_PER_PACKET
+_IMU_LIKE_PPS = imu_ble_packets_per_second(DEFAULT_IMU_GYRO_HZ, DEFAULT_IMU_FRAMES_PER_PACKET)
+
+BLE_TEST_PRESETS: dict[str, tuple[int, int, int, int]] = {
+    "imu-like": (_IMU_LIKE_PAYLOAD, _IMU_LIKE_PPS, 30, 0),
+    "small-fast": (20, 500, 10, 0),
+    "max-throughput": (0, 0, 10, 0),
+    "long-stable": (64, 100, 300, 0),
+    "fixed-count": (32, 200, 0, 6000),
+}

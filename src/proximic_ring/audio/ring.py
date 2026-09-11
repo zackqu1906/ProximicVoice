@@ -70,6 +70,7 @@ class RingAudioSource(AudioSource):
         data_root: str | Path = "data",
         queue_blocks: int = 256,
         imu_observer: Callable[[dict], None] | None = None,
+        imu_sample_observer: Callable[[object], None] | None = None,
         battery_observer: Callable[
             [int | None, int | None, int | None], None
         ]
@@ -93,6 +94,7 @@ class RingAudioSource(AudioSource):
         self.encoding = encoding
         self.data_root = Path(data_root)
         self.imu_observer = imu_observer
+        self.imu_sample_observer = imu_sample_observer
         self.battery_observer = battery_observer
         self.imu_hz = int(imu_hz)
 
@@ -125,6 +127,8 @@ class RingAudioSource(AudioSource):
         self._pcm_abs_peak: float = 0.0
         self.imu_samples_received: int = 0
         self.imu_error: BaseException | None = None
+        self.imu_stream_error: BaseException | None = None
+        self.imu_sample_error: Exception | None = None
 
     def open(self) -> None:
         self.connect()
@@ -152,6 +156,8 @@ class RingAudioSource(AudioSource):
         self._pcm_abs_peak = 0.0
         self.imu_samples_received = 0
         self.imu_error = None
+        self.imu_stream_error = None
+        self.imu_sample_error = None
         self._stop.clear()
         self._connected_ready.clear()
         self._start_stream.clear()
@@ -396,7 +402,14 @@ class RingAudioSource(AudioSource):
         self._ready.set()
 
     def _on_imu_sample(self, sample: object) -> None:
-        """Forward one normalized IMU row without coupling it to audio health."""
+        """Fan out SDK samples and dataset rows; isolate consumer failures."""
+        if self.imu_sample_observer is not None and self.imu_sample_error is None:
+            try:
+                # This consumer must enqueue, never infer on the BLE thread.
+                self.imu_sample_observer(sample)
+            except Exception as exc:
+                self.imu_sample_error = exc
+                print(f"Ring IMU sample consumer disabled: {exc}")
         observer = self.imu_observer
         if observer is None or self.imu_error is not None:
             return
@@ -945,12 +958,13 @@ class RingAudioSource(AudioSource):
             await self._shutdown_session(session)
 
     async def _start_imu_best_effort(self, session) -> None:
-        """Start low-bandwidth IMU capture, but never fail the audio session."""
-        if self.imu_observer is None:
+        """Start the shared IMU stream, but never fail the audio session."""
+        if self.imu_observer is None and self.imu_sample_observer is None:
             return
         imu_on = getattr(session, "imu_on", None)
         if not callable(imu_on):
             self.imu_error = RuntimeError("Ring SDK does not expose imu_on")
+            self.imu_stream_error = self.imu_error
             print(f"Ring IMU unavailable: {self.imu_error}")
             return
         try:
@@ -966,4 +980,5 @@ class RingAudioSource(AudioSource):
             )
         except BaseException as exc:
             self.imu_error = exc
+            self.imu_stream_error = exc
             print(f"Ring IMU unavailable; microphone audio will continue: {exc}")

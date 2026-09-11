@@ -11,6 +11,8 @@ from argparse import Namespace
 from collections import deque
 import ctypes
 from dataclasses import dataclass
+import hashlib
+import json
 import os
 from pathlib import Path
 import re
@@ -43,9 +45,24 @@ ASR_GAIN_DB_MIN = 0.0
 ASR_GAIN_DB_MAX = 12.0
 ASR_GAIN_DB_DEFAULT = 0.0
 IMU_SAMPLE_RATE_HZ = 50
+GESTURE_SAMPLE_RATE_HZ = 200
+GESTURE_STATUS_INTERVAL_S = 5.0
 IMU_BUFFER_SECONDS = 45.0
 IMU_LEAD_IN_MS = 300.0
 _ASR_CONTEXT_CAPTURE_MAX_CHARS = 1600
+
+
+def _configure_gesture_cpu_threads(recognizer: object, backend: str) -> int | None:
+    torch = getattr(getattr(recognizer, "classifier", None), "_torch", None)
+    if torch is None:
+        return None
+    # The online ASR path has only two small local CNNs: near-field detection
+    # and gestures. Eight-way intra-op work on both stalled the gesture queue
+    # for ~1 s. Match the SDK test's single-thread configuration for this path.
+    # Local ASR models retain their own existing CPU-thread policy.
+    if backend == "volcengine" and torch.get_num_threads() > 1:
+        torch.set_num_threads(1)
+    return int(torch.get_num_threads())
 
 
 class _ReadOnlyContextClipboard:
@@ -73,7 +90,10 @@ def _context_target_key(target: object) -> str:
         )
     elif control_handle:
         control_identity = f"control:{control_handle}"
-    else:
+    elif (
+        int(getattr(target, "screen_width", 0) or 0) > 0
+        and int(getattr(target, "screen_height", 0) or 0) > 0
+    ):
         control_identity = ":".join(
             (
                 "bounds",
@@ -83,6 +103,8 @@ def _context_target_key(target: object) -> str:
                 str(int(getattr(target, "screen_height", 0) or 0)),
             )
         )
+    else:
+        control_identity = "unresolved"
     return ":".join(
         (
             str(int(getattr(target, "process_id", 0) or 0)),
@@ -90,6 +112,12 @@ def _context_target_key(target: object) -> str:
             control_identity,
         )
     )
+
+
+def _context_error_reason(prefix: str, exc: BaseException) -> str:
+    detail = "_".join(str(exc).split())[:160]
+    suffix = f":{detail}" if detail else ""
+    return f"{prefix}:{type(exc).__name__}{suffix}"
 
 
 def _volcengine_context_provider() -> Callable[[], dict[str, object]]:
@@ -105,6 +133,7 @@ def _volcengine_context_provider() -> Callable[[], dict[str, object]]:
                 "source": "focused_text",
                 "reason": "platform_unsupported",
             }
+        target = None
         try:
             if adapter is None:
                 if sys.platform == "darwin":
@@ -119,21 +148,56 @@ def _volcengine_context_provider() -> Callable[[], dict[str, object]]:
             # Context capture is deliberately observation-only.  It never
             # falls back to Select-All/Copy, so it cannot move the caret,
             # replace a selection, or modify the user's clipboard.
-            snapshot = adapter.observe_text(target)
+            context_observer = getattr(adapter, "observe_context_text", None)
+            if callable(context_observer):
+                snapshot = context_observer(
+                    target,
+                    max_chars=_ASR_CONTEXT_CAPTURE_MAX_CHARS,
+                )
+            else:
+                snapshot = adapter.observe_text(target)
             full_text = str(snapshot.text or "").rstrip()
         except BaseException as exc:
-            return {
+            reason = _context_error_reason("focused_text_unreadable", exc)
+            result = {
                 "status": "unavailable",
                 "source": "focused_text",
-                "reason": f"focused_text_unreadable:{type(exc).__name__}",
+                "reason": reason,
             }
+            accessibility_probe = str(
+                getattr(
+                    adapter,
+                    "last_context_accessibility_probe",
+                    "",
+                )
+                or ""
+            )
+            if accessibility_probe:
+                result["ax_manual_accessibility"] = accessibility_probe
+            if target is not None:
+                result["target_key"] = _context_target_key(target)
+                result["application"] = str(
+                    getattr(target, "process_name", "")
+                    or getattr(target, "window_title", "")
+                    or "unknown"
+                )
+            return result
         application = str(
             getattr(target, "process_name", "")
             or getattr(target, "window_title", "")
             or "unknown"
         )
+        observed_source_char_count = getattr(
+            adapter, "last_context_source_char_count", None
+        )
+        source_char_count = (
+            max(len(full_text), int(observed_source_char_count))
+            if isinstance(observed_source_char_count, int)
+            and observed_source_char_count >= 0
+            else len(full_text)
+        )
         if not full_text:
-            return {
+            result = {
                 "status": "empty",
                 "source": "focused_text",
                 "reason": "empty_focused_text",
@@ -141,14 +205,29 @@ def _volcengine_context_provider() -> Callable[[], dict[str, object]]:
                 "target_key": _context_target_key(target),
                 "application": application,
             }
-        return {
-            "status": "captured",
-            "source": "focused_text",
-            "text": full_text[-_ASR_CONTEXT_CAPTURE_MAX_CHARS:],
-            "source_char_count": len(full_text),
-            "target_key": _context_target_key(target),
-            "application": application,
-        }
+        else:
+            result = {
+                "status": "captured",
+                "source": "focused_text",
+                "text": full_text[-_ASR_CONTEXT_CAPTURE_MAX_CHARS:],
+                "source_char_count": source_char_count,
+                "target_key": _context_target_key(target),
+                "application": application,
+            }
+        read_method = str(getattr(adapter, "last_context_read_method", "") or "")
+        if read_method:
+            result["read_method"] = read_method
+        accessibility_probe = str(
+            getattr(
+                adapter,
+                "last_context_accessibility_probe",
+                "",
+            )
+            or ""
+        )
+        if accessibility_probe:
+            result["ax_manual_accessibility"] = accessibility_probe
+        return result
 
     return capture
 
@@ -370,7 +449,7 @@ class RuntimeSettings:
     # Passed only to the selected online ASR backend.  Environment-variable
     # lookup inside that backend remains available for CLI compatibility.
     asr_api_key: str = ""
-    # IMU is dataset evidence only.  It never gates the detector/audio path.
+    # Dataset capture is optional. Gesture consumers independently request IMU.
     collect_imu: bool = True
     imu_sample_rate_hz: int = IMU_SAMPLE_RATE_HZ
 
@@ -462,6 +541,7 @@ class RecognitionRuntime:
         on_asr_context: Callable[[int, dict[str, object]], None] | None = None,
         on_raw_audio: Callable[[int, object], None] | None = None,
         on_raw_imu: Callable[[int, object, dict], None] | None = None,
+        on_gesture: Callable[[object], None] | None = None,
         on_battery: Callable[
             [int | None, int | None, int | None], None
         ]
@@ -478,8 +558,15 @@ class RecognitionRuntime:
             if selected_backend == "volcengine"
             else None
         )
+        # One physical stream serves both consumers. Record its actual rate in
+        # dataset metadata; the supplied gesture model requires exactly 200 Hz.
+        imu_hz = (
+            GESTURE_SAMPLE_RATE_HZ
+            if on_gesture is not None
+            else self.settings.imu_sample_rate_hz
+        )
         imu_buffer = (
-            _ImuSampleBuffer(sample_rate_hz=self.settings.imu_sample_rate_hz)
+            _ImuSampleBuffer(sample_rate_hz=imu_hz)
             if self.settings.collect_imu and on_raw_imu is not None
             else None
         )
@@ -492,8 +579,12 @@ class RecognitionRuntime:
             data_root=args.data_dir,
             imu_observer=imu_buffer.append if imu_buffer is not None else None,
             battery_observer=on_battery,
-            imu_hz=self.settings.imu_sample_rate_hz,
+            imu_hz=imu_hz,
         )
+        gesture_worker = None
+        gestures_enabled = threading.Event()
+        gesture_error_reported = False
+        next_gesture_status_at = 0.0
         detector = None
         controller = None
         watcher_done = threading.Event()
@@ -529,6 +620,7 @@ class RecognitionRuntime:
 
         def close_source_and_report() -> None:
             """Close the physical device once and publish that independently."""
+            gestures_enabled.clear()
             with source_close_lock:
                 source.close()
                 if connection_attempted.is_set() and not source_disconnected.is_set():
@@ -604,14 +696,87 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
+            if on_gesture is not None:
+                on_state("正在加载电脑端手势模型…")
+                try:
+                    from ring_python_sdk.gestures import GestureRecognizer, GestureWorker
+                    from ring_python_sdk.gestures import classifier as gesture_classifier
+
+                    def publish_gesture(event: object) -> None:
+                        accepted = (
+                            gestures_enabled.is_set()
+                            and not disconnect_event.is_set()
+                            and source.error is None
+                        )
+                        # Record model output before application state gating.
+                        on_state("[GESTURE_RECOGNIZED] " + json.dumps({
+                            "name": getattr(event, "name", ""),
+                            "confidence": getattr(event, "confidence", None),
+                            "device_timestamp_ms": getattr(event, "timestamp_ms", None),
+                            "forwarded": accepted,
+                            "reason": "ui_dispatch" if accepted else "runtime_stopped",
+                        }, ensure_ascii=False))
+                        if accepted:
+                            on_gesture(event)
+
+                    recognizer = GestureRecognizer(on_gesture=publish_gesture)
+                    gesture_threads = _configure_gesture_cpu_threads(recognizer, selected_backend)
+                    # Warm up before starting MIC/IMU.
+                    recognizer.classifier.predict(
+                        np.zeros((recognizer.classifier.window_size, 6), dtype=np.float32)
+                    )
+                    gesture_worker = GestureWorker(recognizer)
+                    gesture_worker.start()
+                    source.imu_sample_observer = gesture_worker.submit
+                    gestures_enabled.set()
+                    model_path = Path(gesture_classifier.__file__).with_name("assets") / "swipe.pt"
+                    on_state("[GESTURE_MODEL] " + json.dumps({
+                        "path": str(model_path),
+                        "sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
+                        "sample_hz": GESTURE_SAMPLE_RATE_HZ,
+                        "cpu_intra_threads": gesture_threads,
+                        "packet_timestamp_tolerance_ms": getattr(
+                            recognizer, "packet_timestamp_tolerance_ms", None
+                        ),
+                    }, ensure_ascii=False))
+                    on_state("电脑端手势已就绪：左/下取消或撤销，右/上转换类型")
+                except Exception as exc:
+                    gestures_enabled.clear()
+                    gesture_error_reported = True
+                    on_state(f"电脑端手势不可用，按键和语音继续工作：{exc}")
+            if disconnect_event.is_set():
+                return
+
             on_state("模型加载完成，正在启动并确认实时音频…")
             source.start_stream(buffer_audio=True)
+            next_gesture_status_at = time.monotonic() + GESTURE_STATUS_INTERVAL_S
             recognition_was_enabled = False
             on_started()
             while not disconnect_event.is_set():
                 block = source.read(320)
                 if block is None:
                     break
+                if gesture_worker is not None and not gesture_error_reported:
+                    gesture_error = gesture_worker.error or getattr(
+                        source, "imu_sample_error", None
+                    ) or getattr(
+                        source, "imu_stream_error", None
+                    )
+                    if gesture_error is not None:
+                        gesture_error_reported = True
+                        gestures_enabled.clear()
+                        on_state(f"电脑端手势已停止，按键和语音继续工作：{gesture_error}")
+                if gesture_worker is not None and time.monotonic() >= next_gesture_status_at:
+                    stats = gesture_worker.snapshot()
+                    stats["status"] = (
+                        "error" if gesture_error_reported else
+                        "no_imu" if not stats["received_samples"] else
+                        "imu_stalled" if (stats["last_input_age_ms"] or 0) > 2000 else
+                        "inference_backlog" if stats["last_queue_wait_ms"] > 250 else
+                        "running"
+                    )
+                    on_state("[GESTURE_STATUS] " + json.dumps(stats, ensure_ascii=False))
+                    next_gesture_status_at = time.monotonic() + GESTURE_STATUS_INTERVAL_S
                 block_end_monotonic_ns = int(
                     getattr(source, "last_read_end_monotonic_ns", 0)
                     or time.monotonic_ns()
@@ -693,6 +858,12 @@ class RecognitionRuntime:
         finally:
             watcher_done.set()
             close_source_and_report()
+            if gesture_worker is not None:
+                try:
+                    gesture_worker.close()
+                    on_state(f"电脑端手势统计：{gesture_worker.snapshot()}")
+                except Exception as exc:
+                    on_state(f"电脑端手势清理异常：{exc}")
             if watcher is not threading.current_thread():
                 watcher.join(timeout=1.0)
             if controller is not None:

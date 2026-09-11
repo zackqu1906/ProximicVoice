@@ -277,10 +277,10 @@ class VolcengineStreamingASR:
         status = str(supplied.get("status", "captured") or "captured")
         source = str(supplied.get("source", "focused_text") or "focused_text")
         raw_text = str(supplied.get("text", "") or "")
+        context_data, truncated = _dialog_context_data(raw_text)
         source_char_count = int(
             supplied.get("source_char_count", len(raw_text)) or 0
         )
-        context_data, truncated = _dialog_context_data(raw_text)
         sent_char_count = sum(len(item["text"]) for item in context_data)
 
         if status != "captured":
@@ -304,7 +304,7 @@ class VolcengineStreamingASR:
             "truncated": bool(truncated or source_char_count > len(raw_text)),
             "reason": reason,
         }
-        for key in ("target_key", "application"):
+        for key in ("target_key", "application", "read_method"):
             value = str(supplied.get(key, "") or "")
             if value:
                 metadata[key] = value

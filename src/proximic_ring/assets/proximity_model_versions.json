@@ -1,0 +1,21 @@
+{
+  "schema_version": 1,
+  "active_version": "v2",
+  "active_model": "ringo-near-v2.model",
+  "versions": {
+    "v1": {
+      "model": "ringo-near-v1.model",
+      "revision": "near_vs_nontarget_plus24db_hard_negative_v2",
+      "sha256": "66c94757ccc187b7d655bf184b8a1dec39505c67980fdbd3bb8b03e6f4208106",
+      "recommended_stage2_threshold": -0.17572301626205444,
+      "source_record_count": 111
+    },
+    "v2": {
+      "model": "ringo-near-v2.model",
+      "revision": "near_vs_nontarget_plus24db_positive_v3",
+      "sha256": "c7dacd864bd197bae42868052e209383db65a27279f3f3aa7a974c0ae9066e8f",
+      "recommended_stage2_threshold": 1.0086174607276917,
+      "source_record_count": 301
+    }
+  }
+}

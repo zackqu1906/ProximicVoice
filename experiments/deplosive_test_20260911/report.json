@@ -1,0 +1,644 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-11T17:12:29+08:00",
+  "algorithm": "adaptive_stft_deplosive_mild_v1",
+  "asr_backend": "sensevoice",
+  "config": {
+    "fft_size": 1024,
+    "hop_size": 160,
+    "detection_low_min_hz": 20.0,
+    "detection_low_max_hz": 250.0,
+    "detection_mid_min_hz": 300.0,
+    "detection_mid_max_hz": 3000.0,
+    "baseline_radius_frames": 24,
+    "minimum_frame_dbfs": -45.0,
+    "minimum_low_excess_db": 7.0,
+    "minimum_low_to_mid_db": 3.0,
+    "maximum_attenuation_db": 8.0,
+    "full_attenuation_hz": 140.0,
+    "attenuation_end_hz": 260.0,
+    "subsonic_highpass_hz": 35.0,
+    "pre_attack_frames": 2,
+    "hold_frames": 2,
+    "release_frames": 10
+  },
+  "summary": {
+    "sessions": 20,
+    "detected_regions": 62,
+    "mean_low_20_250hz_change_db": -2.0998937246140725,
+    "mean_speech_300_3000hz_change_db": -0.0019958526838062206,
+    "asr_unchanged": 15,
+    "asr_potential_improvements": 0,
+    "asr_potential_regressions": 0,
+    "asr_changed_needs_reference": 5,
+    "asr_not_run_or_error": 0,
+    "historical_proxy_sessions": 13,
+    "historical_proxy_better": 0,
+    "historical_proxy_same": 11,
+    "historical_proxy_worse": 2,
+    "mean_raw_similarity_to_historical_text": 0.4293706293706295,
+    "mean_processed_similarity_to_historical_text": 0.38321678321678326
+  },
+  "sessions": [
+    {
+      "interaction_id": "interaction_2026-09-11_16-53-27-602",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-53-27-602/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-53-27-602/record.json",
+      "prior_text": "",
+      "output_directory": "01_interaction_2026-09-11_16-53-27-602",
+      "processing": {
+        "detected_regions": 14,
+        "processed_duration_ms": 2860.0,
+        "processed_audio_pct": 58.13008130081301,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 6.238690906060726,
+        "sub_50hz_change_db": -9.84864784906305,
+        "low_20_250hz_change_db": -7.163578666333716,
+        "speech_300_3000hz_change_db": -0.00046495634728627167,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.2442158569813116,
+        "clipped_before_pct": 0.05589430894308944,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "。",
+        "processed_text": "。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": null,
+        "processed_similarity_to_prior": null
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-53-07-098",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-53-07-098/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-53-07-098/record.json",
+      "prior_text": "24。",
+      "output_directory": "02_interaction_2026-09-11_16-53-07-098",
+      "processing": {
+        "detected_regions": 0,
+        "processed_duration_ms": 0.0,
+        "processed_audio_pct": 0.0,
+        "maximum_attenuation_db": 0.0,
+        "mean_active_attenuation_db": 0.0,
+        "sub_50hz_change_db": -2.329444884088396,
+        "low_20_250hz_change_db": -0.14684335447274677,
+        "speech_300_3000hz_change_db": -0.009970423134539885,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.019886363636363636,
+        "clipped_after_pct": 0.011363636363636364
+      },
+      "asr": {
+        "raw_text": "124。",
+        "processed_text": "124。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.8,
+        "processed_similarity_to_prior": 0.8
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-52-48-628",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-48-628/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-48-628/record.json",
+      "prior_text": "",
+      "output_directory": "03_interaction_2026-09-11_16-52-48-628",
+      "processing": {
+        "detected_regions": 2,
+        "processed_duration_ms": 290.0,
+        "processed_audio_pct": 7.880434782608696,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.8895126256371375,
+        "sub_50hz_change_db": -2.9244991874686495,
+        "low_20_250hz_change_db": -0.5393814393345941,
+        "speech_300_3000hz_change_db": -0.0002699557307686007,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.015285326086956524,
+        "clipped_after_pct": 0.0033967391304347825
+      },
+      "asr": {
+        "raw_text": "打牌电话不被。",
+        "processed_text": "打牌电话宝被。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "changed_needs_reference",
+        "raw_similarity_to_prior": null,
+        "processed_similarity_to_prior": null
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-52-43-145",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-43-145/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-43-145/record.json",
+      "prior_text": "",
+      "output_directory": "04_interaction_2026-09-11_16-52-43-145",
+      "processing": {
+        "detected_regions": 0,
+        "processed_duration_ms": 0.0,
+        "processed_audio_pct": 0.0,
+        "maximum_attenuation_db": 0.0,
+        "mean_active_attenuation_db": 0.0,
+        "sub_50hz_change_db": -2.479995146592918,
+        "low_20_250hz_change_db": -0.131206927259214,
+        "speech_300_3000hz_change_db": -0.0001443108383440972,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.06283140247454222,
+        "clipped_before_pct": 0.01201923076923077,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "不不不不不。",
+        "processed_text": "不不不不不。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": null,
+        "processed_similarity_to_prior": null
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-52-39-164",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-39-164/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-39-164/record.json",
+      "prior_text": "",
+      "output_directory": "05_interaction_2026-09-11_16-52-39-164",
+      "processing": {
+        "detected_regions": 3,
+        "processed_duration_ms": 570.0,
+        "processed_audio_pct": 12.5,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 6.227892520641067,
+        "sub_50hz_change_db": -3.0652576231867243,
+        "low_20_250hz_change_db": -0.8703145183784677,
+        "speech_300_3000hz_change_db": -0.00022628289100090626,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.00026507636037961915,
+        "clipped_before_pct": 0.015076754385964912,
+        "clipped_after_pct": 0.004111842105263158
+      },
+      "asr": {
+        "raw_text": "大白点不的不不。",
+        "processed_text": "大白点不的宝哭。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "changed_needs_reference",
+        "raw_similarity_to_prior": null,
+        "processed_similarity_to_prior": null
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-52-33-601",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-33-601/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-33-601/record.json",
+      "prior_text": "12345。",
+      "output_directory": "06_interaction_2026-09-11_16-52-33-601",
+      "processing": {
+        "detected_regions": 2,
+        "processed_duration_ms": 430.0,
+        "processed_audio_pct": 14.930555555555555,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.786370045164683,
+        "sub_50hz_change_db": -5.95575666476708,
+        "low_20_250hz_change_db": -3.7709157407977187,
+        "speech_300_3000hz_change_db": -0.00041382841603621046,
+        "peak_before_dbfs": -1.2634540366673221,
+        "peak_after_dbfs": -3.399693785996783,
+        "clipped_before_pct": 0.0,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "第二305。",
+        "processed_text": "第我搜索。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "changed_needs_reference",
+        "raw_similarity_to_prior": 0.4,
+        "processed_similarity_to_prior": 0.0
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-52-24-655",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-24-655/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-24-655/record.json",
+      "prior_text": "什么时候到达不了？",
+      "output_directory": "07_interaction_2026-09-11_16-52-24-655",
+      "processing": {
+        "detected_regions": 4,
+        "processed_duration_ms": 590.0,
+        "processed_audio_pct": 14.460784313725492,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.52094373488271,
+        "sub_50hz_change_db": -2.7604113428644546,
+        "low_20_250hz_change_db": -1.0178889913465206,
+        "speech_300_3000hz_change_db": -0.0004388051644372837,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.026041666666666668,
+        "clipped_after_pct": 0.007659313725490196
+      },
+      "asr": {
+        "raw_text": "是不是对的不了？",
+        "processed_text": "是不是对的不了？",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.26666666666666666,
+        "processed_similarity_to_prior": 0.26666666666666666
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-52-16-583",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-16-583/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-16-583/record.json",
+      "prior_text": "是不是这样的？大家都不要。",
+      "output_directory": "08_interaction_2026-09-11_16-52-16-583",
+      "processing": {
+        "detected_regions": 4,
+        "processed_duration_ms": 470.0,
+        "processed_audio_pct": 10.981308411214954,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 4.5266831446950695,
+        "sub_50hz_change_db": -2.887462197513834,
+        "low_20_250hz_change_db": -0.887112111725088,
+        "speech_300_3000hz_change_db": -0.00012257276590688093,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.03205776736033425,
+        "clipped_before_pct": 0.013142523364485981,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "是不是这样图大图不了。",
+        "processed_text": "是不是这样图大图不了。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.6666666666666666,
+        "processed_similarity_to_prior": 0.6666666666666666
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-52-07-416",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-07-416/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-07-416/record.json",
+      "prior_text": "这样。",
+      "output_directory": "09_interaction_2026-09-11_16-52-07-416",
+      "processing": {
+        "detected_regions": 4,
+        "processed_duration_ms": 550.0,
+        "processed_audio_pct": 15.277777777777779,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.335155308268211,
+        "sub_50hz_change_db": -2.9912097513771663,
+        "low_20_250hz_change_db": -1.2398352950164266,
+        "speech_300_3000hz_change_db": -0.00911348412694224,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.03819444444444445,
+        "clipped_after_pct": 0.050347222222222224
+      },
+      "asr": {
+        "raw_text": "吃这样的东西带图片。",
+        "processed_text": "是这样的东西带图片。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "changed_needs_reference",
+        "raw_similarity_to_prior": 0.36363636363636365,
+        "processed_similarity_to_prior": 0.36363636363636365
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-52-02-225",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-02-225/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-02-225/record.json",
+      "prior_text": "",
+      "output_directory": "10_interaction_2026-09-11_16-52-02-225",
+      "processing": {
+        "detected_regions": 2,
+        "processed_duration_ms": 280.0,
+        "processed_audio_pct": 8.433734939759036,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.5334552372553825,
+        "sub_50hz_change_db": -2.5613054877670454,
+        "low_20_250hz_change_db": -0.24220245866506573,
+        "speech_300_3000hz_change_db": -0.0037429303674301195,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.043298192771084335,
+        "clipped_after_pct": 0.03953313253012048
+      },
+      "asr": {
+        "raw_text": "你不想吃错话？",
+        "processed_text": "你不想吃错话？",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": null,
+        "processed_similarity_to_prior": null
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-51-58-924",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-51-58-924/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-51-58-924/record.json",
+      "prior_text": "",
+      "output_directory": "11_interaction_2026-09-11_16-51-58-924",
+      "processing": {
+        "detected_regions": 0,
+        "processed_duration_ms": 0.0,
+        "processed_audio_pct": 0.0,
+        "maximum_attenuation_db": 0.0,
+        "mean_active_attenuation_db": 0.0,
+        "sub_50hz_change_db": -2.6711896089784535,
+        "low_20_250hz_change_db": -0.13303053596303727,
+        "speech_300_3000hz_change_db": -0.00017237043757312165,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.042405678565323957,
+        "clipped_before_pct": 0.004464285714285714,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "空聊。",
+        "processed_text": "空聊。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": null,
+        "processed_similarity_to_prior": null
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-51-50-438",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-51-50-438/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-51-50-438/record.json",
+      "prior_text": "把钱不是坏的。",
+      "output_directory": "12_interaction_2026-09-11_16-51-50-438",
+      "processing": {
+        "detected_regions": 1,
+        "processed_duration_ms": 120.0,
+        "processed_audio_pct": 3.75,
+        "maximum_attenuation_db": 7.358287401662502,
+        "mean_active_attenuation_db": 4.929121099726455,
+        "sub_50hz_change_db": -2.713076570788335,
+        "low_20_250hz_change_db": -0.20579251189700543,
+        "speech_300_3000hz_change_db": -0.0020869488507617717,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.05859375,
+        "clipped_after_pct": 0.03515625
+      },
+      "asr": {
+        "raw_text": "把戒播放。",
+        "processed_text": "把戒播放。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.2,
+        "processed_similarity_to_prior": 0.2
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-19-00-221",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-19-00-221/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-19-00-221/record.json",
+      "prior_text": "删掉。",
+      "output_directory": "13_interaction_2026-09-11_16-19-00-221",
+      "processing": {
+        "detected_regions": 5,
+        "processed_duration_ms": 790.0,
+        "processed_audio_pct": 24.6875,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.831482364406465,
+        "sub_50hz_change_db": -4.086073980997332,
+        "low_20_250hz_change_db": -1.5019664296044475,
+        "speech_300_3000hz_change_db": -0.0037998068687628006,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.00026507636037961915,
+        "clipped_before_pct": 0.0078125,
+        "clipped_after_pct": 0.015625
+      },
+      "asr": {
+        "raw_text": "帮我把这个东西删掉。",
+        "processed_text": "帮我把这个东西删掉。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.36363636363636365,
+        "processed_similarity_to_prior": 0.36363636363636365
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-18-47-406",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-18-47-406/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-18-47-406/record.json",
+      "prior_text": "说一个小故事。",
+      "output_directory": "14_interaction_2026-09-11_16-18-47-406",
+      "processing": {
+        "detected_regions": 4,
+        "processed_duration_ms": 520.0,
+        "processed_audio_pct": 16.25,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 4.605942810592014,
+        "sub_50hz_change_db": -3.1746187269154547,
+        "low_20_250hz_change_db": -1.4930576689695023,
+        "speech_300_3000hz_change_db": -0.0002835322625180936,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.1459762105274036,
+        "clipped_before_pct": 0.013671875000000002,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "说个小故事。",
+        "processed_text": "说个小故事。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.9090909090909091,
+        "processed_similarity_to_prior": 0.9090909090909091
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-18-25-174",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-18-25-174/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-18-25-174/record.json",
+      "prior_text": "故事。",
+      "output_directory": "15_interaction_2026-09-11_16-18-25-174",
+      "processing": {
+        "detected_regions": 3,
+        "processed_duration_ms": 430.0,
+        "processed_audio_pct": 15.357142857142858,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.926586683208774,
+        "sub_50hz_change_db": -3.2316092388788746,
+        "low_20_250hz_change_db": -0.9699902409487002,
+        "speech_300_3000hz_change_db": -0.004499675999536379,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.03794642857142857,
+        "clipped_after_pct": 0.013392857142857144
+      },
+      "asr": {
+        "raw_text": "说一个新故事。",
+        "processed_text": "说一个新故事。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.5,
+        "processed_similarity_to_prior": 0.5
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-18-17-427",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-18-17-427/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-18-17-427/record.json",
+      "prior_text": "删掉上一句话。",
+      "output_directory": "16_interaction_2026-09-11_16-18-17-427",
+      "processing": {
+        "detected_regions": 1,
+        "processed_duration_ms": 90.0,
+        "processed_audio_pct": 2.586206896551724,
+        "maximum_attenuation_db": 3.894191974823579,
+        "mean_active_attenuation_db": 3.0276882779919205,
+        "sub_50hz_change_db": -3.27702551459012,
+        "low_20_250hz_change_db": -0.7268216867509842,
+        "speech_300_3000hz_change_db": -0.0033931130827777878,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.017959770114942528,
+        "clipped_after_pct": 0.007183908045977011
+      },
+      "asr": {
+        "raw_text": "删掉上衣服。",
+        "processed_text": "删掉上衣服。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.5454545454545454,
+        "processed_similarity_to_prior": 0.5454545454545454
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-18-02-086",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-18-02-086/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-18-02-086/record.json",
+      "prior_text": "沙雕，上海警方。",
+      "output_directory": "17_interaction_2026-09-11_16-18-02-086",
+      "processing": {
+        "detected_regions": 5,
+        "processed_duration_ms": 840.0,
+        "processed_audio_pct": 23.333333333333332,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.4955752185357385,
+        "sub_50hz_change_db": -5.1542896572907075,
+        "low_20_250hz_change_db": -2.975900398334943,
+        "speech_300_3000hz_change_db": -0.0003498397061800773,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -1.8528182355934342,
+        "clipped_before_pct": 0.010416666666666668,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "删掉伤害就好。",
+        "processed_text": "删掉伤害就好。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.0,
+        "processed_similarity_to_prior": 0.0
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-17-45-890",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-17-45-890/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-17-45-890/record.json",
+      "prior_text": "声调上一句话。",
+      "output_directory": "18_interaction_2026-09-11_16-17-45-890",
+      "processing": {
+        "detected_regions": 2,
+        "processed_duration_ms": 490.0,
+        "processed_audio_pct": 11.666666666666666,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 6.650836980893579,
+        "sub_50hz_change_db": -9.359110481786507,
+        "low_20_250hz_change_db": -6.100754435173387,
+        "speech_300_3000hz_change_db": -0.00020362146540886528,
+        "peak_before_dbfs": -1.6278453279171856,
+        "peak_after_dbfs": -3.7657311389049912,
+        "clipped_before_pct": 0.0,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "删掉声意就大。",
+        "processed_text": "删掉声意就大。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": 0.16666666666666666,
+        "processed_similarity_to_prior": 0.16666666666666666
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-17-36-237",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-17-36-237/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-17-36-237/record.json",
+      "prior_text": "删掉上海警方。",
+      "output_directory": "19_interaction_2026-09-11_16-17-36-237",
+      "processing": {
+        "detected_regions": 4,
+        "processed_duration_ms": 950.0,
+        "processed_audio_pct": 36.53846153846153,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 5.679648662565283,
+        "sub_50hz_change_db": -7.294400406983435,
+        "low_20_250hz_change_db": -4.782184880435093,
+        "speech_300_3000hz_change_db": -0.0002828163765542513,
+        "peak_before_dbfs": -0.0005301608106181009,
+        "peak_after_dbfs": -1.6536408802288092,
+        "clipped_before_pct": 0.0,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "删掉啥就。",
+        "processed_text": "删点啥就。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "changed_needs_reference",
+        "raw_similarity_to_prior": 0.4,
+        "processed_similarity_to_prior": 0.2
+      }
+    },
+    {
+      "interaction_id": "interaction_2026-09-11_16-17-21-637",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-17-21-637/audio.wav",
+      "source_record": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-17-21-637/record.json",
+      "prior_text": "",
+      "output_directory": "20_interaction_2026-09-11_16-17-21-637",
+      "processing": {
+        "detected_regions": 2,
+        "processed_duration_ms": 520.0,
+        "processed_audio_pct": 28.888888888888886,
+        "maximum_attenuation_db": 8.0,
+        "mean_active_attenuation_db": 6.887945469784172,
+        "sub_50hz_change_db": -9.630584703198142,
+        "low_20_250hz_change_db": -7.09909620087479,
+        "speech_300_3000hz_change_db": 6.222115664122896e-05,
+        "peak_before_dbfs": -15.550840231701583,
+        "peak_after_dbfs": -18.853040412180672,
+        "clipped_before_pct": 0.0,
+        "clipped_after_pct": 0.0
+      },
+      "asr": {
+        "raw_text": "。",
+        "processed_text": "。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged",
+        "raw_similarity_to_prior": null,
+        "processed_similarity_to_prior": null
+      }
+    }
+  ]
+}

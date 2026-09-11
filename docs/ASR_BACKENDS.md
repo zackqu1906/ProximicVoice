@@ -191,6 +191,30 @@ For the current native backend, a `401` means the `X-Api-Key` is not a valid
 new-console Doubao Speech App Key, while a `403` commonly means the selected
 Resource ID is not enabled for that application. The key is never printed.
 
+### Replay saved WAV files through Doubao
+
+`tools/test_doubao_audio.py` bypasses the Ring and proximity detector and sends
+saved 16 kHz WAV data through the same `VolcengineStreamingASR` adapter as the
+desktop application. By default it samples four files from the sibling
+`ProximicAsr_decoupled/datasets/ring_proximity_plus24db_20260826/raw/near`
+directory, finds the newest empty and successful interaction recordings, and
+prints comparable level, activity, clipping, and frequency-band measurements.
+
+On macOS, run it with the bundled runtime so it can reuse the speech App Key
+already saved in the application settings:
+
+```bash
+.runtime/venv/bin/python tools/test_doubao_audio.py \
+  --replay-recent-empty \
+  --json-output /tmp/proximic_doubao_audio.json
+```
+
+Use `--analyse-only` for a local-only acoustic report. CLI installations on
+other platforms can provide the key through `VOLC_ASR_API_KEY`. The key is
+loaded but never included in console or JSON output. `--pace 1` (the default)
+matches the application's real-time 20 ms audio delivery; use `--pace 0` only
+for a faster service experiment.
+
 ## SenseVoice
 
 Install:
@@ -347,7 +371,7 @@ selected automatically, so no `--asr-model` argument is needed.
 ProxiMic-gated Ring input, one line:
 
 ```powershell
-python -m proximic_ring ring --model src\proximic_ring\assets\ringo-near-v1.model --stage1-threshold 0.005 --asr funasr_nano --funasr-nano-repo .\third_party\Fun-ASR --asr-device cuda:0 --asr-language auto
+python -m proximic_ring ring --model src\proximic_ring\assets\ringo-near-v2.model --stage1-threshold 0.005 --asr funasr_nano --funasr-nano-repo .\third_party\Fun-ASR --asr-device cuda:0 --asr-language auto
 ```
 
 Direct Ring baseline without ProxiMic, one line:

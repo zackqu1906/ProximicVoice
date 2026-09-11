@@ -1,0 +1,38 @@
+{
+  "model_version": "v2",
+  "recommended_stage2_threshold": 1.0086174607276917,
+  "label_mapping": {
+    "near": 0,
+    "far": 1,
+    "artifact": 1
+  },
+  "binary_task": {
+    "0": "near_speech",
+    "1": "realistic_non_target_audio"
+  },
+  "score_definition": "logits[0] - logits[1]",
+  "model_revision": "near_vs_nontarget_plus24db_positive_v3",
+  "model_sha256": "c7dacd864bd197bae42868052e209383db65a27279f3f3aa7a974c0ae9066e8f",
+  "training": {
+    "created_utc": "2026-09-11T03:41:46.804662+00:00",
+    "device": "mps",
+    "init": "pretrained",
+    "init_checkpoint_revision": "near_vs_nontarget_plus24db_hard_negative_v2",
+    "source_record_count": 301,
+    "near_record_count": 213,
+    "non_target_record_count": 88,
+    "mined_free_speech_count": 121,
+    "mined_airflow_count": 69,
+    "best_epoch": 9
+  },
+  "validation": {
+    "balanced_accuracy": 0.992275223342349,
+    "near_recall": 0.9879518072289156,
+    "non_target_recall": 0.9965986394557823
+  },
+  "test": {
+    "balanced_accuracy": 0.9886567546782876,
+    "near_recall": 0.9879518072289156,
+    "non_target_recall": 0.9893617021276596
+  }
+}

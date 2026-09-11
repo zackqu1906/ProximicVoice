@@ -51,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
 
             voice_action_hotkeys = WindowsVoiceActionHotkeys(
                 controller.dispatchVoiceAction,
+                mode_switch_shortcut=(
+                    lambda: controller.modeCorrectionShortcut
+                ),
                 is_interaction_active=lambda: controller.interactionCanCancel,
                 is_mode_correction_active=lambda: (
                     controller.modeCorrectionHotkeyAvailable
@@ -75,6 +78,9 @@ def main(argv: list[str] | None = None) -> int:
 
                 mac_hotkeys["instance"] = MacOSVoiceActionHotkeys(
                     controller.dispatchVoiceAction,
+                    mode_switch_shortcut=(
+                        lambda: controller.modeCorrectionShortcut
+                    ),
                     is_interaction_active=lambda: controller.interactionCanCancel,
                     is_mode_correction_active=lambda: (
                         controller.modeCorrectionHotkeyAvailable

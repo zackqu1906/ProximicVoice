@@ -297,6 +297,26 @@ SUBCMD_SWIPE_STOP = 0x01
 SUBCMD_SWIPE_EVENT = 0x02
 SUBCMD_SWIPE_TRIGGER = 0x03
 SUBCMD_SWIPE_PROFILE = 0x04
+SUBCMD_SWIPE_EVENT_V2 = 0x05
+SUBCMD_SWIPE_TRIGGER_V2 = 0x06
+SWIPE_EVENT_V2_PACKET_LEN = 57
+SWIPE_TRIGGER_V2_PACKET_LEN = 65
+SWIPE_GESTURE_IDS_V2 = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13)
+# Density firmware labels: pinch-down (10) and pinch-up (11) are disabled.
+SWIPE_CLASS_LABELS_V2 = {
+    0: "empty",
+    1: "swipe-up",
+    2: "swipe-down",
+    3: "swipe-left",
+    4: "swipe-right",
+    5: "swipe-tap",
+    6: "snap",
+    7: "clench",
+    8: "index-pinch",
+    9: "middle-pinch",
+    12: "circle-clockwise",
+    13: "circle-counterclockwise",
+}
 # EVENT/TRIGGER: cmd+subcmd+seq(u16)+class_id+scores[7]+uptime(u32)
 SWIPE_EVENT_PACKET_LEN = 16
 SWIPE_TRIGGER_PACKET_LEN = 16

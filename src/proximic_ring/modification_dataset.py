@@ -256,7 +256,7 @@ class ModificationDatasetCollector:
             "truncated": bool(supplied.get("truncated", False)),
             "reason": str(supplied.get("reason", "") or ""),
         }
-        for key in ("target_key", "application"):
+        for key in ("target_key", "application", "read_method"):
             value = str(supplied.get(key, "") or "")
             if value:
                 normalized[key] = value
@@ -694,17 +694,26 @@ class ModificationDatasetCollector:
         final_text: str | None = None,
         method: str = "automatic",
         error: str | None = None,
+        interaction_id: str = "",
+        occurred_at: str = "",
     ) -> str:
         """Append an application/cancel/undo event to one utterance."""
         with self._lock:
-            interaction_id = self._request_interactions.get(int(request_id))
+            if interaction_id:
+                # Deferred events carry a stable id: session/request numbers
+                # may have been reused after reconnect. Never recreate data
+                # the user deleted while the event was waiting to be saved.
+                if not self._interaction_path(interaction_id).is_file():
+                    return ""
+            else:
+                interaction_id = self._request_interactions.get(int(request_id))
             if interaction_id is None:
                 interaction_id = self._session_interactions.get(int(session_id))
             if interaction_id is None and int(session_id) > 0:
                 interaction_id = self._ensure_interaction_locked(int(session_id))
             if interaction_id is None:
                 return ""
-            occurred_at = _utc_now()
+            occurred_at = occurred_at or _utc_now()
             event = {
                 "type": "application",
                 "action": str(action),
@@ -746,7 +755,7 @@ class ModificationDatasetCollector:
                         "training_target_source": "successful_application",
                     }
                 )
-            elif normalized_action in {"cancelled", "undone"}:
+            elif normalized_action in {"cancelled", "undone", "native_undo_sent"}:
                 # An undone application is no longer a reliable accepted mode
                 # label. A later successful conversion will populate it again.
                 record["mode"].update(
@@ -772,11 +781,13 @@ class ModificationDatasetCollector:
                         False
                         if normalized_action in {"cancelled", "undone", "apply_failed"}
                         else None
-                        if normalized_action == "applied"
+                        if normalized_action in {"applied", "native_undo_sent"}
                         else record["outcome"].get("accepted")
                     ),
                     "acceptance_strength": (
-                        "explicit"
+                        "unverified_undo"
+                        if normalized_action == "native_undo_sent"
+                        else "explicit"
                         if normalized_action in {"cancelled", "undone"}
                         else "pending_undo"
                         if normalized_action == "applied"
@@ -1489,7 +1500,7 @@ class ModificationDatasetCollector:
         # Undo keeps its restoration text in the raw Interaction record for
         # diagnostics, but Voice History must not present that snapshot as a
         # still-active LLM/edit result.
-        if str(outcome.get("status", "")) == "undone":
+        if str(outcome.get("status", "")) in {"undone", "native_undo_sent"}:
             return ""
         outcome_status = str(outcome.get("status", ""))
         final_value = outcome.get("final_text")
@@ -1523,7 +1534,7 @@ class ModificationDatasetCollector:
     def _display_candidate_available(record: dict) -> bool:
         outcome = record.get("outcome", {})
         outcome_status = str(outcome.get("status", ""))
-        if outcome_status == "undone":
+        if outcome_status in {"undone", "native_undo_sent"}:
             return False
         if (
             outcome_status in {"applied", "confirm"}

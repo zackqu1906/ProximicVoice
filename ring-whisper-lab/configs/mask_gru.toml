@@ -1,0 +1,29 @@
+# Architecture proposal ONLY. No model weights or training run exist yet.
+[audio]
+sample_rate = 16000
+n_fft = 512
+hop_length = 160
+center = false
+
+[model]
+name = "causal_mask_gru"
+hidden_size = 128
+gru_layers = 2
+input_features = 257
+output_mask_bins = 257
+mask_min = 0.05
+mask_max = 1.0
+
+[training]
+segment_seconds = 4.0
+reference_kind = "protected_ring_approximate_reference"
+split_group = "speaker_id"
+require_human_review = true
+require_alignment_quality = true
+include_clean_identity_pairs = true
+
+[loss]
+spectral_magnitude = 1.0
+clean_identity = 0.5
+temporal_mask_smoothness = 0.02
+waveform_loss = 0.0

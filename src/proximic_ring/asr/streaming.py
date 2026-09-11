@@ -261,6 +261,15 @@ class StreamingASRWorker:
         reason = str(snapshot.get("reason", "") or "")
         if reason:
             fields += f" reason={reason}"
+        read_method = str(snapshot.get("read_method", "") or "")
+        if read_method:
+            fields += f" method={read_method}"
+        application = str(snapshot.get("application", "") or "")
+        if application:
+            fields += f" app={application!r}"
+        target_key = str(snapshot.get("target_key", "") or "")
+        if target_key:
+            fields += f" target={target_key}"
         self._report_timing(fields)
         if self.on_context is not None:
             try:

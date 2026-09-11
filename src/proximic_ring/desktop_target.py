@@ -82,6 +82,7 @@ class DesktopTextTarget(Protocol):
     def inject(self, target: DesktopTargetRef, text: str) -> None: ...
     def replace(self, snapshot: DesktopTextSnapshot, text: str) -> None: ...
     def undo(self, target: DesktopTargetRef) -> None: ...
+    def send_native_undo(self, target: DesktopTargetRef) -> None: ...
     def release_selection(self, target: DesktopTargetRef) -> None: ...
     def is_foreground(self, target: DesktopTargetRef) -> bool: ...
     def is_application_foreground(self, target: DesktopTargetRef) -> bool: ...
@@ -109,6 +110,16 @@ class _MacOSAccessibilityTextBridge:
     """
 
     _UTF8 = 0x08000100
+    _EDITABLE_TEXT_ROLES = frozenset(
+        {"AXTextArea", "AXTextField", "AXSearchField", "AXComboBox"}
+    )
+    _MAX_TEXT_PARENT_DEPTH = 7
+    _AX_ERROR_NAMES = {
+        -25204: "cannot_complete",
+        -25205: "attribute_unsupported",
+        -25208: "not_implemented",
+        -25211: "api_disabled",
+    }
 
     def __init__(self) -> None:
         application_services = ctypes.CDLL(
@@ -120,12 +131,40 @@ class _MacOSAccessibilityTextBridge:
         )
         application_services.AXUIElementCreateApplication.argtypes = (ctypes.c_int,)
         application_services.AXUIElementCreateApplication.restype = ctypes.c_void_p
+        application_services.AXUIElementCreateSystemWide.argtypes = ()
+        application_services.AXUIElementCreateSystemWide.restype = ctypes.c_void_p
+        application_services.AXUIElementGetPid.argtypes = (
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_int),
+        )
+        application_services.AXUIElementGetPid.restype = ctypes.c_int
+        application_services.AXUIElementCopyElementAtPosition.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_float,
+            ctypes.c_float,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        application_services.AXUIElementCopyElementAtPosition.restype = ctypes.c_int
         application_services.AXUIElementCopyAttributeValue.argtypes = (
             ctypes.c_void_p,
             ctypes.c_void_p,
             ctypes.POINTER(ctypes.c_void_p),
         )
         application_services.AXUIElementCopyAttributeValue.restype = ctypes.c_int
+        application_services.AXUIElementGetAttributeValueCount.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_long),
+        )
+        application_services.AXUIElementGetAttributeValueCount.restype = ctypes.c_int
+        application_services.AXUIElementCopyAttributeValues.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_void_p,
+            ctypes.c_long,
+            ctypes.c_long,
+            ctypes.POINTER(ctypes.c_void_p),
+        )
+        application_services.AXUIElementCopyAttributeValues.restype = ctypes.c_int
         application_services.AXUIElementIsAttributeSettable.argtypes = (
             ctypes.c_void_p,
             ctypes.c_void_p,
@@ -182,11 +221,111 @@ class _MacOSAccessibilityTextBridge:
         core_foundation.CFGetTypeID.restype = ctypes.c_ulong
         core_foundation.CFStringGetTypeID.argtypes = ()
         core_foundation.CFStringGetTypeID.restype = ctypes.c_ulong
+        core_foundation.CFAttributedStringGetTypeID.argtypes = ()
+        core_foundation.CFAttributedStringGetTypeID.restype = ctypes.c_ulong
+        core_foundation.CFAttributedStringGetString.argtypes = (ctypes.c_void_p,)
+        core_foundation.CFAttributedStringGetString.restype = ctypes.c_void_p
+        core_foundation.CFNumberGetTypeID.argtypes = ()
+        core_foundation.CFNumberGetTypeID.restype = ctypes.c_ulong
+        core_foundation.CFNumberGetValue.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_int,
+            ctypes.c_void_p,
+        )
+        core_foundation.CFNumberGetValue.restype = ctypes.c_bool
+        core_foundation.CFBooleanGetTypeID.argtypes = ()
+        core_foundation.CFBooleanGetTypeID.restype = ctypes.c_ulong
+        core_foundation.CFBooleanGetValue.argtypes = (ctypes.c_void_p,)
+        core_foundation.CFBooleanGetValue.restype = ctypes.c_bool
+        core_foundation.CFArrayGetCount.argtypes = (ctypes.c_void_p,)
+        core_foundation.CFArrayGetCount.restype = ctypes.c_long
+        core_foundation.CFArrayGetValueAtIndex.argtypes = (
+            ctypes.c_void_p,
+            ctypes.c_long,
+        )
+        core_foundation.CFArrayGetValueAtIndex.restype = ctypes.c_void_p
         core_foundation.CFHash.argtypes = (ctypes.c_void_p,)
         core_foundation.CFHash.restype = ctypes.c_ulong
         core_foundation.CFRelease.argtypes = (ctypes.c_void_p,)
         self._application_services = application_services
         self._core_foundation = core_foundation
+        try:
+            self._cf_boolean_true = int(
+                ctypes.c_void_p.in_dll(
+                    core_foundation, "kCFBooleanTrue"
+                ).value
+                or 0
+            )
+            self._cf_boolean_false = int(
+                ctypes.c_void_p.in_dll(
+                    core_foundation, "kCFBooleanFalse"
+                ).value
+                or 0
+            )
+        except (TypeError, ValueError):
+            self._cf_boolean_true = 0
+            self._cf_boolean_false = 0
+        self._last_context_read_method = ""
+        self._last_context_source_char_count: int | None = None
+
+    def manual_accessibility_state(self, process_id: int) -> bool | None:
+        """Read an app's opt-in AX tree state when it exposes the switch."""
+
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        value = None
+        try:
+            if not application:
+                return None
+            value = self._copy_attribute_value(
+                int(application), "AXManualAccessibility"
+            )
+            if not value:
+                return None
+            cf = self._core_foundation
+            if cf.CFGetTypeID(value) != cf.CFBooleanGetTypeID():
+                return None
+            return bool(cf.CFBooleanGetValue(value))
+        finally:
+            self._release(value, application)
+
+    def set_manual_accessibility(
+        self, process_id: int, *, enabled: bool
+    ) -> str:
+        """Temporarily request a lazily generated app accessibility tree.
+
+        Chromium/Electron documents this attribute for third-party assistive
+        software. Other applications reject it harmlessly with an AX error.
+        The caller restores the previous value after its observation attempt.
+        """
+
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        attribute = None
+        try:
+            value = (
+                self._cf_boolean_true if enabled else self._cf_boolean_false
+            )
+            if not application:
+                return "application_unavailable"
+            if not value:
+                return "cf_boolean_unavailable"
+            attribute = self._cf_string("AXManualAccessibility")
+            error = int(
+                self._application_services.AXUIElementSetAttributeValue(
+                    application, attribute, value
+                )
+            )
+            if error:
+                name = self._AX_ERROR_NAMES.get(error, "ax_error")
+                return f"{name}:{error}"
+            return "enabled" if enabled else "disabled"
+        except BaseException as exc:
+            return f"exception:{type(exc).__name__}"
+        finally:
+            self._release(attribute, application)
 
     def focused_control_id(self, process_id: int) -> str:
         """Return a stable in-process identity for the focused AX element."""
@@ -224,6 +363,473 @@ class _MacOSAccessibilityTextBridge:
             return buffer.value.decode("utf-8")
         finally:
             self._release(value, focused, application)
+
+    def read_focused_context(
+        self,
+        process_id: int,
+        *,
+        max_chars: int,
+        anchor: tuple[int, int] | None = None,
+    ) -> str | None:
+        """Read live focused text without selection, key, or clipboard changes.
+
+        Context may use a standard accessibility character range when a custom
+        editor does not expose AXValue. Unlike ``read_focused_value``, a tail or
+        visible range is valid here because ASR context is intentionally
+        bounded and is never used to replace or verify the field.
+        """
+
+        return self._read_focused_context(
+            int(process_id),
+            max_chars=max(1, int(max_chars)),
+            anchor=anchor,
+        )
+
+    @property
+    def last_context_read_method(self) -> str:
+        return self._last_context_read_method
+
+    @property
+    def last_context_source_char_count(self) -> int | None:
+        return self._last_context_source_char_count
+
+    def _read_focused_context(
+        self,
+        process_id: int,
+        *,
+        max_chars: int,
+        anchor: tuple[int, int] | None,
+    ) -> str | None:
+        candidates = self._copy_focused_elements(process_id)
+        self._last_context_read_method = ""
+        self._last_context_source_char_count = None
+        try:
+            for _owner, focused, focus_source in candidates:
+                text = self._read_context_from_ancestry(
+                    focused,
+                    source=focus_source,
+                    max_chars=max_chars,
+                )
+                if text is not None:
+                    return text
+                text = self._read_context_from_focused_descendant(
+                    focused,
+                    source=focus_source,
+                    max_chars=max_chars,
+                )
+                if text is not None:
+                    return text
+        finally:
+            for owner, focused, _source in candidates:
+                self._release(focused, owner)
+
+        focused_window = self._copy_application_element(
+            process_id, "AXFocusedWindow"
+        )
+        if focused_window is not None:
+            owner, element = focused_window
+            try:
+                text = self._read_context_from_focused_descendant(
+                    element,
+                    source="window",
+                    max_chars=max_chars,
+                )
+                if text is not None:
+                    return text
+            finally:
+                self._release(element, owner)
+
+        if anchor is not None and anchor[0] > 0 and anchor[1] > 0:
+            point_element = self._copy_element_at_position(
+                process_id, anchor
+            )
+            if point_element is not None:
+                owner, element = point_element
+                try:
+                    text = self._read_context_from_ancestry(
+                        element,
+                        source="point",
+                        max_chars=max_chars,
+                        require_ax_focused=True,
+                    )
+                    if text is not None:
+                        return text
+                    text = self._read_context_from_focused_descendant(
+                        element,
+                        source="point",
+                        max_chars=max_chars,
+                    )
+                    if text is not None:
+                        return text
+                finally:
+                    self._release(element, owner)
+        return None
+
+    def _read_context_from_ancestry(
+        self,
+        focused: int,
+        *,
+        source: str,
+        max_chars: int,
+        require_ax_focused: bool = False,
+    ) -> str | None:
+        owned_parents: list[int] = []
+        seen = {int(focused)}
+        element = int(focused)
+        try:
+            for depth in range(self._MAX_TEXT_PARENT_DEPTH):
+                editable = self._is_editable_text_element(element)
+                is_current = not require_ax_focused or self._is_ax_focused(
+                    element
+                )
+                if editable and is_current:
+                    location = "focused" if depth == 0 else f"parent{depth}"
+                    text = self._read_context_from_element(
+                        element,
+                        method_prefix=f"{source}.{location}",
+                        max_chars=max_chars,
+                    )
+                    if text is not None:
+                        return text
+                parent = self._copy_attribute_value(element, "AXParent")
+                if not parent:
+                    break
+                if parent in seen:
+                    self._release(parent)
+                    break
+                seen.add(parent)
+                owned_parents.append(parent)
+                element = parent
+            return None
+        finally:
+            self._release(*reversed(owned_parents))
+
+    def _read_context_from_element(
+        self, element: int, *, method_prefix: str, max_chars: int
+    ) -> str | None:
+        text = self._copy_text_attribute(element, "AXValue")
+        if text is not None:
+            self._last_context_source_char_count = len(text)
+            self._last_context_read_method = f"{method_prefix}.AXValue"
+            return text[-max_chars:]
+        text, method, source_char_count = self._read_parameterized_context(
+            element, max_chars=max_chars
+        )
+        if text is None:
+            return None
+        self._last_context_source_char_count = (
+            source_char_count
+            if source_char_count is not None
+            else len(text)
+        )
+        self._last_context_read_method = f"{method_prefix}.{method}"
+        return text[-max_chars:]
+
+    def _read_context_from_focused_descendant(
+        self,
+        root: int,
+        *,
+        source: str,
+        max_chars: int,
+    ) -> str | None:
+        queue: list[tuple[int, int]] = [(int(root), 0)]
+        seen = {int(root)}
+        owned_arrays: list[int] = []
+        examined = 0
+        try:
+            while queue and examined < 96:
+                element, depth = queue.pop(0)
+                examined += 1
+                if depth > 0 and self._is_ax_focused(element):
+                    text = self._read_context_from_ancestry(
+                        element,
+                        source=f"{source}.descendant{depth}",
+                        max_chars=max_chars,
+                    )
+                    if text is not None:
+                        return text
+                if depth >= 6:
+                    continue
+                children, owned_array = self._copy_recent_children(element)
+                if owned_array:
+                    owned_arrays.append(owned_array)
+                for child in children:
+                    if child in seen:
+                        continue
+                    seen.add(child)
+                    queue.append((child, depth + 1))
+            return None
+        finally:
+            self._release(*reversed(owned_arrays))
+
+    def _copy_focused_elements(
+        self, process_id: int
+    ) -> list[tuple[int, int, str]]:
+        """Return app and system-wide focused elements owned by this caller."""
+
+        services = self._application_services
+        candidates: list[tuple[int, int, str]] = []
+        application = services.AXUIElementCreateApplication(int(process_id))
+        if application:
+            focused = self._copy_attribute_value(
+                int(application), "AXFocusedUIElement"
+            )
+            if focused:
+                candidates.append((int(application), focused, "application"))
+            else:
+                self._release(application)
+
+        system_wide = services.AXUIElementCreateSystemWide()
+        if system_wide:
+            focused = self._copy_attribute_value(
+                int(system_wide), "AXFocusedUIElement"
+            )
+            focused_pid = ctypes.c_int(0)
+            get_pid = getattr(services, "AXUIElementGetPid", None)
+            valid_process = bool(
+                focused
+                and callable(get_pid)
+                and not get_pid(focused, ctypes.byref(focused_pid))
+                and focused_pid.value == int(process_id)
+            )
+            duplicate = any(
+                candidate_focused == focused
+                for _owner, candidate_focused, _source in candidates
+            )
+            if valid_process and not duplicate:
+                candidates.append((int(system_wide), focused, "system"))
+            else:
+                self._release(focused, system_wide)
+        return candidates
+
+    def _copy_application_element(
+        self, process_id: int, attribute_name: str
+    ) -> tuple[int, int] | None:
+        application = self._application_services.AXUIElementCreateApplication(
+            int(process_id)
+        )
+        if not application:
+            return None
+        element = self._copy_attribute_value(
+            int(application), attribute_name
+        )
+        if not element:
+            self._release(application)
+            return None
+        return int(application), element
+
+    def _copy_element_at_position(
+        self, process_id: int, anchor: tuple[int, int]
+    ) -> tuple[int, int] | None:
+        services = self._application_services
+        system_wide = services.AXUIElementCreateSystemWide()
+        if not system_wide:
+            return None
+        element = ctypes.c_void_p()
+        error = services.AXUIElementCopyElementAtPosition(
+            system_wide,
+            ctypes.c_float(float(anchor[0])),
+            ctypes.c_float(float(anchor[1])),
+            ctypes.byref(element),
+        )
+        actual_pid = ctypes.c_int(0)
+        valid = bool(
+            not error
+            and element.value
+            and not services.AXUIElementGetPid(
+                element.value, ctypes.byref(actual_pid)
+            )
+            and actual_pid.value == int(process_id)
+        )
+        if not valid:
+            self._release(element.value, system_wide)
+            return None
+        return int(system_wide), int(element.value)
+
+    def _copy_recent_children(
+        self, element: int, *, limit: int = 64
+    ) -> tuple[list[int], int | None]:
+        services = self._application_services
+        attribute = self._cf_string("AXChildren")
+        count = ctypes.c_long(0)
+        values = ctypes.c_void_p()
+        try:
+            error = services.AXUIElementGetAttributeValueCount(
+                element, attribute, ctypes.byref(count)
+            )
+            if error or count.value <= 0:
+                return [], None
+            request_count = min(max(1, int(limit)), int(count.value))
+            start_index = max(0, int(count.value) - request_count)
+            error = services.AXUIElementCopyAttributeValues(
+                element,
+                attribute,
+                start_index,
+                request_count,
+                ctypes.byref(values),
+            )
+            if error or not values.value:
+                self._release(values.value)
+                return [], None
+            cf = self._core_foundation
+            array_count = min(
+                request_count, int(cf.CFArrayGetCount(values.value))
+            )
+            children = [
+                int(cf.CFArrayGetValueAtIndex(values.value, index) or 0)
+                for index in range(array_count)
+            ]
+            return [child for child in children if child], int(values.value)
+        finally:
+            self._release(attribute)
+
+    def _is_ax_focused(self, element: int) -> bool:
+        value = self._copy_attribute_value(element, "AXFocused")
+        try:
+            if not value:
+                return False
+            cf = self._core_foundation
+            if cf.CFGetTypeID(value) != cf.CFBooleanGetTypeID():
+                return False
+            return bool(cf.CFBooleanGetValue(value))
+        finally:
+            self._release(value)
+
+    def _copy_attribute_value(self, element: int, name: str) -> int | None:
+        attribute = self._cf_string(name)
+        value = ctypes.c_void_p()
+        try:
+            error = self._application_services.AXUIElementCopyAttributeValue(
+                element, attribute, ctypes.byref(value)
+            )
+            if error or not value.value:
+                self._release(value.value)
+                return None
+            return int(value.value)
+        finally:
+            self._release(attribute)
+
+    def _copy_text_attribute(self, element: int, name: str) -> str | None:
+        value = self._copy_attribute_value(element, name)
+        try:
+            return self._cf_text(value)
+        finally:
+            self._release(value)
+
+    def _is_editable_text_element(self, element: int) -> bool:
+        role = self._copy_text_attribute(element, "AXRole")
+        if role in self._EDITABLE_TEXT_ROLES:
+            return True
+        # Content-editable WebKit/Chromium wrappers are sometimes AXGroup or
+        # AXWebArea. A settable text selection is a stronger and safer signal
+        # of an editor than accepting arbitrary string-valued AX elements.
+        attribute = self._cf_string("AXSelectedTextRange")
+        settable = ctypes.c_bool(False)
+        try:
+            error = self._application_services.AXUIElementIsAttributeSettable(
+                element, attribute, ctypes.byref(settable)
+            )
+            return not error and bool(settable.value)
+        finally:
+            self._release(attribute)
+
+    def _read_parameterized_context(
+        self, element: int, *, max_chars: int
+    ) -> tuple[str | None, str, int | None]:
+        character_count_value = self._copy_attribute_value(
+            element, "AXNumberOfCharacters"
+        )
+        try:
+            character_count = self._cf_number(character_count_value)
+        finally:
+            self._release(character_count_value)
+        if character_count is not None:
+            length = min(max_chars, max(0, character_count))
+            location = max(0, character_count - length)
+            text_range = _CFRange(location, length)
+            range_value = self._application_services.AXValueCreate(
+                4, ctypes.byref(text_range)
+            )
+            try:
+                text, method = self._copy_parameterized_text(
+                    element, range_value
+                )
+                if text is not None:
+                    return text, method, character_count
+            finally:
+                self._release(range_value)
+
+        visible_range = self._copy_attribute_value(
+            element, "AXVisibleCharacterRange"
+        )
+        try:
+            if visible_range:
+                text, method = self._copy_parameterized_text(
+                    element, visible_range
+                )
+                return text, method, None
+        finally:
+            self._release(visible_range)
+        return None, "", None
+
+    def _copy_parameterized_text(
+        self, element: int, range_value: int | None
+    ) -> tuple[str | None, str]:
+        if not range_value:
+            return None, ""
+        for name in ("AXStringForRange", "AXAttributedStringForRange"):
+            attribute = self._cf_string(name)
+            value = ctypes.c_void_p()
+            try:
+                copy_parameterized = getattr(
+                    self._application_services,
+                    "AXUIElementCopyParameterizedAttributeValue",
+                )
+                error = copy_parameterized(
+                    element, attribute, range_value, ctypes.byref(value)
+                )
+                if not error and value.value:
+                    text = self._cf_text(value.value)
+                    if text is not None:
+                        return text, name
+            finally:
+                self._release(value.value, attribute)
+        return None, ""
+
+    def _cf_number(self, value: int | None) -> int | None:
+        if not value:
+            return None
+        cf = self._core_foundation
+        if cf.CFGetTypeID(value) != cf.CFNumberGetTypeID():
+            return None
+        result = ctypes.c_long(0)
+        # kCFNumberCFIndexType is the native CFIndex-sized integer type.
+        if not cf.CFNumberGetValue(value, 14, ctypes.byref(result)):
+            return None
+        return max(0, int(result.value))
+
+    def _cf_text(self, value: int | None) -> str | None:
+        if not value:
+            return None
+        cf = self._core_foundation
+        type_id = cf.CFGetTypeID(value)
+        string_value = int(value)
+        if type_id == cf.CFAttributedStringGetTypeID():
+            string_value = int(cf.CFAttributedStringGetString(value) or 0)
+            if not string_value:
+                return None
+        elif type_id != cf.CFStringGetTypeID():
+            return None
+        length = int(cf.CFStringGetLength(string_value))
+        size = int(
+            cf.CFStringGetMaximumSizeForEncoding(length, self._UTF8)
+        ) + 1
+        buffer = ctypes.create_string_buffer(max(1, size))
+        if not cf.CFStringGetCString(
+            string_value, buffer, len(buffer), self._UTF8
+        ):
+            return None
+        return buffer.value.decode("utf-8")
 
     def set_focused_value(self, process_id: int, text: str) -> bool:
         application, focused, current_value = self._focused_value(int(process_id))
@@ -587,6 +1193,7 @@ class MacOSDesktopTextTarget:
     KEY_Z = 6
     KEY_DELETE = 51
     KEY_RIGHT = 124
+    _MANUAL_AX_APPLICATIONS = frozenset({"wechat", "weixin", "微信"})
 
     @staticmethod
     def _same_text_field_geometry(
@@ -634,6 +1241,14 @@ class MacOSDesktopTextTarget:
             if accessibility_text is not None
             else _MacOSAccessibilityTextBridge()
         )
+        self._last_context_accessibility_probe = ""
+
+    @classmethod
+    def _allows_manual_accessibility_probe(cls, target: DesktopTargetRef) -> bool:
+        application = str(
+            target.process_name or target.window_title or ""
+        ).strip().lower()
+        return application in cls._MANUAL_AX_APPLICATIONS
 
     @staticmethod
     def _frontmost_application() -> tuple[int, str]:
@@ -737,10 +1352,9 @@ class MacOSDesktopTextTarget:
         if target.screen_width <= 0 or target.screen_height <= 0:
             # Some macOS web editors expose neither AX bounds nor a persistent
             # focused-element identity. The owning application is still
-            # reliable, and the undo path separately compares the focused
-            # field's current contents with the saved applied state before it
-            # changes anything. Keeping the action usable here is therefore
-            # safer than making every successful input lose its undo control.
+            # reliable. Native user undo follows that application's current
+            # focus/history; without AX metadata we cannot identify the field
+            # more precisely, and must not select/copy text to do so.
             return True
         focused_bounds = getattr(self._accessibility_text, "focused_bounds", None)
         if not callable(focused_bounds):
@@ -923,6 +1537,126 @@ class MacOSDesktopTextTarget:
             raise RuntimeError("当前文本框不支持无干扰读取")
         return DesktopTextSnapshot(target=target, text=str(value))
 
+    def observe_context_text(
+        self, target: DesktopTargetRef, *, max_chars: int
+    ) -> DesktopTextSnapshot:
+        """Read bounded live ASR context without changing the target in any way."""
+
+        process_id, _name = self._frontmost_application()
+        if not process_id or process_id != int(target.process_id):
+            raise RuntimeError("目标应用当前不在前台")
+        reader = getattr(self._accessibility_text, "read_focused_context", None)
+        if not callable(reader):
+            raise RuntimeError("当前文本框不支持无干扰上下文读取")
+        self._last_context_accessibility_probe = ""
+        anchor = (
+            (int(target.caret_x), int(target.caret_y))
+            if target.caret_x > 0 and target.caret_y > 0
+            else None
+        )
+        try:
+            value = reader(
+                target.process_id,
+                max_chars=max_chars,
+                anchor=anchor,
+            )
+        except BaseException as exc:
+            raise RuntimeError(
+                "无干扰上下文读取异常：" + type(exc).__name__
+            ) from exc
+        if value is None and self._allows_manual_accessibility_probe(target):
+            state_reader = getattr(
+                self._accessibility_text,
+                "manual_accessibility_state",
+                None,
+            )
+            state_setter = getattr(
+                self._accessibility_text,
+                "set_manual_accessibility",
+                None,
+            )
+            if callable(state_setter):
+                previous_state = None
+                if callable(state_reader):
+                    try:
+                        previous_state = state_reader(target.process_id)
+                    except BaseException:
+                        previous_state = None
+                try:
+                    probe_result = str(
+                        state_setter(target.process_id, enabled=True) or ""
+                    )
+                except BaseException as exc:
+                    probe_result = f"exception:{type(exc).__name__}"
+                self._last_context_accessibility_probe = probe_result
+                if probe_result == "enabled":
+                    try:
+                        # Give a lazy web/custom accessibility tree a short,
+                        # bounded opportunity to materialize. No input event is
+                        # emitted during these retries.
+                        for delay in (0.02, 0.05, 0.10):
+                            time.sleep(delay)
+                            value = reader(
+                                target.process_id,
+                                max_chars=max_chars,
+                                anchor=anchor,
+                            )
+                            if value is not None:
+                                self._last_context_accessibility_probe = (
+                                    "enabled_readable"
+                                )
+                                break
+                    finally:
+                        if previous_state is not True:
+                            try:
+                                restore_result = str(
+                                    state_setter(
+                                        target.process_id,
+                                        enabled=False,
+                                    )
+                                    or ""
+                                )
+                            except BaseException as exc:
+                                restore_result = (
+                                    f"exception:{type(exc).__name__}"
+                                )
+                            self._last_context_accessibility_probe += (
+                                f";restore:{restore_result}"
+                            )
+        if value is None:
+            probe_suffix = (
+                "；AXManualAccessibility="
+                + self._last_context_accessibility_probe
+                if self._last_context_accessibility_probe
+                else ""
+            )
+            raise RuntimeError(
+                "应用级/系统级焦点、窗口焦点子树、坐标元素、"
+                "可编辑父级、AXValue 和文本范围均不可读"
+                + probe_suffix
+            )
+        return DesktopTextSnapshot(target=target, text=str(value))
+
+    @property
+    def last_context_accessibility_probe(self) -> str:
+        return self._last_context_accessibility_probe
+
+    @property
+    def last_context_read_method(self) -> str:
+        return str(
+            getattr(self._accessibility_text, "last_context_read_method", "")
+            or ""
+        )
+
+    @property
+    def last_context_source_char_count(self) -> int | None:
+        value = getattr(
+            self._accessibility_text,
+            "last_context_source_char_count",
+            None,
+        )
+        return int(value) if isinstance(value, int) and value >= 0 else None
+
     def observe_focused_text(self, target: DesktopTargetRef) -> DesktopTextSnapshot:
         """Read the current field when a stale AX identity is being revalidated.
 
@@ -1027,10 +1761,14 @@ class MacOSDesktopTextTarget:
         time.sleep(max(self._shortcut_settle_s, 0.12))
 
     def undo(self, target: DesktopTargetRef) -> None:
-        """Undo the most recent edit in the locked external text control."""
+        """Internal rollback: activate, undo, then settle before readback."""
         self._activate(target)
-        self._injector.command_key(self.KEY_Z)
+        self.send_native_undo(target)
         time.sleep(max(self._shortcut_settle_s, 0.06))
+
+    def send_native_undo(self, target: DesktopTargetRef) -> None:
+        """Post one Cmd+Z after the caller checks focus; no activation/readback."""
+        self._injector.command_key(self.KEY_Z)
 
     def release_selection(self, target: DesktopTargetRef) -> None:
         try:
@@ -1355,10 +2093,14 @@ class WindowsDesktopTextTarget:
             self._press_key(self.VK_BACK)
 
     def undo(self, target: DesktopTargetRef) -> None:
-        """Undo the most recent edit in the locked external text control."""
+        """Internal rollback: activate, undo, then settle before readback."""
         self._activate(target)
-        self._hotkey(self.VK_CONTROL, 0x5A)  # Z
+        self.send_native_undo(target)
         time.sleep(getattr(self, "_shortcut_settle_s", 0.03))
+
+    def send_native_undo(self, target: DesktopTargetRef) -> None:
+        """Post one Ctrl+Z after the caller checks focus; no activation/readback."""
+        self._hotkey(self.VK_CONTROL, 0x5A)  # Z
 
     def release_selection(self, target: DesktopTargetRef) -> None:
         try:

@@ -37,7 +37,7 @@ from proximic_ring.model import ProxiMicModel  # noqa: E402
 from proximic_ring.pipeline import LegacyInferencePipeline  # noqa: E402
 
 
-DEFAULT_MODEL_PATH = SRC_ROOT / "proximic_ring" / "assets" / "ringo-near-v1.model"
+DEFAULT_MODEL_PATH = SRC_ROOT / "proximic_ring" / "assets" / "ringo-near-v2.model"
 DEFAULT_STAGE1_THRESHOLD = 0.005
 DEFAULT_STAGE2_DELAY_S = 0.50
 DEFAULT_STAGE2_THRESHOLD = 1.0

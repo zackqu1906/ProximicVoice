@@ -41,6 +41,7 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 proximic_ring = ["assets/*.model", "assets/*.json", "assets/*.npy", "ui/qml/*.qml", "ui/assets/*.svg"]
+ring_python_sdk = ["gestures/assets/*.pt", "gestures/assets/*.json", "gestures/NOTICE.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ring-whisper-lab"
+version = "0.1.0"
+description = "Dual Ringo whisper capture, alignment, listening and paired training datasets"
+requires-python = ">=3.11"
+dependencies = ["numpy>=1.26,<3", "scipy>=1.11", "PySide6>=6.8,<7", "bleak>=3.0.1", "cryptography>=45", "opuslib>=3.0.1"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+train = ["torch>=2.2"]
+
+[project.scripts]
+ring-whisper-lab = "ring_whisper_lab.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+

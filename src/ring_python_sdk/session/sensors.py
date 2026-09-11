@@ -75,6 +75,7 @@ from ring_python_sdk.ppg.processor import PpgProcessor, PpgSample
 from ring_python_sdk.raise_to_wake.processor import RaiseToWakeProcessor
 from ring_python_sdk.session.types import MIC_ENCODE, PPG_MODE
 from ring_python_sdk.swipe.processor import SwipeProcessor
+from ring_python_sdk.swipe.events import SwipeResult
 
 
 class SensorsMixin:
@@ -387,20 +388,43 @@ class SensorsMixin:
         return out
 
     # --- swipe / button ---
-    async def swipe_on(self) -> None:
+    async def swipe_on(
+        self,
+        *,
+        on_event: Callable[[SwipeResult], None] | None = None,
+        on_trigger: Callable[[SwipeResult], None] | None = None,
+        print_events: bool = False,
+        print_triggers: bool = True,
+        print_profile: bool = True,
+    ) -> None:
+        """Receive firmware classifications and triggers (legacy and V2).
+
+        No host IMU model is run. Callbacks execute synchronously on the BLE
+        notification path; enqueue expensive work. An already-active capture
+        keeps its callbacks until swipe_off() is called. Logging flags only
+        control SDK log lines, never callback delivery or CSV recording.
+        """
         assert self.client is not None
         if self.swipe_active:
             print("swipe already on")
             return
         path = self._seg_path("swipe", DEFAULT_SWIPE_OUTPUT)
-        # Temporarily hide every-inference EVENT (swipe infer); TRIGGER still logs.
-        # Use `print swipe on` to show EVENT logits again.
-        self.print_flags.swipe = False
+        self.print_flags.swipe = bool(print_events)
         self.swipe = SwipeProcessor(
-            path, print_events=False, log=self.emit_live
+            path, print_events=print_events, log=self.emit_live,
+            on_event=on_event, on_trigger=on_trigger,
+            print_triggers=print_triggers, print_profile=print_profile,
         )
-        await send_swipe_start(self.client, self.rx_uuid)
+        # Firmware can notify before the START write completes.
         self.swipe_active = True
+        try:
+            await send_swipe_start(self.client, self.rx_uuid)
+        except BaseException:
+            if self.swipe is not None:
+                self.swipe.close()
+                self.swipe = None
+            self.swipe_active = False
+            raise
         print(f"swipe capturing -> {path}")
 
     async def swipe_off(self) -> None:
@@ -408,13 +432,15 @@ class SensorsMixin:
         if not self.swipe_active:
             print("swipe already off")
             return
-        await send_swipe_stop(self.client, self.rx_uuid)
-        if self.swipe is not None:
-            self.swipe.close()
-            self.saved_paths.append(self.swipe.csv_path)
-            print(f"swipe saved: {self.swipe.csv_path}")
-            self.swipe = None
-        self.swipe_active = False
+        try:
+            await send_swipe_stop(self.client, self.rx_uuid)
+        finally:
+            if self.swipe is not None:
+                self.swipe.close()
+                self.saved_paths.append(self.swipe.csv_path)
+                print(f"swipe saved: {self.swipe.csv_path}")
+                self.swipe = None
+            self.swipe_active = False
 
     async def _ensure_button_capture(self) -> None:
         """Button is always-on in firmware; start host capture whenever linked."""

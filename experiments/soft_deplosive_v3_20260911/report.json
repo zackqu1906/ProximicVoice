@@ -1,0 +1,339 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-11T17:36:40+08:00",
+  "algorithm": "complementary_fir_soft_low_band_deplosive_v3",
+  "asr_backend": "doubao",
+  "config": {
+    "analysis_fft_size": 256,
+    "analysis_hop_size": 64,
+    "baseline_radius_frames": 32,
+    "minimum_frame_dbfs": -40.0,
+    "minimum_low_excess_db": 4.5,
+    "minimum_low_to_mid_db": -1.0,
+    "minimum_peak": 0.28,
+    "crossover_hz": 210.0,
+    "fir_taps": 513,
+    "minimum_attenuation_db": 5.0,
+    "maximum_attenuation_db": 9.0,
+    "lookahead_ms": 12.0,
+    "hold_ms": 16.0,
+    "release_ms": 90.0
+  },
+  "sessions": [
+    {
+      "index": 3,
+      "interaction_id": "interaction_2026-09-11_16-52-48-628",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-48-628/audio.wav",
+      "output_directory": "03_interaction_2026-09-11_16-52-48-628",
+      "prior_text": "",
+      "processing": {
+        "detected_events": 7,
+        "trigger_frames": 66,
+        "processed_duration_ms": 1458.5625,
+        "processed_audio_pct": 39.634850543478265,
+        "maximum_attenuation_db": 9.0,
+        "mean_active_attenuation_db": 6.511610625871291,
+        "sub_50hz_change_db": -6.048240894048469,
+        "low_20_300hz_change_db": -3.181106920669837,
+        "speech_300_3000hz_change_db": -0.0013736756497539915,
+        "high_3000_7500hz_change_db": -0.0027890054381429774,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.015285326086956524,
+        "clipped_after_pct": 0.005095108695652174
+      },
+      "events": [
+        {
+          "start_seconds": 0.878,
+          "end_seconds": 1.024,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.042,
+          "end_seconds": 1.243,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.254,
+          "end_seconds": 1.487,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.542,
+          "end_seconds": 1.935,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.95,
+          "end_seconds": 2.152,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 2.158,
+          "end_seconds": 2.328,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 2.406,
+          "end_seconds": 2.517,
+          "maximum_attenuation_db": 9.0
+        }
+      ],
+      "asr": {
+        "backend": "doubao",
+        "raw_text": "",
+        "processed_text": "",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged"
+      }
+    },
+    {
+      "index": 4,
+      "interaction_id": "interaction_2026-09-11_16-52-43-145",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-43-145/audio.wav",
+      "output_directory": "04_interaction_2026-09-11_16-52-43-145",
+      "prior_text": "",
+      "processing": {
+        "detected_events": 6,
+        "trigger_frames": 37,
+        "processed_duration_ms": 1066.1875,
+        "processed_audio_pct": 41.00721153846154,
+        "maximum_attenuation_db": 9.0,
+        "mean_active_attenuation_db": 6.528327405920318,
+        "sub_50hz_change_db": -3.6440075777600462,
+        "low_20_300hz_change_db": -3.211010989020508,
+        "speech_300_3000hz_change_db": -0.0018921440826140667,
+        "high_3000_7500hz_change_db": -0.002189655994960127,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.00026507636037961915,
+        "clipped_before_pct": 0.01201923076923077,
+        "clipped_after_pct": 0.01201923076923077
+      },
+      "events": [
+        {
+          "start_seconds": 0.001,
+          "end_seconds": 0.196,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 0.214,
+          "end_seconds": 0.32,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 0.41,
+          "end_seconds": 0.594,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 0.642,
+          "end_seconds": 0.788,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 0.802,
+          "end_seconds": 1.02,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.022,
+          "end_seconds": 1.238,
+          "maximum_attenuation_db": 8.68
+        }
+      ],
+      "asr": {
+        "backend": "doubao",
+        "raw_text": "",
+        "processed_text": "",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged"
+      }
+    },
+    {
+      "index": 5,
+      "interaction_id": "interaction_2026-09-11_16-52-39-164",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-39-164/audio.wav",
+      "output_directory": "05_interaction_2026-09-11_16-52-39-164",
+      "prior_text": "",
+      "processing": {
+        "detected_events": 8,
+        "trigger_frames": 106,
+        "processed_duration_ms": 1699.0625,
+        "processed_audio_pct": 37.26014254385965,
+        "maximum_attenuation_db": 9.0,
+        "mean_active_attenuation_db": 6.546625207991715,
+        "sub_50hz_change_db": -5.660379220503824,
+        "low_20_300hz_change_db": -3.90908131571765,
+        "speech_300_3000hz_change_db": -0.0008655494385703122,
+        "high_3000_7500hz_change_db": -0.01774265384085183,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.00026507636037961915,
+        "clipped_before_pct": 0.015076754385964912,
+        "clipped_after_pct": 0.009594298245614035
+      },
+      "events": [
+        {
+          "start_seconds": 1.134,
+          "end_seconds": 1.516,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.518,
+          "end_seconds": 1.852,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 2.086,
+          "end_seconds": 2.299,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 2.314,
+          "end_seconds": 2.442,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 2.462,
+          "end_seconds": 2.64,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 2.662,
+          "end_seconds": 2.893,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 2.99,
+          "end_seconds": 3.119,
+          "maximum_attenuation_db": 6.99
+        },
+        {
+          "start_seconds": 3.138,
+          "end_seconds": 3.242,
+          "maximum_attenuation_db": 6.92
+        }
+      ],
+      "asr": {
+        "backend": "doubao",
+        "raw_text": "",
+        "processed_text": "",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged"
+      }
+    },
+    {
+      "index": 6,
+      "interaction_id": "interaction_2026-09-11_16-52-33-601",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-33-601/audio.wav",
+      "output_directory": "06_interaction_2026-09-11_16-52-33-601",
+      "prior_text": "12345。",
+      "processing": {
+        "detected_events": 3,
+        "trigger_frames": 50,
+        "processed_duration_ms": 724.3125,
+        "processed_audio_pct": 25.149739583333336,
+        "maximum_attenuation_db": 9.0,
+        "mean_active_attenuation_db": 6.796591491679345,
+        "sub_50hz_change_db": -6.948301791212906,
+        "low_20_300hz_change_db": -4.999851498040716,
+        "speech_300_3000hz_change_db": 0.0020087775913326666,
+        "high_3000_7500hz_change_db": 8.516584664164384e-06,
+        "peak_before_dbfs": -1.2634540366673221,
+        "peak_after_dbfs": -3.857071666580547,
+        "clipped_before_pct": 0.0,
+        "clipped_after_pct": 0.0
+      },
+      "events": [
+        {
+          "start_seconds": 0.902,
+          "end_seconds": 1.228,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.25,
+          "end_seconds": 1.376,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.43,
+          "end_seconds": 1.702,
+          "maximum_attenuation_db": 9.0
+        }
+      ],
+      "asr": {
+        "backend": "doubao",
+        "raw_text": "12345。",
+        "processed_text": "12345。",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "unchanged"
+      }
+    },
+    {
+      "index": 7,
+      "interaction_id": "interaction_2026-09-11_16-52-24-655",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-24-655/audio.wav",
+      "output_directory": "07_interaction_2026-09-11_16-52-24-655",
+      "prior_text": "什么时候到达不了？",
+      "processing": {
+        "detected_events": 6,
+        "trigger_frames": 85,
+        "processed_duration_ms": 1481.4375,
+        "processed_audio_pct": 36.309742647058826,
+        "maximum_attenuation_db": 9.0,
+        "mean_active_attenuation_db": 6.79659552707145,
+        "sub_50hz_change_db": -5.238253629826744,
+        "low_20_300hz_change_db": -3.400252366121684,
+        "speech_300_3000hz_change_db": 0.00071636713968104,
+        "high_3000_7500hz_change_db": 2.4712596221831973e-05,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -0.00026507636037961915,
+        "clipped_before_pct": 0.026041666666666668,
+        "clipped_after_pct": 0.0030637254901960784
+      },
+      "events": [
+        {
+          "start_seconds": 0.882,
+          "end_seconds": 1.006,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.218,
+          "end_seconds": 1.34,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.366,
+          "end_seconds": 1.54,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.542,
+          "end_seconds": 1.876,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 1.922,
+          "end_seconds": 2.256,
+          "maximum_attenuation_db": 9.0
+        },
+        {
+          "start_seconds": 2.262,
+          "end_seconds": 2.654,
+          "maximum_attenuation_db": 9.0
+        }
+      ],
+      "asr": {
+        "backend": "doubao",
+        "raw_text": "什么时候等不了。",
+        "processed_text": "什么摄像头？",
+        "raw_error": null,
+        "processed_error": null,
+        "assessment": "changed_needs_reference"
+      }
+    }
+  ]
+}

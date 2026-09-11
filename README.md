@@ -104,6 +104,10 @@ macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI，并可通过辅助功能
 文本框；语音处理期间支持全局 `Esc` 取消，应用后可单按 `Esc` 撤销或用 `F8`
 切换处理方式。右 `Alt` 按住说话仍仅在 Windows 上提供。
 
+连接戒指后也支持电脑端手势：左滑/下滑等同 `Esc`（取消或撤销），右滑/上滑等同
+当前配置的类型转换键（默认 `F8`）。按键与手势可交替使用，均沿用现有操作的可用
+条件；自动分类不变，轻点和响指暂不分配。见[手势使用与独立测试](docs/HOST_GESTURE_TEST.md)。
+
 ## 当前可以做什么
 
 - 发现并连接 Ringo BLE 设备，验证 NUS 服务和真实麦克风 PCM 数据。
@@ -119,6 +123,8 @@ macOS 可以运行 Ring、ProxiMic、ASR 和桌面 UI，并可通过辅助功能
 - 修改时向所选模型并行发送片段替换和完整文本两套 prompt，采用最先通过校验的结果。
 - 片段协议由 Python 完成单处或全量匹配替换；完整文本协议直接生成完整候选。
 - 修改结果通过校验后直接应用，随后可撤销或改用听写结果。
+- 用户撤销只检查目标焦点，再发送一次原生 `Cmd+Z`（macOS）或 `Ctrl+Z`（Windows）；不全选复制、不回读校验、不补写旧快照。按键、手势和界面按钮使用同一入口，连续触发按顺序处理，目标失焦或发送失败会停止当前队列。撤销日志和数据落盘在后台执行。
+- 撤销粒度由目标应用决定：手动编辑也可能先被撤销，类型转换涉及的多次写入也可能占用多个原生步骤。操作记录只限制本程序可发出的撤销次数，不保证一次恢复一整段语音。历史显示“已发送原生撤销”，不会把未验证的恢复文本当成训练标签。
 - 明确的“删除全文”通过协议校验后直接执行，并进入同一个可撤销操作栈。
 - Windows 使用 Unicode 键盘注入，不用剪贴板写入最终文本。
 - 保存 Ring 麦克风连续 WAV，便于回听和后续 ASR 评测。
@@ -232,7 +238,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 
 每段语音结束后，主界面的“逐句语音记录”会显示最终裁剪录音并可直接播放。听写记录
 以实际输入内容为主体，经过整理时另列识别原文；编辑记录分别显示编辑指令、修改摘要和
-修改结果；撤回后改为醒目的撤回状态，不再把已撤回结果显示成有效 final 文本。记录保存
+修改结果；发送原生撤销后显示“已发送原生撤销”，不再把旧候选显示成有效 final 文本，也不宣称原文已恢复。记录保存
 在当前用户的应用数据目录，重新打开应用后仍可查看。录音写盘在后台完成。
 完整运行日志默认不占用主界面空间，点击顶栏“实时日志”按钮即可打开并持续查看。
 该窗口保留本次运行最近 1000 行，点击“打开日志目录”可查看跨重启保留且自动轮转的
@@ -416,6 +422,11 @@ CLI 入口：
 | `collect` | 采集 near/far/artifact 数据集 |
 | `train` | 训练新的近场二分类模型 |
 
+主项目随附的近点模型使用 `ringo-near-vN.model` 版本号。当前默认是
+`ringo-near-v2.model`；`ringo-near-v1.model` 保留用于回退。完整版本、训练修订、
+推荐 Stage-2 阈值和 SHA256 记录在
+`src/proximic_ring/assets/proximity_model_versions.json`。
+
 只录制一段 Ring 麦克风音频：
 
 ```powershell
@@ -428,7 +439,7 @@ CLI 入口：
 
 ```powershell
 .\.runtime\venv\Scripts\python.exe -m proximic_ring ring `
-  --model .\src\proximic_ring\assets\ringo-near-v1.model `
+  --model .\src\proximic_ring\assets\ringo-near-v2.model `
   --stage1-threshold 0.005 `
   --asr streaming_sensevoice `
   --asr volcengine `
@@ -451,6 +462,8 @@ CLI 入口：
 
 数据采集、训练和验证说明见：
 
+- [电脑端手势识别测试（200 Hz IMU、独立终端与记录重放）](docs/HOST_GESTURE_TEST.md)
+- [固件端手势测试（独立终端、实时触发与 CSV）](docs/FIRMWARE_GESTURE_TEST.md)
 - [docs/DATASET_TRAINING.md](docs/DATASET_TRAINING.md)
 - [docs/VALIDATION.md](docs/VALIDATION.md)
 - [docs/ASR_INTEGRATION.md](docs/ASR_INTEGRATION.md)
@@ -477,6 +490,10 @@ $env:ARK_API_KEY = "<your-ark-api-key>"
   --target-text "会议安排在周四。" `
   --text "把周四改成周五"
 ```
+
+在已选择的编辑模式中，也可以只给出替换词：例如原文是“事情效果还不错”，
+修改指令只输入“识别”，期望得到“识别效果还不错”。两种编辑协议共用纠错规则，
+结合原文定位替换位置并保留其余文字；没有合理对应位置或位置有歧义时保持原文。
 
 自动区分听写/编辑指令可以用单独的路由测试程序验证。它可选择本地 Qwen、豆包、DeepSeek
 或三者同时比较，并为每次请求打印开始时间、完成时间、判断结果、原始返回和耗时：

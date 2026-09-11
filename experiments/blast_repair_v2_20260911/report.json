@@ -1,0 +1,412 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-11T17:26:28+08:00",
+  "algorithm": "adaptive_plosive_and_broadband_overload_repair_v2",
+  "config": {
+    "fft_size": 256,
+    "hop_size": 64,
+    "baseline_radius_frames": 32,
+    "minimum_frame_dbfs": -40.0,
+    "pressure_low_excess_db": 4.5,
+    "pressure_low_to_mid_db": -1.0,
+    "pressure_minimum_peak": 0.28,
+    "overload_minimum_peak": 0.82,
+    "overload_minimum_jump": 0.34,
+    "overload_energy_excess_db": 4.5,
+    "clip_level": 0.995,
+    "maximum_low_attenuation_db": 18.0,
+    "maximum_broadband_attenuation_db": 4.0,
+    "low_full_attenuation_hz": 170.0,
+    "low_attenuation_end_hz": 340.0,
+    "subsonic_highpass_hz": 45.0,
+    "attack_frames": 3,
+    "hold_frames": 3,
+    "release_frames": 14,
+    "broadband_attack_frames": 1,
+    "broadband_hold_frames": 1,
+    "broadband_release_frames": 5
+  },
+  "sessions": [
+    {
+      "index": 3,
+      "interaction_id": "interaction_2026-09-11_16-52-48-628",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-48-628/audio.wav",
+      "output_directory": "03_interaction_2026-09-11_16-52-48-628",
+      "prior_text": "",
+      "processing": {
+        "detected_events": 8,
+        "pressure_trigger_frames": 66,
+        "overload_trigger_frames": 44,
+        "processed_duration_ms": 1368.0,
+        "processed_audio_pct": 37.173913043478265,
+        "maximum_low_attenuation_db": 18.0,
+        "maximum_broadband_attenuation_db": 4.0,
+        "sub_50hz_change_db": -13.741367174039702,
+        "low_20_300hz_change_db": -8.340194255508472,
+        "speech_300_3000hz_change_db": -1.8080159881807347,
+        "high_3000_7500hz_change_db": -1.9315712011885071,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.015285326086956524,
+        "clipped_after_pct": 0.0033967391304347825
+      },
+      "events": [
+        {
+          "start_seconds": 0.876,
+          "end_seconds": 1.0,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.04,
+          "end_seconds": 1.216,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 1.252,
+          "end_seconds": 1.728,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 1.744,
+          "end_seconds": 1.908,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 1.92,
+          "end_seconds": 2.032,
+          "maximum_low_attenuation_db": 17.91,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 2.044,
+          "end_seconds": 2.128,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 2.156,
+          "end_seconds": 2.3,
+          "maximum_low_attenuation_db": 17.79,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 2.404,
+          "end_seconds": 2.492,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        }
+      ],
+      "asr": {
+        "raw_text": "打牌电话不被。",
+        "repaired_text": "打开电话准备。",
+        "raw_error": null,
+        "repaired_error": null,
+        "assessment": "changed_needs_reference"
+      }
+    },
+    {
+      "index": 4,
+      "interaction_id": "interaction_2026-09-11_16-52-43-145",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-43-145/audio.wav",
+      "output_directory": "04_interaction_2026-09-11_16-52-43-145",
+      "prior_text": "",
+      "processing": {
+        "detected_events": 5,
+        "pressure_trigger_frames": 37,
+        "overload_trigger_frames": 44,
+        "processed_duration_ms": 1068.0,
+        "processed_audio_pct": 41.07692307692308,
+        "maximum_low_attenuation_db": 18.0,
+        "maximum_broadband_attenuation_db": 4.0,
+        "sub_50hz_change_db": -11.309737698995008,
+        "low_20_300hz_change_db": -8.143618613133114,
+        "speech_300_3000hz_change_db": -2.5032598670674844,
+        "high_3000_7500hz_change_db": -3.40160466776698,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -1.983736215431243,
+        "clipped_before_pct": 0.01201923076923077,
+        "clipped_after_pct": 0.0
+      },
+      "events": [
+        {
+          "start_seconds": 0.0,
+          "end_seconds": 0.296,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 0.324,
+          "end_seconds": 0.564,
+          "maximum_low_attenuation_db": 17.44,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 0.62,
+          "end_seconds": 0.764,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 0.8,
+          "end_seconds": 0.996,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 1.02,
+          "end_seconds": 1.212,
+          "maximum_low_attenuation_db": 16.5,
+          "maximum_broadband_attenuation_db": 4.0
+        }
+      ],
+      "asr": {
+        "raw_text": "不不不不不。",
+        "repaired_text": "不不不不不。",
+        "raw_error": null,
+        "repaired_error": null,
+        "assessment": "unchanged"
+      }
+    },
+    {
+      "index": 5,
+      "interaction_id": "interaction_2026-09-11_16-52-39-164",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-39-164/audio.wav",
+      "output_directory": "05_interaction_2026-09-11_16-52-39-164",
+      "prior_text": "",
+      "processing": {
+        "detected_events": 10,
+        "pressure_trigger_frames": 106,
+        "overload_trigger_frames": 35,
+        "processed_duration_ms": 1576.0,
+        "processed_audio_pct": 34.56140350877193,
+        "maximum_low_attenuation_db": 18.0,
+        "maximum_broadband_attenuation_db": 4.0,
+        "sub_50hz_change_db": -14.742882060545378,
+        "low_20_300hz_change_db": -9.115479767479066,
+        "speech_300_3000hz_change_db": -1.7503347505110156,
+        "high_3000_7500hz_change_db": -2.873363431574095,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": 0.0,
+        "clipped_before_pct": 0.015076754385964912,
+        "clipped_after_pct": 0.004111842105263158
+      },
+      "events": [
+        {
+          "start_seconds": 1.132,
+          "end_seconds": 1.364,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.368,
+          "end_seconds": 1.492,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.516,
+          "end_seconds": 1.616,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.636,
+          "end_seconds": 1.828,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 2.084,
+          "end_seconds": 2.272,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 2.312,
+          "end_seconds": 2.416,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 2.44,
+          "end_seconds": 2.616,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 2.66,
+          "end_seconds": 2.864,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 2.916,
+          "end_seconds": 3.096,
+          "maximum_low_attenuation_db": 13.83,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 3.136,
+          "end_seconds": 3.212,
+          "maximum_low_attenuation_db": 13.66,
+          "maximum_broadband_attenuation_db": 0.0
+        }
+      ],
+      "asr": {
+        "raw_text": "大白点不的不不。",
+        "repaired_text": "拜北京我的地图。",
+        "raw_error": null,
+        "repaired_error": null,
+        "assessment": "changed_needs_reference"
+      }
+    },
+    {
+      "index": 6,
+      "interaction_id": "interaction_2026-09-11_16-52-33-601",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-33-601/audio.wav",
+      "output_directory": "06_interaction_2026-09-11_16-52-33-601",
+      "prior_text": "12345。",
+      "processing": {
+        "detected_events": 5,
+        "pressure_trigger_frames": 50,
+        "overload_trigger_frames": 0,
+        "processed_duration_ms": 628.0,
+        "processed_audio_pct": 21.805555555555557,
+        "maximum_low_attenuation_db": 18.0,
+        "maximum_broadband_attenuation_db": 0.0,
+        "sub_50hz_change_db": -12.712594970917607,
+        "low_20_300hz_change_db": -9.25883293109834,
+        "speech_300_3000hz_change_db": -0.19932431389217875,
+        "high_3000_7500hz_change_db": 9.976930407162854e-05,
+        "peak_before_dbfs": -1.2634540366673221,
+        "peak_after_dbfs": -4.60234974905801,
+        "clipped_before_pct": 0.0,
+        "clipped_after_pct": 0.0
+      },
+      "events": [
+        {
+          "start_seconds": 0.9,
+          "end_seconds": 0.996,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.008,
+          "end_seconds": 1.204,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.248,
+          "end_seconds": 1.352,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.428,
+          "end_seconds": 1.516,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.532,
+          "end_seconds": 1.676,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        }
+      ],
+      "asr": {
+        "raw_text": "第二305。",
+        "repaired_text": "给我搜索。",
+        "raw_error": null,
+        "repaired_error": null,
+        "assessment": "changed_needs_reference"
+      }
+    },
+    {
+      "index": 7,
+      "interaction_id": "interaction_2026-09-11_16-52-24-655",
+      "source_audio": "/Users/admin/Downloads/ProximicVoice-main/dataset/user_9ef4f7e9048145e0b53f51cc94ab273c/interactions/interaction_2026-09-11_16-52-24-655/audio.wav",
+      "output_directory": "07_interaction_2026-09-11_16-52-24-655",
+      "prior_text": "什么时候到达不了？",
+      "processing": {
+        "detected_events": 8,
+        "pressure_trigger_frames": 85,
+        "overload_trigger_frames": 37,
+        "processed_duration_ms": 1388.0,
+        "processed_audio_pct": 34.01960784313726,
+        "maximum_low_attenuation_db": 18.0,
+        "maximum_broadband_attenuation_db": 4.0,
+        "sub_50hz_change_db": -12.789546297355347,
+        "low_20_300hz_change_db": -8.76542332568473,
+        "speech_300_3000hz_change_db": -2.318204002589061,
+        "high_3000_7500hz_change_db": -1.7906553242626835,
+        "peak_before_dbfs": -0.00026507636037961915,
+        "peak_after_dbfs": -1.32091637743421,
+        "clipped_before_pct": 0.026041666666666668,
+        "clipped_after_pct": 0.0
+      },
+      "events": [
+        {
+          "start_seconds": 0.88,
+          "end_seconds": 0.98,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.216,
+          "end_seconds": 1.316,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 1.344,
+          "end_seconds": 1.516,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 1.54,
+          "end_seconds": 1.852,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 1.868,
+          "end_seconds": 2.1,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 2.112,
+          "end_seconds": 2.232,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        },
+        {
+          "start_seconds": 2.26,
+          "end_seconds": 2.5,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 4.0
+        },
+        {
+          "start_seconds": 2.516,
+          "end_seconds": 2.628,
+          "maximum_low_attenuation_db": 18.0,
+          "maximum_broadband_attenuation_db": 0.0
+        }
+      ],
+      "asr": {
+        "raw_text": "是不是对的不了？",
+        "repaired_text": "是不是不的不了？",
+        "raw_error": null,
+        "repaired_error": null,
+        "assessment": "changed_needs_reference"
+      }
+    }
+  ]
+}

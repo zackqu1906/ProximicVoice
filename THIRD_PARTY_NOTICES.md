@@ -36,6 +36,9 @@ Proximic Voice connects to third-party projects without committing their downloa
 
 - Location: `src/ring_python_sdk`
 - Origin: supplied with the Ringo device integration used by this project.
+- The host gesture module and bundled `gestures/assets/swipe.pt` were supplied in
+  `ring-python-sdk-feat-ringo-gestures-sdk`. Their ai-ring source revision and
+  original license status are recorded in `src/ring_python_sdk/gestures/NOTICE.md`.
 - License: no standalone license file was found in the supplied snapshot. Redistribution permission
   must be confirmed with the SDK/device provider before this repository is made public.
 

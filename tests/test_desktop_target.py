@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
 import time
@@ -11,6 +12,7 @@ from proximic_ring.desktop_target import (
     DesktopTextSnapshot,
     MacOSDesktopTextTarget,
     WindowsDesktopTextTarget,
+    _CFRange,
     _MacOSAccessibilityTextBridge,
     macos_texts_equivalent,
 )
@@ -275,6 +277,379 @@ def test_macos_manual_observation_never_activates_selects_or_copies(monkeypatch)
 
     assert adapter.observe_text(target).text == "用户正在手写"
     assert calls == [("bounds", 4321), ("read", 4321)]
+
+
+def test_macos_context_observation_uses_only_bounded_ax_reader(monkeypatch) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    calls: list[object] = []
+
+    class Clipboard:
+        def snapshot(self):
+            raise AssertionError("context observation must not use clipboard")
+
+    class Injector:
+        def command_key(self, _key):
+            raise AssertionError("context observation must not send shortcuts")
+
+    class AccessibilityText:
+        last_context_read_method = "system.parent1.AXStringForRange"
+        last_context_source_char_count = 2460
+
+        def read_focused_context(self, process_id, *, max_chars, anchor):
+            calls.append(("context", process_id, max_chars, anchor))
+            return "当前输入框的真实文本"
+
+    adapter = MacOSDesktopTextTarget(
+        Clipboard(),
+        injector=Injector(),
+        accessibility_text=AccessibilityText(),
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "微信"))
+    target = DesktopTargetRef(
+        0,
+        0,
+        "微信",
+        process_id=4321,
+        caret_x=320,
+        caret_y=245,
+    )
+
+    snapshot = adapter.observe_context_text(target, max_chars=1600)
+
+    assert snapshot.text == "当前输入框的真实文本"
+    assert calls == [("context", 4321, 1600, (320, 245))]
+    assert adapter.last_context_read_method == (
+        "system.parent1.AXStringForRange"
+    )
+    assert adapter.last_context_source_char_count == 2460
+
+
+def test_macos_wechat_context_temporarily_enables_lazy_accessibility(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+    monkeypatch.setattr(time, "sleep", lambda _delay: None)
+    calls: list[object] = []
+
+    class Clipboard:
+        def snapshot(self):
+            raise AssertionError("context observation must not use clipboard")
+
+    class Injector:
+        def command_key(self, _key):
+            raise AssertionError("context observation must not send shortcuts")
+
+    class AccessibilityText:
+        def read_focused_context(self, process_id, *, max_chars, anchor):
+            calls.append(("read", process_id, max_chars, anchor))
+            return None if len(calls) == 1 else "延迟暴露的微信输入内容"
+
+        def manual_accessibility_state(self, process_id):
+            calls.append(("state", process_id))
+            return False
+
+        def set_manual_accessibility(self, process_id, *, enabled):
+            calls.append(("set", process_id, enabled))
+            return "enabled" if enabled else "disabled"
+
+    adapter = MacOSDesktopTextTarget(
+        Clipboard(),
+        injector=Injector(),
+        accessibility_text=AccessibilityText(),
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (506, "WeChat"))
+    target = DesktopTargetRef(
+        0,
+        0,
+        "WeChat",
+        process_id=506,
+        process_name="WeChat",
+        caret_x=320,
+        caret_y=245,
+    )
+
+    snapshot = adapter.observe_context_text(target, max_chars=1600)
+
+    assert snapshot.text == "延迟暴露的微信输入内容"
+    assert calls == [
+        ("read", 506, 1600, (320, 245)),
+        ("state", 506),
+        ("set", 506, True),
+        ("read", 506, 1600, (320, 245)),
+        ("set", 506, False),
+    ]
+    assert adapter.last_context_accessibility_probe == (
+        "enabled_readable;restore:disabled"
+    )
+
+
+def test_macos_wechat_context_reports_manual_accessibility_rejection(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    class AccessibilityText:
+        def read_focused_context(self, *_args, **_kwargs):
+            return None
+
+        def manual_accessibility_state(self, _process_id):
+            return None
+
+        def set_manual_accessibility(self, _process_id, *, enabled):
+            assert enabled is True
+            return "attribute_unsupported:-25205"
+
+    adapter = MacOSDesktopTextTarget(
+        object(),
+        injector=object(),
+        accessibility_text=AccessibilityText(),
+    )
+    monkeypatch.setattr(adapter, "_frontmost_application", lambda: (506, "WeChat"))
+    target = DesktopTargetRef(
+        0,
+        0,
+        "WeChat",
+        process_id=506,
+        process_name="WeChat",
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"AXManualAccessibility=attribute_unsupported:-25205",
+    ):
+        adapter.observe_context_text(target, max_chars=1600)
+
+    assert adapter.last_context_accessibility_probe == (
+        "attribute_unsupported:-25205"
+    )
+
+
+def test_macos_context_reader_walks_to_editable_parent_without_cache() -> None:
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+    bridge._last_context_read_method = ""
+    bridge._last_context_source_char_count = None
+    released: list[int] = []
+    bridge._copy_focused_elements = lambda _pid: [
+        (1, 10, "application"),
+        (2, 30, "system"),
+    ]
+    bridge._is_editable_text_element = lambda element: element == 20
+    bridge._copy_text_attribute = lambda element, name: (
+        "微信输入框里的真实上文"
+        if element == 20 and name == "AXValue"
+        else None
+    )
+    bridge._copy_attribute_value = lambda element, name: (
+        20 if element == 10 and name == "AXParent" else None
+    )
+    bridge._read_parameterized_context = lambda *_args, **_kwargs: (
+        None,
+        "",
+        None,
+    )
+    bridge._release = lambda *values: released.extend(
+        int(value) for value in values if value
+    )
+
+    text = bridge.read_focused_context(475, max_chars=1600)
+
+    assert text == "微信输入框里的真实上文"
+    assert bridge.last_context_read_method == "application.parent1.AXValue"
+    assert bridge.last_context_source_char_count == len(text)
+    assert set((1, 2, 10, 20, 30)).issubset(released)
+
+
+def test_macos_context_reader_uses_parameterized_text_on_system_focus() -> None:
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+    bridge._last_context_read_method = ""
+    bridge._last_context_source_char_count = None
+    bridge._copy_focused_elements = lambda _pid: [(2, 30, "system")]
+    bridge._is_editable_text_element = lambda _element: True
+    bridge._copy_text_attribute = lambda *_args: None
+    bridge._read_parameterized_context = lambda *_args, **_kwargs: (
+        "范围读取的真实文本",
+        "AXStringForRange",
+        2400,
+    )
+    bridge._copy_attribute_value = lambda *_args: None
+    bridge._release = lambda *_values: None
+
+    text = bridge.read_focused_context(475, max_chars=1600)
+
+    assert text == "范围读取的真实文本"
+    assert bridge.last_context_read_method == (
+        "system.focused.AXStringForRange"
+    )
+    assert bridge.last_context_source_char_count == 2400
+
+
+def test_macos_context_reader_falls_back_to_verified_system_focus() -> None:
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+    released: list[int] = []
+
+    class Services:
+        @staticmethod
+        def AXUIElementCreateApplication(_process_id):
+            return 1
+
+        @staticmethod
+        def AXUIElementCreateSystemWide():
+            return 2
+
+        @staticmethod
+        def AXUIElementGetPid(_element, output):
+            output._obj.value = 475
+            return 0
+
+    bridge._application_services = Services()
+    bridge._copy_attribute_value = lambda element, name: (
+        30 if element == 2 and name == "AXFocusedUIElement" else None
+    )
+    bridge._release = lambda *values: released.extend(
+        int(value) for value in values if value
+    )
+
+    assert bridge._copy_focused_elements(475) == [(2, 30, "system")]
+    assert 1 in released
+
+
+def test_macos_context_reader_finds_focused_editor_below_window() -> None:
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+    bridge._last_context_read_method = ""
+    bridge._last_context_source_char_count = None
+    released: list[int] = []
+    bridge._copy_focused_elements = lambda _pid: []
+    bridge._copy_application_element = lambda _pid, name: (
+        (1, 10) if name == "AXFocusedWindow" else None
+    )
+    bridge._copy_element_at_position = lambda *_args: None
+    bridge._copy_recent_children = lambda element: {
+        10: ([20], 100),
+        20: ([30], 101),
+        30: ([], None),
+    }[element]
+    bridge._is_ax_focused = lambda element: element == 30
+    bridge._is_editable_text_element = lambda element: element == 30
+    bridge._copy_text_attribute = lambda element, name: (
+        "微信窗口子树中的输入内容"
+        if element == 30 and name == "AXValue"
+        else None
+    )
+    bridge._copy_attribute_value = lambda *_args: None
+    bridge._read_parameterized_context = lambda *_args, **_kwargs: (
+        None,
+        "",
+        None,
+    )
+    bridge._release = lambda *values: released.extend(
+        int(value) for value in values if value
+    )
+
+    text = bridge.read_focused_context(475, max_chars=1600)
+
+    assert text == "微信窗口子树中的输入内容"
+    assert bridge.last_context_read_method == (
+        "window.descendant2.focused.AXValue"
+    )
+    assert {1, 10, 100, 101}.issubset(released)
+
+
+def test_macos_point_context_requires_independent_ax_focus() -> None:
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+    bridge._last_context_read_method = ""
+    bridge._last_context_source_char_count = None
+    bridge._copy_focused_elements = lambda _pid: []
+    bridge._copy_application_element = lambda *_args: None
+    bridge._copy_element_at_position = lambda _pid, _anchor: (2, 30)
+    bridge._is_editable_text_element = lambda _element: True
+    bridge._is_ax_focused = lambda _element: False
+    bridge._copy_text_attribute = lambda *_args: "错误的搜索框内容"
+    bridge._copy_attribute_value = lambda *_args: None
+    bridge._read_context_from_focused_descendant = lambda *_args, **_kwargs: None
+    bridge._release = lambda *_values: None
+
+    text = bridge.read_focused_context(
+        475, max_chars=1600, anchor=(320, 245)
+    )
+
+    assert text is None
+    assert bridge.last_context_read_method == ""
+
+
+def test_macos_context_child_scan_is_bounded_and_prefers_recent_children() -> None:
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+    requests: list[tuple[int, int]] = []
+    released: list[int] = []
+
+    class Services:
+        @staticmethod
+        def AXUIElementGetAttributeValueCount(_element, _attribute, output):
+            output._obj.value = 70
+            return 0
+
+        @staticmethod
+        def AXUIElementCopyAttributeValues(
+            _element, _attribute, start, count, output
+        ):
+            requests.append((start, count))
+            output._obj.value = 500
+            return 0
+
+    class CoreFoundation:
+        @staticmethod
+        def CFArrayGetCount(_array):
+            return 2
+
+        @staticmethod
+        def CFArrayGetValueAtIndex(_array, index):
+            return (21, 22)[index]
+
+    bridge._application_services = Services()
+    bridge._core_foundation = CoreFoundation()
+    bridge._cf_string = lambda name: 99 if name == "AXChildren" else 0
+    bridge._release = lambda *values: released.extend(
+        int(value) for value in values if value
+    )
+
+    children, owned_array = bridge._copy_recent_children(10)
+
+    assert children == [21, 22]
+    assert owned_array == 500
+    assert requests == [(6, 64)]
+    assert released == [99]
+
+
+def test_macos_parameterized_context_reads_only_bounded_tail() -> None:
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+    captured_ranges: list[tuple[int, int]] = []
+    released: list[int] = []
+
+    class Services:
+        @staticmethod
+        def AXValueCreate(value_type, pointer):
+            assert value_type == 4
+            value = ctypes.cast(pointer, ctypes.POINTER(_CFRange)).contents
+            captured_ranges.append((int(value.location), int(value.length)))
+            return 88
+
+    bridge._application_services = Services()
+    bridge._copy_attribute_value = lambda _element, name: (
+        77 if name == "AXNumberOfCharacters" else None
+    )
+    bridge._cf_number = lambda value: 2400 if value == 77 else None
+    bridge._copy_parameterized_text = lambda element, range_value: (
+        "最后一段真实文本",
+        "AXStringForRange",
+    )
+    bridge._release = lambda *values: released.extend(
+        int(value) for value in values if value
+    )
+
+    result = bridge._read_parameterized_context(30, max_chars=1600)
+
+    assert result == ("最后一段真实文本", "AXStringForRange", 2400)
+    assert captured_ranges == [(800, 1600)]
+    assert {77, 88}.issubset(released)
 
 
 def test_macos_focused_observation_revalidates_a_rebuilt_web_field(
@@ -600,6 +975,32 @@ def test_macos_undo_targets_the_locked_external_control() -> None:
     assert calls == [
         ("activate", target),
         ("command", MacOSDesktopTextTarget.KEY_Z),
+    ]
+
+
+def test_native_shortcuts_do_not_activate_copy_or_wait(monkeypatch) -> None:
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("native dispatch must not activate or wait")
+
+    monkeypatch.setattr("proximic_ring.desktop_target.time.sleep", forbidden)
+    target = DesktopTargetRef(1, 2, "测试窗口", process_id=30)
+    calls = []
+    mac = object.__new__(MacOSDesktopTextTarget)
+    mac._activate = forbidden
+
+    class Injector:
+        def command_key(self, key):
+            calls.append(("cmd", key))
+
+    mac._injector = Injector()
+    windows = object.__new__(WindowsDesktopTextTarget)
+    windows._activate = forbidden
+    windows._hotkey = lambda *keys: calls.append(("ctrl", keys))
+    mac.send_native_undo(target)
+    windows.send_native_undo(target)
+    assert calls == [
+        ("cmd", MacOSDesktopTextTarget.KEY_Z),
+        ("ctrl", (windows.VK_CONTROL, 0x5A)),
     ]
 
 

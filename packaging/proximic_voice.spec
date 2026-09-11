@@ -13,6 +13,9 @@ streaming_root = project_root / "third_party" / "streaming-sensevoice"
 funasr_root = project_root / "third_party" / "Fun-ASR"
 
 datas = collect_data_files("proximic_ring")
+datas += collect_data_files(
+    "ring_python_sdk.gestures", includes=["assets/*.pt", "assets/*.json", "NOTICE.md"]
+)
 # FunASR's package data includes assets for every model family.  The runtime
 # only reads its version file; checkpoints live in the per-user model cache.
 datas += collect_data_files("funasr", includes=["version.txt"])

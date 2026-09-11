@@ -1,0 +1,51 @@
+{
+  "model_kwargs": {
+    "filters": 32,
+    "depth": 6,
+    "kernel_sizes": [
+      31,
+      15,
+      7
+    ],
+    "bottleneck_channels": 16,
+    "pool_filters": 8,
+    "residual_every": 2,
+    "temporal_pool_after": [
+      2,
+      4
+    ],
+    "feature_mode": "enc",
+    "input_dropout1d": 0.1,
+    "head_dropout": 0.2,
+    "input_dim": 6,
+    "output_dim": 7
+  },
+  "gesture_ids": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6
+  ],
+  "num_classes": 7,
+  "input_dim": 6,
+  "mean": [
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.0
+  ],
+  "std": [
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0,
+    1.0
+  ],
+  "max_len": 60
+}

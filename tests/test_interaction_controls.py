@@ -625,6 +625,9 @@ def test_applied_operations_support_multiple_undo_steps(tmp_path, monkeypatch):
             self.text = "ABC"
             self.foreground = True
 
+        def undo(self, _target):
+            self.text = {"ABC": "AB", "AB": "A"}[self.text]
+
         def replace(self, snapshot, text):
             assert snapshot.target == target
             self.text = text
@@ -707,6 +710,12 @@ def test_undo_stacks_are_isolated_by_application_and_text_field(
 
         def observe_text(self, target):
             return DesktopTextSnapshot(target, self.texts[target.control_handle])
+
+        def undo(self, target):
+            current = self.texts[target.control_handle]
+            self.texts[target.control_handle] = {
+                "A2": "A1", "A1": "A0", "B1": "B0", "N1": "N0",
+            }[current]
 
         def replace(self, snapshot, text):
             self.texts[snapshot.target.control_handle] = text
@@ -2382,7 +2391,7 @@ def test_dictation_injection_failure_is_visible_in_overlay(tmp_path, monkeypatch
     _close(controller)
 
 
-def test_undo_only_records_failure_and_does_not_show_association_prompt(
+def test_native_undo_does_not_show_association_prompt(
     tmp_path, monkeypatch
 ):
     from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
@@ -2393,6 +2402,9 @@ def test_undo_only_records_failure_and_does_not_show_association_prompt(
 
     class Desktop:
         def __init__(self):
+            self.text = "原文"
+
+        def undo(self, _target):
             self.text = "原文"
 
         def replace(self, snapshot, text):
@@ -2831,6 +2843,9 @@ def test_edit_result_applies_immediately_without_preview_confirmation(
         def __init__(self):
             self.text = "旧文本"
 
+        def undo(self, _target):
+            self.text = "旧文本"
+
         def replace(self, snapshot, text):
             replacements.append((snapshot.text, text))
             self.text = text
@@ -2859,13 +2874,14 @@ def test_edit_result_applies_immediately_without_preview_confirmation(
     controller._pending_text_requests.add(999)
     assert controller.interactionCanCancel is False
     controller._apply_voice_action("undo")
-    assert replacements == [("旧文本", "新文本"), ("新文本", "旧文本")]
+    assert replacements == [("旧文本", "新文本")]
+    assert controller._desktop_target.text == "旧文本"
     assert controller.undoAvailable is False
     assert not hasattr(controller, "confirmEdit")
     _close(controller)
 
 
-def test_undo_keeps_stack_when_external_restore_silently_fails(
+def test_undo_keeps_stack_when_native_shortcut_send_raises(
     tmp_path, monkeypatch
 ):
     import proximic_ring.ui.controller as controller_module
@@ -2880,6 +2896,9 @@ def test_undo_keeps_stack_when_external_restore_silently_fails(
         def __init__(self):
             self.text = "新文本"
             self.replace_calls = 0
+
+        def undo(self, _target):
+            raise RuntimeError("发送失败")
 
         def replace(self, _snapshot, _text):
             self.replace_calls += 1
@@ -2911,17 +2930,17 @@ def test_undo_keeps_stack_when_external_restore_silently_fails(
 
     controller.undoLastApplied()
 
-    assert desktop.replace_calls == 1
+    assert desktop.replace_calls == 0
     assert desktop.text == "新文本"
     assert controller.undoDepth == 1
     assert controller.undoAvailable is True
     assert controller.interactionState == "error"
-    assert "撤回失败" in controller.transcriptText
+    assert "撤销发送失败" in controller.transcriptText
     assert "撤销记录" in controller.statusDetail
     _close(controller)
 
 
-def test_undo_uses_precise_restore_when_native_undo_does_not_change_text(
+def test_undo_does_not_rewrite_when_app_ignores_native_shortcut(
     tmp_path, monkeypatch
 ):
     import proximic_ring.ui.controller as controller_module
@@ -2972,8 +2991,8 @@ def test_undo_uses_precise_restore_when_native_undo_does_not_change_text(
     controller.undoLastApplied()
 
     assert desktop.undo_calls == 1
-    assert desktop.replace_calls == 1
-    assert desktop.text == "旧文本"
+    assert desktop.replace_calls == 0
+    assert desktop.text == "新文本"
     assert controller.undoDepth == 0
     assert controller.interactionState == "idle"
     _close(controller)
@@ -3048,7 +3067,7 @@ def test_unobservable_native_undo_never_appends_snapshot_after_command_z(
     _close(controller)
 
 
-def test_undo_prefers_fast_verified_native_path_without_snapshot_rewrite(
+def test_undo_sends_native_shortcut_without_snapshot_rewrite(
     tmp_path, monkeypatch
 ):
     import proximic_ring.ui.controller as controller_module
@@ -3106,7 +3125,7 @@ def test_undo_prefers_fast_verified_native_path_without_snapshot_rewrite(
     _close(controller)
 
 
-def test_multi_undo_clears_first_dictation_without_reusing_native_history(
+def test_multi_undo_leaves_granularity_to_native_history(
     tmp_path, monkeypatch
 ):
     from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
@@ -3132,8 +3151,8 @@ def test_multi_undo_clears_first_dictation_without_reusing_native_history(
             if self.undo_calls == 1:
                 self.text = "第一句。"
             else:
-                # This is the host-app history corruption that the first-item
-                # boundary must never invoke.
+                # An app can group history differently. Do not compensate
+                # with a snapshot write even when its result is unexpected.
                 self.text = "第一句。第二句。"
 
         def replace(self, _snapshot, text):
@@ -3162,14 +3181,14 @@ def test_multi_undo_clears_first_dictation_without_reusing_native_history(
     assert controller.undoDepth == 1
     controller.undoLastApplied()
 
-    assert desktop.text == ""
-    assert desktop.undo_calls == 1
-    assert desktop.replace_calls == [""]
+    assert desktop.text == "第一句。第二句。"
+    assert desktop.undo_calls == 2
+    assert desktop.replace_calls == []
     assert controller.undoDepth == 0
     _close(controller)
 
 
-def test_legacy_first_dictation_without_snapshot_never_calls_native_undo(
+def test_legacy_first_dictation_also_uses_native_history(
     tmp_path, monkeypatch
 ):
     from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
@@ -3206,8 +3225,8 @@ def test_legacy_first_dictation_without_snapshot_never_calls_native_undo(
 
     controller.undoLastApplied()
 
-    assert desktop.text == ""
-    assert desktop.undo_calls == 0
+    assert desktop.text == "错误恢复的旧内容"
+    assert desktop.undo_calls == 1
     assert controller.undoDepth == 0
     _close(controller)
 
@@ -3259,7 +3278,7 @@ def test_unobservable_edit_undo_does_not_add_a_snapshot_write(
     _close(controller)
 
 
-def test_undo_refuses_to_overwrite_text_changed_after_voice_application(
+def test_undo_follows_native_history_after_manual_edit(
     tmp_path, monkeypatch
 ):
     from proximic_ring.desktop_target import DesktopTargetRef, DesktopTextSnapshot
@@ -3272,6 +3291,9 @@ def test_undo_refuses_to_overwrite_text_changed_after_voice_application(
         def __init__(self):
             self.text = "用户后来手写的文本"
             self.replace_calls = 0
+
+        def undo(self, _target):
+            self.text = "语音修改后的文本"
 
         def replace(self, _snapshot, _text):
             self.replace_calls += 1
@@ -3303,9 +3325,9 @@ def test_undo_refuses_to_overwrite_text_changed_after_voice_application(
     controller.undoLastApplied()
 
     assert desktop.replace_calls == 0
-    assert desktop.text == "用户后来手写的文本"
-    assert controller.undoDepth == 1
-    assert "当前文本已在语音结果之后发生变化" in controller.transcriptText
+    assert desktop.text == "语音修改后的文本"
+    assert controller.undoDepth == 0
+    assert "已发送撤销" in controller.sessionHistoryText
     _close(controller)
 
 
@@ -3322,6 +3344,9 @@ def test_explicit_full_delete_finishes_and_enters_undo_stack(
 
     class Desktop:
         def __init__(self):
+            self.text = "需要删除的整句话。"
+
+        def undo(self, _target):
             self.text = "需要删除的整句话。"
 
         def replace(self, _snapshot, text):

@@ -495,6 +495,7 @@ def test_asr_context_records_sent_structure_but_event_only_keeps_summary(tmp_pat
             "reason": "",
             "target_key": "10:20:field",
             "application": "测试编辑器",
+            "read_method": "system.parent1.AXStringForRange",
         },
     )
 
@@ -524,6 +525,7 @@ def test_asr_context_records_sent_structure_but_event_only_keeps_summary(tmp_pat
         "reason": "",
         "target_key": "10:20:field",
         "application": "测试编辑器",
+        "read_method": "system.parent1.AXStringForRange",
     }
     context_event = next(event for event in events if event["type"] == "asr_context")
     assert context_event["session_id"] == 22

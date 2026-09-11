@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from collections import deque
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from difflib import SequenceMatcher
 import json
 import math
@@ -97,7 +98,28 @@ from ..voice_actions import (
     ACTION_INPUT,
     ACTION_SWITCH_MODE,
     ACTION_UNDO,
+    DEFAULT_MODE_SWITCH_SHORTCUT,
+    MODE_SWITCH_SHORTCUTS,
+    normalize_mode_switch_shortcut,
+    voice_action_for_gesture,
 )
+
+
+BUNDLED_NEAR_MODEL_VERSION = 2
+BUNDLED_NEAR_MODEL_FILENAME = f"ringo-near-v{BUNDLED_NEAR_MODEL_VERSION}.model"
+
+
+def _migrated_bundled_near_model_path(
+    saved_model_path: str,
+    saved_bundled_version: int,
+    default_model: Path,
+) -> str:
+    saved = str(saved_model_path).strip()
+    if saved_bundled_version < BUNDLED_NEAR_MODEL_VERSION and (
+        not saved or Path(saved).name == "ringo-near-v1.model"
+    ):
+        return str(default_model) if default_model.exists() else ""
+    return saved or (str(default_model) if default_model.exists() else "")
 
 
 def _resolve_voice_history_path(audio_path: str, history_root: Path) -> Path:
@@ -184,6 +206,7 @@ class _AppliedInteraction:
     auto_context: _AutoInteraction | None = None
     summary: str = ""
     mode_switch_error: str = ""
+    dataset_interaction_id: str = ""
 
 
 @dataclass
@@ -262,7 +285,7 @@ class _VoiceHistoryListModel(QAbstractListModel):
             # Qt/macOS combinations retain that map across dataChanged even
             # though the Python model already contains the new mode. A reset is
             # reserved for explicit mode corrections so the visible row cannot
-            # remain stuck on its pre-F8 label.
+            # remain stuck on its pre-conversion label.
             self.beginResetModel()
             self._entries = updated
             self.endResetModel()
@@ -330,6 +353,7 @@ class AppController(QObject):
     _localModelInstallProgress = Signal(str, int, int)
     _localModelInstallFinished = Signal(object, str)
     _voiceActionRequested = Signal(str)
+    _gestureRecognized = Signal(object, object)
     _associationActionRequested = Signal(str, str)
     _voiceHistorySaved = Signal(object)
 
@@ -369,6 +393,12 @@ class AppController(QObject):
         self._edit_review: _EditReview | None = None
         self._operation_stacks: dict[str, list[_AppliedInteraction]] = {}
         self._active_operation_target_key = ""
+        self._undo_queue: deque[tuple[str, _AppliedInteraction]] = deque()
+        self._undo_active: _AppliedInteraction | None = None
+        self._undo_running = False
+        self._undo_writer = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix="native-undo-save"
+        )
         self._applied_action_visible = False
         self._applied_target_foreground = True
         self._applied_target_mismatch_count = 0
@@ -410,6 +440,7 @@ class AppController(QObject):
         self._manual_association_candidate_text = ""
         self._manual_association_candidate_since = 0.0
         self._log_lines: list[str] = []
+        self._gesture_health_status = ""
         self._diagnostic_run_id = uuid.uuid4().hex[:8]
         self._diagnostic_log = RotatingDiagnosticLog(
             app_data_root() / "logs" / "diagnostic.log"
@@ -424,6 +455,12 @@ class AppController(QObject):
                 self._settings.value(
                     "input/routingMode", INPUT_ROUTING_MANUAL
                 )
+            )
+        )
+        self._mode_correction_shortcut = normalize_mode_switch_shortcut(
+            self._settings.value(
+                "input/modeCorrectionShortcut",
+                DEFAULT_MODE_SWITCH_SHORTCUT,
             )
         )
         saved_applied_overlay_style = str(
@@ -578,7 +615,7 @@ class AppController(QObject):
         self._voice_audio_output: QAudioOutput | None = None
         self._voice_player: QMediaPlayer | None = None
         assets = Path(__file__).resolve().parents[1] / "assets"
-        default_model = assets / "ringo-near-v1.model"
+        default_model = assets / BUNDLED_NEAR_MODEL_FILENAME
         default_repo = project_root / "third_party" / "streaming-sensevoice"
         default_funasr_repo = project_root / "third_party" / "Fun-ASR"
         self._device_name = str(self._settings.value("ring/name", "Ringo"))
@@ -605,11 +642,32 @@ class AppController(QObject):
             if saved_audio_encoding in {"adpcm", "pcm", "opus"}
             else "opus"
         )
-        self._model_path = str(
-            self._settings.value(
-                "detector/model",
-                str(default_model) if default_model.exists() else "",
+        saved_model_path = str(self._settings.value("detector/model", "")).strip()
+        try:
+            saved_bundled_version = int(
+                self._settings.value("detector/bundledModelVersion", 0)
             )
+        except (TypeError, ValueError):
+            saved_bundled_version = 0
+        if saved_bundled_version < BUNDLED_NEAR_MODEL_VERSION:
+            # Migrate only the old bundled default. Preserve an explicitly
+            # selected custom checkpoint, and mark this one-time migration so
+            # the user can deliberately switch back to v1 afterwards.
+            migrated_model_path = _migrated_bundled_near_model_path(
+                saved_model_path,
+                saved_bundled_version,
+                default_model,
+            )
+            if migrated_model_path != saved_model_path:
+                saved_model_path = migrated_model_path
+                self._settings.setValue("detector/model", saved_model_path)
+            self._settings.setValue(
+                "detector/bundledModelVersion", BUNDLED_NEAR_MODEL_VERSION
+            )
+        self._model_path = _migrated_bundled_near_model_path(
+            saved_model_path,
+            BUNDLED_NEAR_MODEL_VERSION,
+            default_model,
         )
         self._stage1_threshold = float(
             self._settings.value("detector/stage1Threshold", 0.005)
@@ -719,6 +777,10 @@ class AppController(QObject):
         self._applied_target_timer.timeout.connect(
             self._poll_applied_target_foreground
         )
+        self._undo_queue_timer = QTimer(self)
+        self._undo_queue_timer.setSingleShot(True)
+        self._undo_queue_timer.setInterval(0)
+        self._undo_queue_timer.timeout.connect(self._drain_undo_queue)
         self._manual_association_timer = QTimer(self)
         self._manual_association_timer.setInterval(750)
         self._manual_association_timer.timeout.connect(
@@ -753,6 +815,7 @@ class AppController(QObject):
             self._apply_local_model_install_finished
         )
         self._voiceActionRequested.connect(self._apply_voice_action)
+        self._gestureRecognized.connect(self._apply_gesture)
         self._associationActionRequested.connect(self._apply_association_action)
         self._voiceHistorySaved.connect(self._apply_voice_history_saved)
         self._text_processing_worker = TextProcessingWorker(
@@ -771,6 +834,7 @@ class AppController(QObject):
             asr_device=self._asr_device,
             routing=self._input_routing_mode,
             default_mode=self._input_mode,
+            mode_correction_shortcut=self._mode_correction_shortcut,
             llm_provider=self._llm_provider,
             llm_model=self._llm_model,
             desktop_output=self._desktop_output,
@@ -1873,7 +1937,7 @@ class AppController(QObject):
             return
         self._applied_action_visible = False
         self._applied_target_mismatch_count = 0
-        # Presentation timeout must not make F8 stale. Keep tracking the target
+        # Presentation timeout must not make conversion stale. Keep tracking the target
         # while the operation remains current, even though its window is hidden.
         self.interactionChanged.emit()
 
@@ -1962,10 +2026,10 @@ class AppController(QObject):
 
     @Property(bool, notify=interactionChanged)
     def modeCorrectionHotkeyAvailable(self) -> bool:
-        """Keep F8 functional after timeout and after a speculative failure.
+        """Keep the configured conversion key functional after timeout/failure.
 
         A failed alternate candidate was produced in the background before the
-        user asked for a conversion.  It must not prevent the explicit F8
+        user asked for a conversion. It must not prevent an explicit conversion
         correction from reaching ``switchCurrentInputMode``, which can retry
         that candidate with the user's now-unambiguous intent.
         """
@@ -2226,6 +2290,30 @@ class AppController(QObject):
         self._set_setting(
             "_applied_overlay_style", style, "ui/appliedOverlayStyle"
         )
+
+    @Property(str, notify=settingsChanged)
+    def modeCorrectionShortcut(self) -> str:
+        return self._mode_correction_shortcut
+
+    @modeCorrectionShortcut.setter
+    def modeCorrectionShortcut(self, value: str) -> None:
+        shortcut = normalize_mode_switch_shortcut(value)
+        if shortcut == self._mode_correction_shortcut:
+            return
+        previous = self._mode_correction_shortcut
+        self._mode_correction_shortcut = shortcut
+        self._settings.setValue("input/modeCorrectionShortcut", shortcut)
+        self.settingsChanged.emit()
+        self._event_log(
+            "USER_SETTING",
+            setting="mode_correction_shortcut",
+            previous=previous,
+            value=shortcut,
+        )
+
+    @Property("QVariantList", constant=True)
+    def modeCorrectionShortcutOptions(self) -> list[str]:
+        return list(MODE_SWITCH_SHORTCUTS)
 
     @Property(int, notify=settingsChanged)
     def appliedOverlayDurationSeconds(self) -> int:
@@ -2863,6 +2951,7 @@ class AppController(QObject):
             settings,
             asr_backend_cache=self._asr_backend_cache,
         )
+        gesture_connection = self._disconnect_event
 
         def worker_main() -> None:
             error = ""
@@ -2882,6 +2971,9 @@ class AppController(QObject):
                     on_asr_context=self._record_asr_context,
                     on_raw_audio=self._record_raw_interaction_audio,
                     on_raw_imu=self._record_raw_imu_samples,
+                    on_gesture=lambda event: self._gestureRecognized.emit(
+                        event, gesture_connection
+                    ),
                     on_battery=self._publish_battery_status,
                     asr_gain_db_provider=lambda: self._asr_gain_db,
                     stage1_threshold_provider=lambda: self._stage1_threshold,
@@ -3245,7 +3337,7 @@ class AppController(QObject):
         corrected_mode: str,
         record_correction: bool,
     ) -> None:
-        """Publish one successful F8 conversion as a single visible outcome."""
+        """Publish one successful conversion as a single visible outcome."""
 
         if record_correction:
             try:
@@ -3260,7 +3352,7 @@ class AppController(QObject):
         # record_application() has already persisted the replacement that was
         # actually observed in the target field. Reload only after the optional
         # correction label is also committed, then force the QVariantMap-backed
-        # QML delegate to rebuild. This is the sole completion point for F8.
+        # QML delegate to rebuild. This is the sole conversion completion point.
         self._refresh_voice_history_entries(force_model_reset=True)
         interaction_id = self._modification_dataset.interaction_id_for_session(
             int(session_id)
@@ -3438,6 +3530,9 @@ class AppController(QObject):
         if self._voice_history_closed:
             return
         self._voice_history_closed = True
+        self._undo_queue_timer.stop()
+        self._undo_queue.clear()
+        self._undo_writer.shutdown(wait=True)
         self._applied_target_timer.stop()
         self._stop_manual_association_watch()
         if self._voice_player is not None:
@@ -3564,6 +3659,29 @@ class AppController(QObject):
         if not text:
             return
         summary = text.splitlines()[0].strip()
+        if summary.startswith(("[GESTURE_", "电脑端手势统计：")):
+            # Keep detailed telemetry searchable on disk, outside the live log.
+            self._append_background_diagnostic(text)
+            if summary.startswith("[GESTURE_MODEL]"):
+                self._gesture_health_status = ""
+            elif summary.startswith("[GESTURE_STATUS]"):
+                try:
+                    status = str(json.loads(text.split("]", 1)[1]).get("status", ""))
+                except (ValueError, AttributeError):
+                    return
+                warnings = {
+                    "no_imu": "尚未收到 IMU 数据",
+                    "imu_stalled": "IMU 数据中断",
+                    "inference_backlog": "识别延迟偏高",
+                }
+                previous = self._gesture_health_status
+                self._gesture_health_status = status
+                if status != previous:
+                    if status in warnings:
+                        self._append_log(f"[手势] {warnings[status]}")
+                    elif status == "running" and previous in warnings:
+                        self._append_log("[手势] 识别已恢复")
+            return
         active_session_id = (
             self._latest_asr_session_id
             if self._utterance_active and self._latest_asr_session_id > 0
@@ -3704,7 +3822,7 @@ class AppController(QObject):
             self._set_status("正在准备识别", summary, "starting")
         elif summary.startswith("模型加载完成，正在确认实时音频"):
             self._set_status("正在确认实时音频", summary, "starting")
-        elif summary.startswith(("STAGE2 ", "[ASR]", "[ASR TIMING]")):
+        elif summary.startswith(("STAGE2 ", "[ASR]", "[ASR TIMING]", "[GESTURE_")):
             # Keep detector/ASR telemetry in the log without replacing the
             # user-facing status text at every diagnostic milestone.
             return
@@ -3807,6 +3925,8 @@ class AppController(QObject):
 
     def _clear_undo_stack_for_device_boundary(self) -> None:
         """Retire text-operation undo state when a device session ends."""
+        self._undo_queue_timer.stop()
+        self._undo_queue.clear()
         depth = sum(len(stack) for stack in self._operation_stacks.values())
         had_action_state = bool(
             depth
@@ -4655,14 +4775,15 @@ class AppController(QObject):
                 if self._failed_edit_fallback_interaction() is not None:
                     self._set_status(
                         "修改未完成",
-                        "原文本保持不变；按 F8 可改为听写输入",
+                        "原文本保持不变；按 "
+                        f"{self._mode_correction_shortcut} 可改为听写输入",
                         "error",
                     )
                 else:
                     self._set_status("自动监听中", error, "running")
             # A usable dictation fallback owns this short error window. This
             # prevents the next utterance from replacing its state before the
-            # user has had a chance to press F8.
+            # user has had a chance to request conversion.
             if self._failed_edit_fallback_interaction() is None:
                 self._resume_recognition_after_interaction()
             return
@@ -5023,7 +5144,7 @@ class AppController(QObject):
         *,
         target_key: str,
     ) -> None:
-        """Retry a speculative edit failure after the user explicitly presses F8."""
+        """Retry a speculative edit failure after an explicit conversion."""
 
         interaction = operation.auto_context
         if interaction is None:
@@ -5783,7 +5904,9 @@ class AppController(QObject):
         if self._recognition_enabled:
             detail = "原文本保持不变"
             if has_dictation_fallback:
-                detail += "；按 F8 可改为听写输入"
+                detail += (
+                    f"；按 {self._mode_correction_shortcut} 可改为听写输入"
+                )
             self._set_status("修改未完成", detail, "error")
         if not has_dictation_fallback:
             self._resume_recognition_after_interaction()
@@ -5934,14 +6057,80 @@ class AppController(QObject):
 
     @Slot(str)
     def dispatchVoiceAction(self, action: str) -> None:
-        """Thread-safe entry used by keyboard hooks and future Ring gestures."""
+        """Thread-safe entry used by keyboard hooks and QML buttons."""
         self._voiceActionRequested.emit(str(action))
 
+    @Slot(object, object)
+    def _apply_gesture(self, event: object, connection: object) -> None:
+        # Resolve state on the GUI thread, including target focus and visibility.
+        # Pending notifications from a disconnected/replaced Ring are inert.
+        name = str(getattr(event, "name", ""))
+        boundary_reason = (
+            "old_connection" if connection is not self._disconnect_event else
+            "disconnecting" if self._disconnect_event.is_set() else
+            "runtime_inactive" if not self._runtime_active else
+            "disconnected" if not self._connected else ""
+        )
+        if boundary_reason:
+            self._event_log(
+                "GESTURE_ACTION", gesture=name, action="ignored", reason=boundary_reason,
+                confidence=getattr(event, "confidence", None),
+                _live_message="",
+            )
+            return
+        can_cancel = self.interactionCanCancel
+        can_switch = self.modeCorrectionHotkeyAvailable or self.processingModeCorrectionAvailable
+        can_undo = self.appliedActionVisible
+        action = voice_action_for_gesture(
+            name,
+            interaction_active=can_cancel,
+            correction_active=can_switch,
+            undo_active=can_undo,
+        )
+        reason = "dispatched"
+        if action is None:
+            if name not in {"swipe-left", "swipe-down", "swipe-right", "swipe-up"}:
+                reason = "unmapped_gesture"
+            elif not self._applied_target_foreground and self._latest_operation() is not None:
+                reason = "target_not_foreground"
+            elif name in {"swipe-left", "swipe-down"}:
+                reason = "no_cancel_or_visible_undo"
+            else:
+                reason = "no_convertible_result"
+        gesture_label = {
+            "swipe-left": "左滑", "swipe-down": "下滑",
+            "swipe-right": "右滑", "swipe-up": "上滑",
+        }.get(name)
+        outcome = {
+            ACTION_CANCEL: "取消", ACTION_UNDO: "撤销", ACTION_SWITCH_MODE: "转换类型",
+        }.get(action) or {
+            "target_not_foreground": "目标窗口不在前台",
+            "no_cancel_or_visible_undo": "当前无可取消或撤销的操作",
+            "no_convertible_result": "当前无可转换结果",
+        }.get(reason, "未分配操作")
+        self._event_log(
+            "GESTURE_ACTION",
+            _live_message=f"[手势] {gesture_label} → {outcome}" if gesture_label else "",
+            gesture=name,
+            confidence=getattr(event, "confidence", None),
+            action=action or "ignored",
+            reason=reason,
+            can_cancel=can_cancel,
+            can_undo=can_undo,
+            can_switch=can_switch,
+            target_foreground=self._applied_target_foreground,
+            device_timestamp_ms=getattr(event, "timestamp_ms", None),
+            interaction_state=self._interaction_state,
+        )
+        if action is not None:
+            self._apply_voice_action(action, _from_gesture=True)
+
     @Slot(str)
-    def _apply_voice_action(self, action: str) -> None:
+    def _apply_voice_action(self, action: str, *, _from_gesture: bool = False) -> None:
         action = str(action).strip().lower()
         self._event_log(
             "GLOBAL_ACTION",
+            _live_message="" if _from_gesture else None,
             action=action,
             session=self._latest_asr_session_id,
             interaction_state=self._interaction_state,
@@ -5979,11 +6168,16 @@ class AppController(QObject):
         *,
         message: str,
     ) -> None:
-        """Register one application, atomically replacing an F8 source item."""
+        """Register one application, atomically replacing its source item."""
         self._edit_review = None
         interaction = replace(
             interaction,
             target=self._target_with_live_caret(interaction.target),
+            dataset_interaction_id=(
+                self._modification_dataset.interaction_id_for_session(
+                    interaction.session_id
+                )
+            ),
         )
         mode_switch = self._mode_switch_application
         is_mode_switch = bool(
@@ -6466,152 +6660,170 @@ class AppController(QObject):
 
     @Slot()
     def undoLastApplied(self) -> None:
-        """Pop and undo the latest dictation or edit operation."""
+        """Reserve one operation per request, including reentrant callbacks."""
+        if self._quitting or self._voice_history_closed:
+            return
+        # A conversion can pump Qt events while replacing external text. Its
+        # rollback must finish before any user undo can act on that history.
+        if self._mode_switch_application is not None:
+            return
         target_key = self._active_operation_target_key
         stack = self._operation_stacks.get(target_key, [])
-        interaction = stack[-1] if stack else None
-        self._event_log(
-            "UNDO_REQUEST",
-            accepted=interaction is not None,
-            session=interaction.session_id if interaction is not None else 0,
-            mode=interaction.mode if interaction is not None else "",
-            target_key=target_key,
-            target_undo_depth=len(stack),
+        reserved = {id(operation) for _, operation in self._undo_queue}
+        if self._undo_active is not None:
+            reserved.add(id(self._undo_active))
+        interaction = next(
+            (operation for operation in reversed(stack)
+             if id(operation) not in reserved),
+            None,
         )
         if interaction is None:
             return
-        if not self._operation_target_is_focused(interaction):
+        self._undo_queue.append((target_key, interaction))
+        if not self._undo_running and not self._undo_queue_timer.isActive():
+            self._drain_undo_queue()
+
+    @Slot()
+    def _drain_undo_queue(self) -> None:
+        if self._undo_running or not self._undo_queue:
+            return
+        if self._quitting or self._voice_history_closed:
+            self._undo_queue.clear()
+            return
+        self._undo_running = True
+        target_key, interaction = self._undo_queue.popleft()
+        self._undo_active = interaction
+        try:
+            self._send_user_undo(target_key, interaction)
+        finally:
+            self._undo_active = None
+            self._undo_running = False
+            if self._undo_queue:
+                # Yield to Qt between requests without a fixed settling delay.
+                self._undo_queue_timer.start()
+
+    def _send_user_undo(
+        self, target_key: str, interaction: _AppliedInteraction
+    ) -> None:
+        stack = self._operation_stacks.get(target_key, [])
+        if (
+            not stack or stack[-1] is not interaction
+            or self._mode_switch_application is not None
+        ):
+            self._undo_queue.clear()
+            return
+        started_at = time.perf_counter()
+        # Unlike conversion's target check, this never reads/copies contents.
+        if not self._target_is_focused(interaction.target):
+            self._undo_queue.clear()
             self._event_log(
-                "UNDO_RESULT",
-                status="failed",
-                session=interaction.session_id,
-                reason="target_not_focused",
+                "UNDO_RESULT", _deferred=True, status="failed",
+                session=interaction.session_id, reason="target_not_focused",
             )
             self._hide_applied_action_for_focus_mismatch()
             return
+        # Focus adapters may themselves dispatch callbacks. A disconnect or
+        # shutdown must invalidate the reserved operation before the shortcut.
+        if (
+            self._quitting or self._voice_history_closed
+            or self._operation_stacks.get(target_key) is not stack
+            or not stack or stack[-1] is not interaction
+        ):
+            self._undo_queue.clear()
+            return
         self._hide_overlay_timer.stop()
         try:
-            if interaction.original_snapshot is not None:
-                self._restore_snapshot_for_undo(interaction)
-            else:
-                self._undo_native_dictation(interaction)
-        except BaseException as exc:
-            self._transcript_text = f"撤回失败：{exc}"
+            adapter = self._desktop_target_adapter()
+            sender = getattr(adapter, "send_native_undo", None)
+            if not callable(sender):
+                sender = adapter.undo
+            sender(interaction.target)
+        except Exception as exc:
+            self._undo_queue.clear()
+            self._transcript_text = f"撤销发送失败：{exc}"
             self._transcript_final = True
             self._transcript_visible = True
             self._set_interaction_state("error")
             self.transcriptChanged.emit()
             self.interactionChanged.emit()
-            self._append_log(f"撤回上次结果失败：{exc}")
             self._event_log(
-                "UNDO_RESULT",
-                status="failed",
-                session=interaction.session_id,
-                mode=interaction.mode,
-                reason=exc,
+                "UNDO_RESULT", _deferred=True, status="failed",
+                session=interaction.session_id, mode=interaction.mode, reason=exc,
             )
             self._set_status(
-                "撤销未完成",
-                "没有确认原文本恢复；撤销记录仍然保留",
-                "error",
+                "撤销未完成", "原生撤销指令发送失败，撤销记录仍然保留", "error"
             )
             return
 
-        self._retract_applied_recommendations(interaction)
+        elapsed_ms = round((time.perf_counter() - started_at) * 1000, 1)
+        # No readback: success means the shortcut was posted, not that an old
+        # voice snapshot was restored. Capture immutable metadata for the writer.
+        occurred_at = datetime.now(timezone.utc).isoformat(timespec="milliseconds")
+        if self._voice_history_closed:
+            return
+        if interaction.dataset_interaction_id:
+            self._undo_writer.submit(
+                self._save_native_undo,
+                interaction_id=interaction.dataset_interaction_id,
+                session_id=interaction.session_id,
+                request_id=interaction.request_id,
+                mode=interaction.mode,
+                application=interaction.target.process_name or interaction.target.window_title,
+                target_key=self._association_target_key(interaction.target),
+                candidate_text=interaction.applied_text,
+                occurred_at=occurred_at,
+            )
+        self._event_log(
+            "UNDO_RESULT", _deferred=True, status="shortcut_sent",
+            session=interaction.session_id, mode=interaction.mode,
+            method="native_shortcut", verified=False, dispatch_ms=elapsed_ms,
+        )
+        if self._operation_stacks.get(target_key) is not stack:
+            return
+        if not stack or stack[-1] is not interaction:
+            self._undo_queue.clear()
+            return
         stack.pop()
         if not stack:
             self._operation_stacks.pop(target_key, None)
-            self._active_operation_target_key = ""
+            if self._active_operation_target_key == target_key:
+                self._active_operation_target_key = ""
         self._applied_action_visible = bool(self._operation_stacks)
         self._applied_target_foreground = True
         self._applied_target_mismatch_count = 0
         if not self._operation_stacks:
             self._applied_target_timer.stop()
         self._pending_applied_mode_switches.pop(target_key, None)
+        self._retract_applied_recommendations(interaction)
+        # The external undo may remove a manual edit, or a differently grouped
+        # edit. Do not invent a restored baseline or a negative model label.
+        self._stop_manual_association_watch()
         mode_label = "修改" if interaction.mode == INPUT_MODE_EDIT else "听写"
         self._transcript_mode = ""
         self._transcript_text = ""
         self._transcript_final = True
         self._transcript_visible = False
-        self._set_interaction_state(
-            "applied" if stack else "idle"
-        )
+        self._set_interaction_state("applied" if stack else "idle")
         self.transcriptChanged.emit()
         self.interactionChanged.emit()
         self._record_history(
-            f"{mode_label} · 已撤回",
-            raw=interaction.raw_text,
-        )
-        self._append_log(f"用户已撤回上次{mode_label}结果")
-        self._event_log(
-            "UNDO_RESULT",
-            status="applied",
-            session=interaction.session_id,
-            mode=interaction.mode,
-            remaining_target_undo_depth=len(stack),
-        )
-        if interaction.request_id > 0:
-            try:
-                self._modification_dataset.feedback(
-                    interaction.request_id,
-                    "cancel",
-                    final_text=(
-                        interaction.original_snapshot.text
-                        if interaction.original_snapshot is not None
-                        else ""
-                    ),
-                )
-            except BaseException as exc:
-                self._append_log(f"撤回反馈保存失败：{exc}")
-        try:
-            self._modification_dataset.record_application(
-                action="undone",
-                session_id=int(interaction.session_id),
-                request_id=int(interaction.request_id),
-                mode=interaction.mode,
-                application=(
-                    interaction.target.process_name
-                    or interaction.target.window_title
-                ),
-                target_key=self._association_target_key(interaction.target),
-                before_text=(
-                    interaction.applied_text
-                    if interaction.mode == INPUT_MODE_EDIT
-                    else None
-                ),
-                candidate_text=interaction.applied_text,
-                final_text=(
-                    interaction.original_snapshot.text
-                    if interaction.original_snapshot is not None
-                    else None
-                ),
-                method="explicit_user",
-            )
-        except BaseException as exc:
-            self._append_log(f"撤回事件保存失败：{exc}")
-        failed_member = self._record_association_failure(
-            session_id=interaction.session_id,
-            target=interaction.target,
-            mode=interaction.mode,
-            status="已撤回",
-        )
-        self._start_manual_association_watch(
-            interaction.target,
-            failed_member,
-            baseline=(
-                interaction.original_snapshot.text
-                if interaction.original_snapshot is not None
-                else None
-            ),
+            f"{mode_label} · 已发送撤销", raw=interaction.raw_text,
         )
         if self._recognition_enabled:
-            remaining = len(stack)
             detail = (
-                f"已撤回，仍可继续撤回 {remaining} 次"
-                if remaining
-                else "已撤回，等待下一段语音"
+                f"已发送原生撤销，剩余 {len(stack)} 条操作记录"
+                if stack else "已发送原生撤销，等待下一段语音"
             )
             self._set_status("自动监听中", detail, "running")
+
+    def _save_native_undo(self, **fields: object) -> None:
+        """Ordered background persistence, without Qt or desktop interaction."""
+        try:
+            self._modification_dataset.record_application(
+                action="native_undo_sent", method="native_shortcut", **fields,
+            )
+        except Exception as exc:
+            self._append_background_diagnostic(f"原生撤销事件保存失败：{exc}")
 
     @Slot()
     def cancelCurrentUtterance(self) -> None:
@@ -6815,8 +7027,8 @@ class AppController(QObject):
             # after every paste. Keep the current field's actions visible
             # while its owning application is still frontmost. If focus moved
             # to another application with exactly one known stack, activate
-            # that stack. Undo/mode conversion still revalidate the exact
-            # field synchronously before changing any text.
+            # that stack. User undo checks focus without reading text;
+            # conversion separately validates the saved text state.
             is_application_foreground = getattr(
                 adapter, "is_application_foreground", None
             )
@@ -7118,7 +7330,7 @@ class AppController(QObject):
         self._status_kind = kind
         self.statusChanged.emit()
 
-    def _append_log(self, message: str) -> None:
+    def _append_log(self, message: str, *, deferred: bool = False) -> None:
         text = str(message).strip()
         if not text:
             return
@@ -7133,6 +7345,15 @@ class AppController(QObject):
         # Keep enough context in the live viewer for several full utterances;
         # the separate diagnostic file preserves the same lines across runs.
         del self._log_lines[:-1000]
+        if deferred:
+            if not self._voice_history_closed:
+                self._undo_writer.submit(self._write_log_line, line)
+        else:
+            self._write_log_line(line)
+        self.logChanged.emit()
+
+    def _write_log_line(self, line: str) -> None:
+        """File/console output only; safe for the ordered undo writer."""
         try:
             self._diagnostic_log.append(line)
         except BaseException:
@@ -7144,7 +7365,6 @@ class AppController(QObject):
         except BaseException:
             # A closed diagnostic stream must never affect voice input.
             pass
-        self.logChanged.emit()
 
     def _append_background_diagnostic(self, message: str) -> None:
         """Persist worker-thread failures without mutating Qt-facing UI state."""
@@ -7167,7 +7387,10 @@ class AppController(QObject):
             normalized = normalized[: max(0, limit - 1)] + "…"
         return json.dumps(normalized, ensure_ascii=False)
 
-    def _event_log(self, event: str, **fields: object) -> None:
+    def _event_log(
+        self, event: str, *, _live_message: str | None = None,
+        _deferred: bool = False, **fields: object
+    ) -> None:
         """Write one compact, searchable semantic event without changing state."""
 
         parts = [
@@ -7184,7 +7407,15 @@ class AppController(QObject):
             else:
                 rendered = self._diagnostic_field(value)
             parts.append(f"{key}={rendered}")
-        self._append_log(" ".join(parts))
+        if _live_message is None:
+            if _deferred:
+                self._append_log(" ".join(parts), deferred=True)
+            else:
+                self._append_log(" ".join(parts))
+        else:
+            self._append_background_diagnostic(" ".join(parts))
+            if _live_message:
+                self._append_log(_live_message)
 
     def _session_elapsed_ms(self, session_id: int) -> int | None:
         started_at = self._diagnostic_session_started_at.get(int(session_id))

@@ -16,14 +16,19 @@ from ring_python_sdk.core.constants import (
     SUBCMD_SWIPE_PROFILE,
     SUBCMD_SWIPE_TRIGGER,
     SWIPE_CLASS_LABELS,
+    SWIPE_CLASS_LABELS_V2,
     SWIPE_EVENT_MAP,
     SWIPE_EVENT_PACKET_LEN,
     SWIPE_NUM_SCORES,
+    SWIPE_GESTURE_IDS_V2,
     SWIPE_PROFILE_ENTRY_LEN,
     SWIPE_PROFILE_HEADER_LEN,
     SWIPE_TRIGGER_PACKET_LEN,
     TFLITE_OPCODE_NAMES,
 )
+from ring_python_sdk.swipe.v2 import SwipeTriggerV2, parse_swipe_event_v2, parse_swipe_trigger_v2
+from ring_python_sdk.swipe.events import SwipeResult
+
 from ring_python_sdk.core.data_paths import MODE_SWIPE, new_session_dir, resolve_capture_path
 
 
@@ -145,6 +150,10 @@ class SwipeStats:
     profile_count: int = 0
     packet_count: int = 0
     dropped_packet_count: int = 0
+    duplicate_packet_count: int = 0
+    out_of_order_packet_count: int = 0
+    invalid_packet_count: int = 0
+    callback_error_count: int = 0
 
 
 @dataclass
@@ -161,6 +170,10 @@ class SwipeProcessor:
     _last_trigger_seq: int | None = field(default=None, repr=False)
     _last_profile_seq: int | None = field(default=None, repr=False)
     profile_csv_path: Path | None = field(default=None, init=False)
+    on_event: Callable[[SwipeResult], None] | None = field(default=None, repr=False, kw_only=True)
+    on_trigger: Callable[[SwipeResult], None] | None = field(default=None, repr=False, kw_only=True)
+    print_triggers: bool = field(default=True, kw_only=True)
+    print_profile: bool = field(default=True, kw_only=True)
 
     def __post_init__(self) -> None:
         self.csv_path.parent.mkdir(parents=True, exist_ok=True)
@@ -181,6 +194,8 @@ class SwipeProcessor:
                 "s5",
                 "s6",
                 "uptime_ms",
+                *(f"p{label}" for label in SWIPE_GESTURE_IDS_V2),
+                "confidence", "center_uptime_ms", "event_mass",
             ]
         )
         self.profile_csv_path = self.csv_path.with_name(
@@ -212,13 +227,68 @@ class SwipeProcessor:
 
     def _note_seq_gap(self, seq: int, last: int | None) -> int | None:
         if last is not None:
-            expected = (last + 1) & 0xFFFF
-            if seq != expected:
-                gap = (seq - expected) & 0xFFFF
-                self.stats.dropped_packet_count += gap
+            delta = (seq - last) & 0xFFFF
+            if delta == 0:
+                self.stats.duplicate_packet_count += 1
+            elif delta >= 0x8000:
+                self.stats.out_of_order_packet_count += 1
+                return last
+            elif delta > 1:
+                self.stats.dropped_packet_count += delta - 1
         return seq
 
+    def _publish(self, result: SwipeResult) -> None:
+        callback = self.on_trigger if result.kind == "trigger" else self.on_event
+        if result.kind == "trigger" and self._file is not None:
+            self._file.flush()
+        if callback is not None:
+            try:
+                callback(result)
+            except Exception as exc:
+                self.stats.callback_error_count += 1
+                self._emit(f"swipe {result.kind} callback failed: {exc}")
+
     def handle_notification(self, _sender, data: bytearray) -> None:
+        if self._file is None:
+            return
+        result = parse_swipe_trigger_v2(data) or parse_swipe_event_v2(data)
+        if result is not None:
+            trigger = isinstance(result, SwipeTriggerV2)
+            label = SWIPE_CLASS_LABELS_V2.get(result.class_id, str(result.class_id))
+            event = label if trigger else ""
+            self.stats.packet_count += 1
+            if trigger:
+                self.stats.trigger_count += 1
+                self._last_trigger_seq = self._note_seq_gap(result.seq, self._last_trigger_seq)
+            else:
+                self.stats.event_count += 1
+                self._last_infer_seq = self._note_seq_gap(result.seq, self._last_infer_seq)
+            if self._writer is not None:
+                self._writer.writerow([
+                    "trigger_v2" if trigger else "infer_v2", result.seq, result.class_id,
+                    label, event, *([""] * SWIPE_NUM_SCORES), result.uptime_ms,
+                    *result.probabilities, result.confidence,
+                    result.center_uptime_ms if trigger else "",
+                    result.event_mass if trigger else "",
+                ])
+            if (self.print_triggers if trigger else self.print_events):
+                kind = "event" if trigger else "infer"
+                detail = (f" center_uptime_ms={result.center_uptime_ms} mass={result.event_mass:.6f}"
+                          if trigger else "")
+                self._emit(f"swipe {kind} v2 seq={result.seq} class={result.class_id}({label}) "
+                           f"confidence={result.confidence:.6f} probabilities={list(result.probabilities)} "
+                           f"uptime_ms={result.uptime_ms}{detail}")
+            self._publish(SwipeResult(
+                protocol_version=2,
+                kind="trigger" if trigger else "event",
+                seq=result.seq,
+                class_id=result.class_id,
+                uptime_ms=result.uptime_ms,
+                probabilities=result.probabilities,
+                center_uptime_ms=result.center_uptime_ms if trigger else None,
+                event_mass=result.event_mass if trigger else None,
+            ))
+            return
         profile = parse_swipe_profile_packet(data)
         if profile is not None:
             seq, n_ops, n_samples, total_us, entries = profile
@@ -238,9 +308,10 @@ class SwipeProcessor:
                             us,
                         ]
                     )
-            self._emit(
-                format_swipe_profile_line(seq, n_ops, n_samples, total_us, entries)
-            )
+            if self.print_profile:
+                self._emit(
+                    format_swipe_profile_line(seq, n_ops, n_samples, total_us, entries)
+                )
             return
 
         trigger = parse_swipe_trigger_packet(data)
@@ -253,14 +324,17 @@ class SwipeProcessor:
             self.stats.trigger_count += 1
             if self._writer is not None:
                 self._writer.writerow(
-                    ["trigger", seq, class_id, label, event, *scores, uptime_ms]
+                    ["trigger", seq, class_id, label, event, *scores, uptime_ms, *([""] * 15)]
                 )
-            # Always log recognized gestures when swipe is on.
-            self._emit(format_swipe_trigger_line(seq, class_id, scores, uptime_ms))
+            if self.print_triggers:
+                self._emit(format_swipe_trigger_line(seq, class_id, scores, uptime_ms))
+            self._publish(SwipeResult(1, "trigger", seq, class_id, uptime_ms, scores=scores))
             return
 
         parsed = parse_swipe_event_packet(data)
         if parsed is None:
+            if data and data[0] == CMD_SWIPE:
+                self.stats.invalid_packet_count += 1
             return
 
         seq, class_id, scores, uptime_ms = parsed
@@ -272,8 +346,9 @@ class SwipeProcessor:
 
         if self._writer is not None:
             self._writer.writerow(
-                ["infer", seq, class_id, label, "", *scores, uptime_ms]
+                ["infer", seq, class_id, label, "", *scores, uptime_ms, *([""] * 15)]
             )
 
         if self.print_events:
             self._emit(format_swipe_infer_line(seq, class_id, scores, uptime_ms))
+        self._publish(SwipeResult(1, "event", seq, class_id, uptime_ms, scores=scores))
