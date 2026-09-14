@@ -469,6 +469,7 @@ def _build_session_controller(
         stage2_delay_s=detector.config.stage2_delay_s,
         min_utterance_s=args.asr_min_duration,
         max_utterance_s=args.asr_max_duration,
+        end_on_tap=getattr(args, "asr_end_on_tap", False),
         on_state=on_state,
         on_session_end=session_end_observer,
         manual_active=push_to_talk.is_active if push_to_talk is not None else None,

@@ -53,7 +53,7 @@ def test_overlay_starts_on_detected_voice_and_cancel_ignores_stale_asr(
 
     controller._apply_runtime_status("[ASR] START t=1.000s (pre-roll=0.40s)")
     assert controller.transcriptVisible is True
-    assert controller.transcriptText == "正在收听语音"
+    assert controller.transcriptText == "正在收听语音 · tap 结束"
     assert controller.transcriptPrimaryText == ""
     assert controller.interactionState == "listening"
     assert controller.interactionCanCancel is True
@@ -66,7 +66,7 @@ def test_overlay_starts_on_detected_voice_and_cancel_ignores_stale_asr(
 
     controller._apply_runtime_status("[ASR] START t=2.000s (pre-roll=0.40s)")
     assert controller.interactionState == "listening"
-    assert controller.transcriptText == "正在收听语音"
+    assert controller.transcriptText == "正在收听语音 · tap 结束"
     _close(controller)
 
 
@@ -82,7 +82,7 @@ def test_overlay_keeps_asr_as_primary_text_while_status_changes(
     controller._apply_runtime_update("正在形成", False, "", 23)
 
     assert controller.transcriptPrimaryText == "正在形成"
-    assert controller.transcriptText == "正在收听语音"
+    assert controller.transcriptText == "正在收听语音 · tap 结束"
 
     controller._apply_runtime_update("这是最终识别文本", True, "", 23)
 
@@ -312,7 +312,7 @@ def test_failed_initial_edit_keeps_f8_dictation_fallback(tmp_path, monkeypatch):
     assert controller.interactionState == "error"
     assert "两种编辑协议均失败" in controller.transcriptText
     assert controller.processingModeCorrectionAvailable is True
-    assert controller._recognition_event.is_set() is False
+    assert controller._recognition_event.is_set() is True
 
     controller.switchCurrentInputMode()
 
@@ -500,6 +500,15 @@ def test_applied_overlay_duration_is_persisted_and_live_adjustable(
     assert int(
         controller._settings.value("ui/appliedOverlayDurationSeconds")
     ) == 7
+
+    controller.appliedOverlayDurationSeconds = 1.5
+    assert controller._applied_action_hide_timer.interval() == 1500
+    assert controller._applied_action_hide_timer.isActive()
+    assert controller.undoDepth == 1
+    restarted = _controller(tmp_path, monkeypatch)
+    assert restarted.appliedOverlayDurationSeconds == 1.5
+    assert restarted._applied_action_hide_timer.interval() == 1500
+    _close(restarted)
 
     controller.appliedOverlayDurationSeconds = 99
     assert controller.appliedOverlayDurationSeconds == 10
@@ -2435,7 +2444,7 @@ def test_native_undo_does_not_show_association_prompt(
     assert desktop.text == "原文"
     assert controller.associationRecommendationVisible is False
     assert controller.transcriptVisible is False
-    assert controller.undoAvailable is False
+    assert controller.undoAvailable is True  # Native retry survives voice metadata.
     _close(controller)
 
 
@@ -2782,8 +2791,8 @@ def test_auto_error_without_edit_target_still_allows_switch_and_cancel(
     assert controller.interactionCanCancel is True
     assert controller.modeCorrectionAvailable is False
     assert controller.processingModeCorrectionAvailable is True
-    assert controller._interaction_recognition_suspended is True
-    assert controller._recognition_event.is_set() is False
+    assert controller._interaction_recognition_suspended is False
+    assert controller._recognition_event.is_set() is True
     controller._hide_overlay_timer.stop()
     controller._hide_transcript()
     assert controller._active_auto_interaction is None
@@ -2876,7 +2885,7 @@ def test_edit_result_applies_immediately_without_preview_confirmation(
     controller._apply_voice_action("undo")
     assert replacements == [("旧文本", "新文本")]
     assert controller._desktop_target.text == "旧文本"
-    assert controller.undoAvailable is False
+    assert controller.undoAvailable is True
     assert not hasattr(controller, "confirmEdit")
     _close(controller)
 
@@ -2994,7 +3003,8 @@ def test_undo_does_not_rewrite_when_app_ignores_native_shortcut(
     assert desktop.replace_calls == 0
     assert desktop.text == "新文本"
     assert controller.undoDepth == 0
-    assert controller.interactionState == "idle"
+    assert controller.interactionState == "applied"
+    assert controller.nativeUndoAvailable is True
     _close(controller)
 
 
@@ -3393,7 +3403,7 @@ def test_explicit_full_delete_finishes_and_enters_undo_stack(
 
     controller.undoLastApplied()
     assert desktop.text == "需要删除的整句话。"
-    assert controller.undoAvailable is False
+    assert controller.undoAvailable is True
     _close(controller)
 
 

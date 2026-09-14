@@ -59,7 +59,7 @@ def main(argv: list[str] | None = None) -> int:
                     controller.modeCorrectionHotkeyAvailable
                     or controller.processingModeCorrectionAvailable
                 ),
-                is_undo_active=lambda: controller.appliedActionVisible,
+                is_undo_active=lambda: controller.nativeUndoAvailable,
             )
             app.aboutToQuit.connect(voice_action_hotkeys.close)
         except BaseException as exc:
@@ -86,7 +86,7 @@ def main(argv: list[str] | None = None) -> int:
                         controller.modeCorrectionHotkeyAvailable
                         or controller.processingModeCorrectionAvailable
                     ),
-                    is_undo_active=lambda: controller.appliedActionVisible,
+                    is_undo_active=lambda: controller.nativeUndoAvailable,
                 )
                 print("[voice-actions] macOS 语音交互按键已就绪")
             except BaseException as exc:
@@ -114,6 +114,9 @@ def main(argv: list[str] | None = None) -> int:
         detail = "\n".join(qml_errors) or "QML engine did not create a root window"
         raise RuntimeError(f"主界面加载失败：{detail}")
     window = engine.rootObjects()[0]
+    from .notifications import install_ring_disconnect_notice
+
+    install_ring_disconnect_notice(window, controller)
     print("[startup] QML root window ready")
     # Load model weights and seed both stable prompt prefixes after the first
     # frame instead of making the user's first utterance pay this cost.

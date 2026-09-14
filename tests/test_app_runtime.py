@@ -580,6 +580,7 @@ def test_ui_runtime_cancels_current_utterance_without_disabling_next_audio(
             events.append("controller-reset")
 
         def process(self, _block, _events, **_kwargs):
+            assert recognition_event.is_set()
             events.append("next-block-processed")
 
         def flush(self):
@@ -613,7 +614,7 @@ def test_ui_runtime_cancels_current_utterance_without_disabling_next_audio(
 
     assert events.count("utterance-discarded") == 1
     assert "next-block-processed" in events
-    assert recognition_event.is_set()
+    assert not recognition_event.is_set()  # EOF stops the Ring session.
 
 
 def test_disconnect_interrupts_connection_before_models_load(monkeypatch):
@@ -708,3 +709,115 @@ def test_connection_failure_closes_device_and_reports_disconnected(monkeypatch):
     assert events.index("source-closed") < events.index("ui-disconnected")
     assert "ui-connected" not in events
     assert "detector-loaded" not in events
+
+
+@pytest.mark.parametrize("failure", ["eof", "read", "close"])
+def test_runtime_alerts_before_device_cleanup_and_never_submits_partial_speech(monkeypatch, failure):
+    events = []
+    stop = threading.Event()
+    recognition = threading.Event()
+    recognition.set()
+
+    class Source:
+        error = None
+
+        def __init__(self, **kwargs):
+            self.reads = 0
+
+        def connect(self):
+            pass
+
+        def start_stream(self, **kwargs):
+            pass
+
+        def read(self, frames):
+            self.reads += 1
+            if self.reads == 1:
+                return np.zeros(frames, dtype=np.float32)
+            if failure == "read":
+                raise RuntimeError("BLE lost")
+            return None
+
+        def close(self):
+            assert stop.is_set()
+            assert not recognition.is_set()
+            assert events.count("stopping") == 1
+            events.append("source-close")
+            if failure == "close":
+                raise RuntimeError("BLE cleanup failed")
+
+    class Controller:
+        def reset(self):
+            pass
+
+        def process(self, *args, **kwargs):
+            events.append("listening")
+
+        def flush(self):
+            pytest.fail("Ring disconnect must not submit unconfirmed speech")
+
+        def abort(self):
+            events.append("abort")
+
+        def close(self):
+            events.append("controller-close")
+
+    monkeypatch.setattr(app_runtime, "RingAudioSource", Source)
+    monkeypatch.setattr(app_runtime, "_build_detector", lambda args: SimpleNamespace(reset=lambda: None, feed=lambda block: []))
+    monkeypatch.setattr(app_runtime, "_build_session_controller", lambda *args, **kwargs: Controller())
+
+    def run():
+        RecognitionRuntime(RuntimeSettings()).run(
+            stop, recognition, on_update=lambda update: None, on_state=lambda message: None,
+            on_connected=lambda: None, on_started=lambda: None,
+            on_stopping=lambda: events.append("stopping"),
+            on_disconnected=lambda: events.append("disconnected"),
+        )
+
+    if failure == "eof":
+        run()
+    else:
+        with pytest.raises(RuntimeError, match="BLE"):
+            run()
+    assert events.index("listening") < events.index("stopping") < events.index("source-close")
+    assert events[-2:] == ["abort", "controller-close"]
+    assert events.count("stopping") == 1
+
+
+def test_runtime_detects_drop_while_model_initialization_is_blocked(monkeypatch):
+    events = []
+    closed = threading.Event()
+    source = None
+
+    class Source:
+        error = None
+
+        def __init__(self, **kwargs):
+            nonlocal source
+            source = self
+
+        def connect(self):
+            pass
+
+        def close(self):
+            assert "stopping" in events
+            events.append("source-close")
+            closed.set()
+
+    def build_detector(args):
+        source.error = RuntimeError("Bluetooth powered off")
+        assert closed.wait(2)
+        events.append("detector-finished")
+        return SimpleNamespace(reset=lambda: None)
+
+    monkeypatch.setattr(app_runtime, "RingAudioSource", Source)
+    monkeypatch.setattr(app_runtime, "_build_detector", build_detector)
+    with pytest.raises(RuntimeError, match="Bluetooth powered off"):
+        RecognitionRuntime(RuntimeSettings()).run(
+            threading.Event(), threading.Event(), on_update=lambda update: None,
+            on_state=lambda message: None, on_connected=lambda: None, on_started=lambda: None,
+            on_stopping=lambda: events.append("stopping"),
+            on_disconnected=lambda: events.append("disconnected"),
+        )
+    assert events.count("stopping") == events.count("source-close") == 1
+    assert events.index("stopping") < events.index("detector-finished")

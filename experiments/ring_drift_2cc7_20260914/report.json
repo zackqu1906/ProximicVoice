@@ -1,0 +1,50 @@
+{
+  "ring_selector": "2cc7",
+  "ring_capture": "/Users/admin/Downloads/ProximicVoice-main/experiments/ring_drift_2cc7_20260914/ring_sdk/session/20260914_153448/ring_audio.wav",
+  "reference_capture": "/Users/admin/Downloads/ProximicVoice-main/experiments/ring_drift_2cc7_20260914/reference.wav",
+  "reference_device": "MacBook Pro Microphone",
+  "output_device": "MacBook Pro Speakers",
+  "wall_test_s": 125.932563583,
+  "reference_overflow_callbacks": 0,
+  "ring_diagnostic": "encoding=pcm, callbacks=1371, samples=2193600, audio=137.100s, pcm_span=139.393s, last_frame_seq=1394, last_pcm_age=0.564s, rms=-50.3dBFS, peak=-22.3dBFS, near_zero=62.28%, clipped=0.000%, capture=/Users/admin/Downloads/ProximicVoice-main/experiments/ring_drift_2cc7_20260914/ring_sdk/session/20260914_153448/ring_audio.wav",
+  "ring_transport": {
+    "usable": true,
+    "callbacks": 1343,
+    "samples": 2148800,
+    "host_span_s": 134.25554112499958,
+    "fitted_delivery_rate_samples_per_s": 15994.025310046856,
+    "fitted_delivery_rate_error_ppm": -373.4181220714783,
+    "arrival_interval_ms_p50": 102.12297950056382,
+    "arrival_interval_ms_p95": 137.68788125253195,
+    "arrival_interval_ms_p99": 165.04582249919622,
+    "arrival_interval_ms_max": 221.46020899890573,
+    "delivery_timing_residual_ms_p95": 39.96747210195897,
+    "sequence_gap_events": 0,
+    "missing_frames": 0,
+    "duplicates": 0,
+    "out_of_order": 0
+  },
+  "acoustic_alignment": {
+    "expected_probes": 12,
+    "ring_probes_found": 12,
+    "reference_probes_found": 0,
+    "paired_probes": 0,
+    "ring_probe_scores": [
+      0.3776929011769879,
+      0.34564979877465896,
+      0.3887745819277028,
+      0.4097708022344788,
+      0.35293459486510176,
+      0.3685061524806021,
+      0.4187917795496053,
+      0.4095567951960387,
+      0.3523004019599366,
+      0.3498787232686879,
+      0.35379472945623963,
+      0.4237336336973232
+    ],
+    "reference_probe_scores": [],
+    "usable": false,
+    "reason": "Fewer than four acoustic probes were detected in both paths"
+  }
+}

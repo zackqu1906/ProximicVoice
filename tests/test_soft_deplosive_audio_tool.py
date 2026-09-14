@@ -96,3 +96,50 @@ def test_stronger_profile_increases_only_low_band_reduction():
         gentle_stats.low_20_300hz_change_db - 2.0
     )
     assert abs(strong_stats.speech_300_3000hz_change_db) < 0.1
+
+
+def test_aggressive_low_profile_is_stronger_without_fullband_ducking():
+    time = np.arange(2 * tool.SAMPLE_RATE, dtype=np.float64) / tool.SAMPLE_RATE
+    audio = 0.04 * np.sin(2.0 * np.pi * 900.0 * time)
+    start = int(0.7 * tool.SAMPLE_RATE)
+    size = int(0.1 * tool.SAMPLE_RATE)
+    burst_time = np.arange(size, dtype=np.float64) / tool.SAMPLE_RATE
+    audio[start : start + size] += (
+        0.9 * np.sin(2.0 * np.pi * 110.0 * burst_time) * np.hanning(size)
+    )
+    audio = audio.astype(np.float32)
+
+    _strong, strong_stats, _events, _envelope = tool.process_soft_deplosive(
+        audio, tool.config_for_strength("stronger")
+    )
+    _aggressive, aggressive_stats, _events, _envelope = (
+        tool.process_soft_deplosive(
+            audio, tool.config_for_strength("aggressive-low")
+        )
+    )
+
+    assert aggressive_stats.maximum_attenuation_db >= 12.0
+    assert aggressive_stats.low_20_300hz_change_db < (
+        strong_stats.low_20_300hz_change_db - 2.0
+    )
+    assert abs(aggressive_stats.speech_300_3000hz_change_db) < 0.1
+
+
+def test_aggressive_300_profile_extends_repair_without_touching_high_band():
+    time = np.arange(2 * tool.SAMPLE_RATE, dtype=np.float64) / tool.SAMPLE_RATE
+    audio = 0.025 * np.sin(2.0 * np.pi * 4200.0 * time)
+    start = int(0.65 * tool.SAMPLE_RATE)
+    size = int(0.14 * tool.SAMPLE_RATE)
+    burst_time = np.arange(size, dtype=np.float64) / tool.SAMPLE_RATE
+    audio[start : start + size] += (
+        0.85 * np.sin(2.0 * np.pi * 240.0 * burst_time) * np.hanning(size)
+    )
+
+    _processed, stats, events, _envelope = tool.process_soft_deplosive(
+        audio.astype(np.float32), tool.config_for_strength("aggressive-300")
+    )
+
+    assert events
+    assert stats.maximum_attenuation_db >= 16.0
+    assert stats.low_20_300hz_change_db < -8.0
+    assert abs(stats.high_3000_7500hz_change_db) < 0.01

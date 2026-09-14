@@ -510,7 +510,8 @@ class RingAudioSource(AudioSource):
                 com_initialized = True
             asyncio.run(self._run_async())
         except BaseException as exc:
-            self._signal_error(exc)
+            if self._error is None:
+                self._signal_error(exc)
         finally:
             if com_initialized:
                 ctypes.windll.ole32.CoUninitialize()
@@ -948,6 +949,12 @@ class RingAudioSource(AudioSource):
                     "to resume; disconnect manually if the device does not recover"
                 )
                 stall_reported = True
+        except BaseException as exc:
+            # Publish transport/startup failure before SDK shutdown awaits.
+            # The runtime watcher can then stop interaction and show the
+            # disconnect notice while slow BLE cleanup is still in progress.
+            self._signal_error(exc)
+            raise
         finally:
             if battery_refresh_task is not None:
                 battery_refresh_task.cancel()

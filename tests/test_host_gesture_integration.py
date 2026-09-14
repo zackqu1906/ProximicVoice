@@ -11,6 +11,152 @@ from proximic_ring import app_runtime
 from proximic_ring.audio.ring import RingAudioSource
 
 
+@pytest.mark.parametrize("confirm_name,slot,live", [
+    ("tap", 0, False), ("snap", 1, False), ("swipe-left", 0, True),
+    ("swipe-up", 1, True),
+])
+def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypatch, confirm_name, slot, live):
+    from proximic_ring.asr.controller import ProximitySessionController
+    from proximic_ring.events import Stage2Event
+    import ring_python_sdk.gestures as gestures
+    from proximic_ring.gesture_settings import GestureBindings, GESTURE_LABELS
+
+    recognition, disconnect = threading.Event(), threading.Event()
+    recognition.set()
+    state, logs, finals, actions, detector_calls = {}, [], [], [], []
+    confirms = (confirm_name, "") if slot == 0 else ("", confirm_name)
+    remaining = [name for name in GESTURE_LABELS if name != confirm_name]
+    configured = GestureBindings(confirm=confirms, undo=tuple(remaining[:2]), switch_mode=tuple(remaining[2:4]))
+    state["bindings"] = GestureBindings() if live else configured
+    audio_thread = threading.get_ident()
+
+    class FakeRecognizer:
+        prediction_count = 0
+        reset_count = 1
+
+        def __init__(self, *, on_gesture):
+            state["gesture_callback"] = on_gesture
+            self.classifier = SimpleNamespace(window_size=60, predict=lambda _x: None)
+
+    def tap(name=None):
+        thread = threading.Thread(target=lambda: state["gesture_callback"](
+            SimpleNamespace(name=name or next(item for item in state["bindings"].confirm if item), confidence=0.99)
+        ))
+        thread.start()
+        thread.join(1)
+        assert not thread.is_alive()
+
+    class Sink:
+        def start(self, audio):
+            pass
+
+        def feed(self, audio):
+            pass
+
+        def end(self, audio):
+            assert threading.get_ident() == audio_thread
+            assert not recognition.is_set()
+            finals.append(audio.copy())
+
+        def close(self):
+            pass
+
+        def abort(self):
+            pass
+
+    class FakeSource:
+        error = None
+        read_count = 0
+
+        def __init__(self, **kwargs):
+            assert kwargs["imu_hz"] == 200
+
+        def connect(self):
+            pass
+
+        def start_stream(self, **kwargs):
+            pass
+
+        def read(self, frames):
+            self.read_count += 1
+            if self.read_count == 1:
+                tap()  # Idle tap cannot finish the imminent first ACTIVATE.
+            elif self.read_count in (2, 3):
+                state["bindings"] = configured  # Live edit without a reconnect.
+                assert state["gate"].active and not finals
+                assert len(detector_calls) == 1
+                if self.read_count == 3 and confirm_name != "tap":
+                    tap("tap")  # Former endpoint now belongs to a GUI action.
+            elif self.read_count == 4:
+                tap()
+                tap()  # Only one endpoint may be queued.
+            elif self.read_count == 5:
+                assert len(finals) == 1
+                assert not recognition.is_set()
+                tap()  # Ignore taps while ASR/LLM/application is outstanding.
+            elif self.read_count == 6:
+                assert len(detector_calls) == 1
+                recognition.set()  # Simulate normal pipeline completion.
+            elif self.read_count == 7:
+                assert state["gate"].active
+                assert len(detector_calls) == 2
+                assert len(finals) == 1
+            else:
+                disconnect.set()
+                return None
+            return np.full(frames, self.read_count / 10, dtype=np.float32)
+
+        def close(self):
+            # Teardown callbacks must not submit the second open utterance.
+            tap()
+
+    class FakeDetector:
+        def reset(self):
+            pass
+
+        def feed(self, block):
+            detector_calls.append(block.copy())
+            return [Stage2Event(320, .02, -.98, .02, 2., (2., 0.), True)]
+
+    def build_controller(args, _detector, **kwargs):
+        assert args.asr_end_on_tap is True
+        gate = ProximitySessionController(
+            Sink(), pre_roll_s=0.02, min_utterance_s=0.02,
+            end_on_tap=args.asr_end_on_tap, on_state=kwargs["on_state"],
+            on_session_end=kwargs["session_end_observer"],
+        )
+        state["gate"] = gate
+        return gate
+
+    monkeypatch.setattr(gestures, "GestureRecognizer", FakeRecognizer)
+    monkeypatch.setattr(app_runtime, "RingAudioSource", FakeSource)
+    monkeypatch.setattr(app_runtime, "_build_detector", lambda _args: FakeDetector())
+    monkeypatch.setattr(app_runtime, "_build_session_controller", build_controller)
+    app_runtime.RecognitionRuntime(
+        app_runtime.RuntimeSettings(asr_end_on_tap=True, gesture_bindings=GestureBindings() if live else configured)
+    ).run(
+        disconnect, recognition,
+        on_update=lambda _update: None, on_state=logs.append,
+        on_connected=lambda: None, on_disconnected=lambda: None,
+        on_started=lambda: None, on_session_ended=recognition.clear,
+        on_gesture=actions.append,
+        gesture_bindings_provider=(lambda: state["bindings"]) if live else None,
+    )
+    if confirm_name == "tap":
+        assert actions == []
+    else:
+        assert len(actions) == 1
+        forwarded = actions[0].event if live else actions[0]
+        assert forwarded.name == "tap"
+        if live:
+            assert actions[0].bindings is configured
+    # Confirmations themselves never wait for GUI dispatch or state changes.
+    assert len(finals) == 1 and finals[0].size == 4 * 320
+    assert logs.count(f"[手势] {confirm_name} → 结束本句") == 1
+    assert any("END reason=gesture-tap" in line for line in logs)
+    assert not any("手势不可用" in line or "手势已停止" in line for line in logs)
+
+
 @pytest.mark.parametrize("backend,initial,expected", [
     ("volcengine", 8, 1), ("volcengine", 1, 1),
     ("streaming_sensevoice", 4, 4), ("funasr_nano", 4, 4),
@@ -208,11 +354,21 @@ def test_gesture_callback_queues_to_gui_and_cancel_alternates_with_keyboard(cont
         assert controller._cancel_utterance_event.is_set()
 
 
+def test_desktop_runtime_enables_tap_while_other_gesture_actions_remain_independent(controller):
+    controller._selector = "test-ring"
+    controller._model_path = ""
+    controller._streaming_repo = ""
+    controller._asr_backend = "volcengine"
+    assert controller._runtime_settings().to_namespace().asr_end_on_tap is True
+
+
 def test_gesture_conversion_and_undo_use_existing_availability(controller, monkeypatch):
     calls = []
     operation = SimpleNamespace(auto_context=object())
     monkeypatch.setattr(controller, "_active_operation_stack", lambda: [operation])
     monkeypatch.setattr(controller, "_latest_operation", lambda: operation)
+    monkeypatch.setattr(controller, "_active_undo_target", lambda: object())
+    monkeypatch.setattr(controller, "_target_is_focused", lambda _target: controller._applied_target_foreground)
     monkeypatch.setattr(controller, "_operation_can_switch_mode", lambda _op: True)
     monkeypatch.setattr(controller, "undoLastApplied", lambda: calls.append("undo"))
     monkeypatch.setattr(controller, "cancelCurrentUtterance", lambda: calls.append("cancel"))
@@ -236,13 +392,13 @@ def test_gesture_conversion_and_undo_use_existing_availability(controller, monke
     assert controller.inputMode == original_mode
 
     controller._applied_action_visible = False
-    emit("swipe-left")  # Escape is unavailable once the undo overlay disappears.
+    emit("swipe-left")  # Native undo remains available after popup timeout.
     emit("swipe-up")  # Conversion key is deliberately available after timeout.
-    assert calls == ["undo"] * 3 + ["switch_mode"] * 4
+    assert calls == ["undo"] * 3 + ["switch_mode"] * 3 + ["undo", "switch_mode"]
     controller._applied_target_foreground = False
     for name in ("swipe-up", "swipe-right", "swipe-left", "swipe-down", "tap", "snap"):
         emit(name)
-    assert calls == ["undo"] * 3 + ["switch_mode"] * 4
+    assert calls == ["undo"] * 3 + ["switch_mode"] * 3 + ["undo", "switch_mode"]
 
 
 @pytest.mark.parametrize("boundary", ["old_connection", "disconnecting", "disconnected", "finished"])

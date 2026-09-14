@@ -107,7 +107,12 @@ class SessionFanout:
             sink.feed(audio_16k)
 
     def end(self, final_audio_16k: np.ndarray) -> None:
-        for sink in self.sinks:
+        # Queue final recognition before synchronous WAV/dataset observers.
+        # START order stays unchanged so observers allocate session ids first.
+        for sink in sorted(
+            self.sinks,
+            key=lambda item: isinstance(item, RawAudioObserverSessionSink),
+        ):
             sink.end(final_audio_16k)
 
     def discard(self, captured_audio_16k: np.ndarray) -> None:

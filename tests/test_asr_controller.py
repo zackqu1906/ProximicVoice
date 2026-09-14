@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from proximic_ring.asr.controller import DirectASRSessionController, ProximityASRController
 from proximic_ring.asr.session_sink import (
@@ -85,6 +86,93 @@ def make_gate(worker, **kwargs):
     )
     defaults.update(kwargs)
     return ProximityASRController(worker, **defaults)
+
+
+@pytest.mark.parametrize("evidence", ["rejects", "silence"])
+def test_tap_mode_keeps_all_audio_past_auto_endpoints(evidence):
+    sink = StreamingRecorder()
+    gate = make_gate(sink, end_on_tap=True)
+    block = np.full(320, 0.2, dtype=np.float32)
+    gate.process(block, [activate_event(320)])
+    for index in range(1, 850):  # 17 seconds: past inactivity and old 15 s cap.
+        events = [reject_event((index + 1) * 320)] if evidence == "rejects" else []
+        gate.process(block, events)
+    assert gate.active and not sink.ended
+    assert gate.consecutive_rejects == 0
+    assert len(sink.started) == 1
+    assert sum(chunk.size for chunk in sink.started + sink.fed) == 850 * 320
+    assert gate.request_tap_end()
+    gate.process(block, [])
+    assert not gate.active and len(sink.ended) == 1
+    np.testing.assert_array_equal(sink.ended[0], np.full(851 * 320, 0.2, dtype=np.float32))
+
+
+@pytest.mark.parametrize("boundary", ["discard_current", "reset", "abort", "flush"])
+def test_tap_is_single_use_and_never_survives_cancel_pause_or_disconnect(boundary):
+    sink = StreamingRecorder()
+    gate = make_gate(sink, end_on_tap=True)
+    block = np.full(320, 0.2, dtype=np.float32)
+    assert not gate.request_tap_end()
+    gate.process(block, [activate_event(320)])
+    assert gate.request_tap_end()
+    assert not gate.request_tap_end()
+    getattr(gate, boundary)()
+    assert not gate.request_tap_end()
+    assert not sink.ended
+    gate.process(block, [activate_event(320)])
+    gate.process(block, [])
+    assert gate.active and not sink.ended
+    assert gate.request_tap_end()
+    gate.process(block, [])
+    assert len(sink.ended) == 1
+    assert not gate.request_tap_end()
+
+
+def test_tap_closes_gate_and_submits_asr_before_dataset_io():
+    order, states = [], []
+
+    class Sink(StreamingRecorder):
+        def start(self, audio):
+            order.append("asr-start")
+            super().start(audio)
+
+        def end(self, audio):
+            order.append("asr-final")
+            super().end(audio)
+
+    sink = Sink()
+    fanout = SessionFanout([
+        RawAudioObserverSessionSink(
+            lambda *_args: order.append("save-audio"),
+            on_start=lambda _id: order.append("allocate-session"),
+        ),
+        sink,
+    ])
+    gate = make_gate(
+        fanout, end_on_tap=True, on_state=states.append,
+        on_session_end=lambda: order.append("close-gate"),
+    )
+    block = np.full(320, 0.2, dtype=np.float32)
+    gate.process(block, [activate_event(320)])
+    assert order == ["allocate-session", "asr-start"]
+    gate.request_tap_end()
+    gate.process(block, [activate_event(640)])
+    assert order == ["allocate-session", "asr-start", "close-gate", "asr-final", "save-audio"]
+    assert any("END reason=gesture-tap" in s and "tap_to_end_ms=" in s for s in states)
+
+
+def test_short_tap_still_emits_terminal_result_to_release_interaction_gate():
+    sink, ended = StreamingRecorder(), []
+    gate = make_gate(
+        sink, end_on_tap=True, min_utterance_s=0.4,
+        on_session_end=lambda: ended.append(True),
+    )
+    block = np.full(320, 0.2, dtype=np.float32)
+    gate.process(block, [activate_event(320)])
+    gate.request_tap_end()
+    gate.process(block, [])
+    assert ended == [True]
+    assert len(sink.ended) == 1 and sink.ended[0].size == 0
 
 
 def test_no_activation_never_submits():

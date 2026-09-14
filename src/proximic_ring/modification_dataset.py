@@ -111,6 +111,9 @@ class ModificationDatasetCollector:
         self._request_interactions: dict[int, str] = {}
         self._routing_interactions: dict[int, str] = {}
         self._published_interactions: set[str] = set()
+        self._history_entries: dict[str, dict] | None = None
+        self._history_rows: list[dict] = []
+        self._history_dirty_ids: set[str] = set()
 
     def reset_runtime(self) -> None:
         """Drop in-memory request/session bindings from an interrupted run."""
@@ -1182,26 +1185,46 @@ class ModificationDatasetCollector:
 
 
     def load_entries(self, limit: int = 100) -> list[dict]:
-        """Return the Voice History projection of unified records."""
-        rows: list[dict] = []
-        if self.interactions_root.is_dir():
-            paths = sorted(
-                self.interactions_root.glob("*/record.json"),
-                key=lambda path: path.parent.name,
-                reverse=True,
-            )
+        """Load history once, then refresh only records this collector changed.
+
+        Qt notifications can arrive out of order. Return the current cached
+        projection, rather than trusting a possibly stale notification payload.
+        Keep only lightweight display rows in memory, not audio or LLM traces.
+        """
+        with self._lock:
+            if self._history_entries is None:
+                self._history_entries = {}
+                paths = list(self.interactions_root.glob("*/record.json"))
+            else:
+                paths = [
+                    self._interaction_path(interaction_id)
+                    for interaction_id in self._history_dirty_ids
+                ]
             for path in paths:
-                if _CURRENT_INTERACTION_ID.fullmatch(path.parent.name) is None:
+                interaction_id = path.parent.name
+                if _CURRENT_INTERACTION_ID.fullmatch(interaction_id) is None:
                     continue
                 try:
                     record = self._read_json(path)
                     entry = self._history_entry(path.parent, record)
-                    if entry is not None:
-                        rows.append(entry)
                 except (OSError, ValueError, TypeError, KeyError):
-                    continue
-        rows.sort(key=lambda item: str(item.get("createdAt", "")), reverse=True)
-        return rows[: max(0, int(limit))]
+                    entry = None
+                if entry is None:
+                    self._history_entries.pop(interaction_id, None)
+                else:
+                    self._history_entries[interaction_id] = entry
+            if paths:
+                self._history_rows = sorted(
+                    self._history_entries.values(),
+                    key=lambda item: (
+                        str(item.get("createdAt", "")),
+                        str(item.get("interactionId", "")),
+                    ),
+                    reverse=True,
+                )
+            self._history_dirty_ids.clear()
+            # Callers/QML must not be able to modify the shared cached rows.
+            return [dict(row) for row in self._history_rows[: max(0, int(limit))]]
 
     def clear(self) -> None:
         with self._lock:
@@ -1210,6 +1233,9 @@ class ModificationDatasetCollector:
                 shutil.rmtree(self.user_root)
             self.interactions_root.mkdir(parents=True, exist_ok=True)
             self._published_interactions.clear()
+            self._history_entries = {}
+            self._history_rows.clear()
+            self._history_dirty_ids.clear()
 
     def close(self, *, wait: bool = False) -> None:
         del wait
@@ -1795,8 +1821,7 @@ class ModificationDatasetCollector:
     def _read_json(path: Path) -> dict:
         return json.loads(path.read_text(encoding="utf-8"))
 
-    @staticmethod
-    def _write_json(path: Path, data: dict) -> None:
+    def _write_json(self, path: Path, data: dict) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text(
@@ -1804,6 +1829,11 @@ class ModificationDatasetCollector:
             encoding="utf-8",
         )
         temporary.replace(path)
+        # All InteractionRecord writes pass through here under _lock, including
+        # audio/ASR callbacks and changes that don't publish a UI notification.
+        # Invalidate after the atomic write so load_entries sees the latest data.
+        if path.name == "record.json" and path.parent.parent == self.interactions_root:
+            self._history_dirty_ids.add(path.parent.name)
 
     @staticmethod
     def _write_jsonl(path: Path, rows: list[dict]) -> None:

@@ -12,6 +12,8 @@ import sys
 import threading
 from typing import Callable
 
+from .gesture_settings import GestureBindings
+
 
 if os.name == "nt":
     from ctypes import wintypes
@@ -53,13 +55,14 @@ def voice_action_for_gesture(
     interaction_active: bool = False,
     correction_active: bool = False,
     undo_active: bool = False,
+    bindings: GestureBindings = GestureBindings(),
 ) -> str | None:
     """Resolve a recognized gesture against the current UI action availability."""
-    if name in {"swipe-left", "swipe-down"}:
+    if name and name in bindings.undo:
         return cancel_or_undo_action(
             interaction_active=interaction_active, undo_active=undo_active
         )
-    if name in {"swipe-right", "swipe-up"} and correction_active:
+    if name and name in bindings.switch_mode and correction_active:
         return ACTION_SWITCH_MODE
     return None
 

@@ -267,6 +267,8 @@ def test_stream_monitor_keeps_connected_session_alive_until_audio_resumes(
 
     counters = {"connect": 0, "mic_on": 0, "disconnect": 0}
     callback_holder = {}
+    cleanup_started = threading.Event()
+    release_cleanup = threading.Event()
 
     class FakeClient:
         is_connected = True
@@ -302,6 +304,11 @@ def test_stream_monitor_keeps_connected_session_alive_until_audio_resumes(
             self.mic_active = False
 
         async def disconnect(self):
+            import asyncio
+
+            cleanup_started.set()
+            while not release_cleanup.is_set():
+                await asyncio.sleep(0.005)
             counters["disconnect"] += 1
             self.client.is_connected = False
 
@@ -344,7 +351,11 @@ def test_stream_monitor_keeps_connected_session_alive_until_audio_resumes(
             time.sleep(0.01)
         assert source.error is not None
         assert "physically lost" in str(source.error)
+        assert cleanup_started.wait(1)
+        assert source._thread.is_alive()
+        assert counters["disconnect"] == 0  # Error is visible before cleanup finishes.
     finally:
+        release_cleanup.set()
         source.close()
 
     output = capsys.readouterr().out

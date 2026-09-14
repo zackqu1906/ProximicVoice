@@ -96,6 +96,29 @@ def config_for_strength(strength: str) -> SoftDePlosiveConfig:
             minimum_attenuation_db=7.0,
             maximum_attenuation_db=12.0,
         )
+    if strength == "aggressive-low":
+        return replace(
+            base,
+            crossover_hz=220.0,
+            minimum_attenuation_db=12.0,
+            maximum_attenuation_db=18.0,
+        )
+    if strength == "aggressive-300":
+        return replace(
+            base,
+            baseline_radius_frames=40,
+            minimum_frame_dbfs=-45.0,
+            minimum_low_excess_db=2.5,
+            minimum_low_to_mid_db=-4.5,
+            minimum_peak=0.18,
+            crossover_hz=300.0,
+            fir_taps=1025,
+            minimum_attenuation_db=16.0,
+            maximum_attenuation_db=26.0,
+            lookahead_ms=24.0,
+            hold_ms=32.0,
+            release_ms=150.0,
+        )
     raise ValueError(f"unknown strength: {strength}")
 
 
@@ -325,9 +348,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--pace", type=float, default=1.0)
     parser.add_argument(
         "--strength",
-        choices=("gentle", "stronger"),
+        choices=("gentle", "stronger", "aggressive-low", "aggressive-300"),
         default="gentle",
-        help="gentle: 130 Hz/4-7 dB; stronger: 170 Hz/7-12 dB",
+        help=(
+            "gentle: 130 Hz/4-7 dB; stronger: 170 Hz/7-12 dB; "
+            "aggressive-low: 220 Hz/12-18 dB; aggressive-300: 300 Hz/16-26 dB"
+        ),
     )
     parser.add_argument("--api-key", default="", help=argparse.SUPPRESS)
     parser.add_argument("--debug", action="store_true")
@@ -374,6 +400,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sessions: list[dict] = []
     montage: list[np.ndarray] = []
+    processed_montage: list[np.ndarray] = []
     removed_montage: list[np.ndarray] = []
     order: list[str] = []
     errors = 0
@@ -397,6 +424,9 @@ def main(argv: list[str] | None = None) -> int:
         ab = np.concatenate((audio, pause, processed))
         _v2._write_wav(case_dir / "ab_original_then_soft.wav", ab)
         montage.extend((ab, np.zeros(SAMPLE_RATE, dtype=np.float32)))
+        processed_montage.extend(
+            (processed, np.zeros(SAMPLE_RATE, dtype=np.float32))
+        )
         removed_montage.extend((removed, np.zeros(SAMPLE_RATE, dtype=np.float32)))
         order.append(f"{index}. {case.interaction_id}")
 
@@ -454,6 +484,10 @@ def main(argv: list[str] | None = None) -> int:
         _v2._write_wav(
             output / "sessions_03_to_07_removed_low_band_normalized.wav",
             np.concatenate(removed_montage),
+        )
+        _v2._write_wav(
+            output / "sessions_03_to_07_soft_deplosive_only.wav",
+            np.concatenate(processed_montage),
         )
     (output / "ORDER.txt").write_text("\n".join(order) + "\n", encoding="utf-8")
     report = {

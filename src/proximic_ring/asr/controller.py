@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import deque
+import threading
 import time
 from typing import Callable, Iterable
 
@@ -19,10 +20,12 @@ class ProximitySessionController:
       * first Stage2 ACTIVATE -> START
       * an optional manual hold can also START/keep alive the same session
       * later Stage2 ACTIVATE -> keep the same session alive
-      * N consecutive Stage2 rejects -> END
-      * if speech truly stops, Stage1 also stops and therefore no reject can be
+      * with end_on_tap, only an explicit tap request -> END; automatic
+        rejects, inactivity and duration endpoints are dormant
+      * otherwise N consecutive Stage2 rejects -> END
+      * in auto mode, if speech truly stops, Stage1 also stops and no reject can be
         produced; a Stage1-inactivity timeout is the necessary fallback END
-      * max duration is a final safety bound
+      * in auto mode, max duration is a final safety bound
 
     The 16 kHz waveform is kept separate from ProxiMic's internal 8 kHz
     feature path. A completed utterance is submitted to a generic sink; the
@@ -42,6 +45,7 @@ class ProximitySessionController:
         stage2_delay_s: float = 0.30,
         min_utterance_s: float = 0.40,
         max_utterance_s: float = 15.0,
+        end_on_tap: bool = False,
         on_state: Callable[[str], None] | None = None,
         on_session_end: Callable[[], None] | None = None,
         manual_active: Callable[[], bool] | None = None,
@@ -70,6 +74,7 @@ class ProximitySessionController:
         self.stage2_delay_samples = int(round(stage2_delay_s * self.sample_rate))
         self.min_utterance_samples = int(round(min_utterance_s * self.sample_rate))
         self.max_utterance_samples = int(round(max_utterance_s * self.sample_rate))
+        self.end_on_tap = bool(end_on_tap)
         self.on_state = on_state
         self.on_session_end = on_session_end
         self.manual_active = manual_active
@@ -95,6 +100,29 @@ class ProximitySessionController:
         self._consecutive_rejects = 0
         self._first_reject_cutoff_sample: int | None = None
         self._manual_was_active = False
+        # Gesture inference runs on another thread. Only enqueue here; all
+        # waveform/sink mutations remain on the audio producer thread.
+        self._tap_lock = threading.Lock()
+        self._accept_tap = False
+        self._tap_requested_ns: int | None = None
+
+    def request_tap_end(self) -> bool:
+        """Bind one tap to the currently open session; idle/repeated taps are inert."""
+        with self._tap_lock:
+            if not self._accept_tap or self._tap_requested_ns is not None:
+                return False
+            self._tap_requested_ns = time.monotonic_ns()
+            return True
+
+    def _open_tap_endpoint(self) -> None:
+        with self._tap_lock:
+            self._tap_requested_ns = None
+            self._accept_tap = self.end_on_tap
+
+    def _clear_tap_endpoint(self) -> None:
+        with self._tap_lock:
+            self._accept_tap = False
+            self._tap_requested_ns = None
 
     @property
     def active(self) -> bool:
@@ -132,6 +160,11 @@ class ProximitySessionController:
 
         if self._active:
             self._append_active(x)
+            with self._tap_lock:
+                tap_requested_ns = self._tap_requested_ns
+            if tap_requested_ns is not None:
+                self._finish(reason="gesture-tap", tap_requested_ns=tap_requested_ns)
+                return
 
         manual_now = bool(self.manual_active()) if self.manual_active is not None else False
         if manual_now and not self._manual_was_active and not self._active:
@@ -160,7 +193,7 @@ class ProximitySessionController:
 
             # Rejects before the first ACTIVATE do not belong to an ASR session.
             if self._active:
-                if manual_now:
+                if manual_now or self.end_on_tap:
                     # Explicit user control outranks automatic reject-based
                     # endpointing.  ACTIVATE/Stage1 evidence above is still
                     # observed so release can return cleanly to auto control.
@@ -175,7 +208,7 @@ class ProximitySessionController:
         if not self._active:
             return
 
-        if self._utterance_samples >= self.max_utterance_samples:
+        if not self.end_on_tap and self._utterance_samples >= self.max_utterance_samples:
             self._finish(reason="max-duration")
             return
 
@@ -183,7 +216,8 @@ class ProximitySessionController:
         # will be no Stage2 reject at all.  Use detector inactivity (not audio
         # RMS) to avoid a session that can never terminate.
         if (
-            not manual_now
+            not self.end_on_tap
+            and not manual_now
             and
             self._last_stage1_sample is not None
             and self._stream_samples - self._last_stage1_sample >= self.stage1_inactivity_samples
@@ -196,12 +230,17 @@ class ProximitySessionController:
             self._flush_pending_sink_audio()
 
     def flush(self) -> None:
-        """Submit an active utterance at EOF/shutdown, if it is long enough."""
+        """Flush automatic sessions; discard unconfirmed tap sessions at EOF/pause."""
+        if self.end_on_tap:
+            # Pause/EOF must not submit speech that the user never confirmed.
+            self.discard_current()
+            return
         if self._active:
             self._finish(reason="flush")
 
     def abort(self) -> None:
         """Discard the active utterance without submitting a final result."""
+        self._clear_tap_endpoint()
         if self._active:
             self._log("[ASR] ABORT reason=device-disconnect")
         self._history.clear()
@@ -226,6 +265,7 @@ class ProximitySessionController:
         ``sink.discard`` but is never submitted as a completed ASR utterance.
         The next ``sink.start`` establishes a fresh backend session.
         """
+        self._clear_tap_endpoint()
         if self._active:
             self._log("[ASR] CANCEL reason=user-request")
             captured = (
@@ -256,7 +296,7 @@ class ProximitySessionController:
         self._manual_was_active = False
 
     def reset(self) -> None:
-        """Finish the current utterance and restart the detector-aligned clock.
+        """Flush/discard the current utterance and restart the detector-aligned clock.
 
         This is used when recognition is paused while the audio device remains
         connected.  Dropping the old rolling history prevents audio captured
@@ -320,6 +360,7 @@ class ProximitySessionController:
         self._last_activate_sample = event.sample_index
         self._consecutive_rejects = 0
         self._first_reject_cutoff_sample = None
+        self._open_tap_endpoint()
         self._log(
             f"[ASR] START t={event.time_s:.3f}s "
             f"(pre-roll={self._utterance_samples / self.sample_rate:.2f}s)"
@@ -354,6 +395,7 @@ class ProximitySessionController:
         self._last_activate_sample = None
         self._consecutive_rejects = 0
         self._first_reject_cutoff_sample = None
+        self._open_tap_endpoint()
         self._log(
             f"[ASR] START manual t={self._stream_samples / self.sample_rate:.3f}s "
             f"(lead-in={self._utterance_samples / self.sample_rate:.2f}s)"
@@ -397,9 +439,13 @@ class ProximitySessionController:
                 cutoff_sample=self._first_reject_cutoff_sample,
             )
 
-    def _finish(self, *, reason: str, cutoff_sample: int | None = None) -> None:
+    def _finish(
+        self, *, reason: str, cutoff_sample: int | None = None,
+        tap_requested_ns: int | None = None,
+    ) -> None:
         if not self._active:
             return
+        self._clear_tap_endpoint()
 
         audio: np.ndarray | None = None
         if self._utterance:
@@ -412,9 +458,13 @@ class ProximitySessionController:
                 audio = whole
 
         duration_s = 0.0 if audio is None else audio.size / self.sample_rate
+        tap_timing = (
+            f" tap_to_end_ms={(time.monotonic_ns() - tap_requested_ns) / 1_000_000:.1f}"
+            if tap_requested_ns is not None else ""
+        )
         self._log(
             f"[ASR] END reason={reason} duration={duration_s:.2f}s "
-            f"rejects={self._consecutive_rejects}"
+            f"rejects={self._consecutive_rejects}{tap_timing}"
         )
 
         # Close the producer-side recognition gate before enqueueing final ASR

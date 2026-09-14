@@ -27,10 +27,59 @@ ApplicationWindow {
     property color textMain: "#F5F7FB"
     property color textMuted: "#8D98AA"
 
+    component GestureBindingSelector: ComboBox {
+        id: gestureSelector
+        required property string actionName
+        required property int slotIndex
+        objectName: actionName + "Gesture" + slotIndex
+        property var options: {
+            // Register the settings dependency even though options come from a slot.
+            var bindings = appController.gestureBindings
+            return appController.gestureOptionsForSlot(actionName, slotIndex)
+        }
+        readonly property string selectedGesture: appController.gestureBindings[actionName][slotIndex]
+        readonly property int selectedIndex: {
+            for (var i = 0; i < options.length; ++i)
+                if (options[i].value === selectedGesture) return i
+            return 0
+        }
+        Layout.fillWidth: true
+        Layout.preferredHeight: 44
+        model: options
+        textRole: "label"
+        valueRole: "value"
+        currentIndex: selectedIndex
+        Accessible.name: ({confirm: "确认", undo: "撤销", switch_mode: "类型转换"})[actionName] + "，手势 " + (slotIndex + 1)
+        onActivated: {
+            appController.setGestureBinding(actionName, slotIndex, options[currentIndex].value)
+            // Restore the binding also when validation rejects a selection.
+            currentIndex = Qt.binding(function() { return gestureSelector.selectedIndex })
+        }
+    }
+
+    component GestureBindingRow: ColumnLayout {
+        id: gestureRow
+        required property string actionName
+        required property string title
+        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+        spacing: 4
+        Label { text: gestureRow.title; color: root.textMain; font.pixelSize: 12 }
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 12
+            GestureBindingSelector { actionName: gestureRow.actionName; slotIndex: 0 }
+            GestureBindingSelector { actionName: gestureRow.actionName; slotIndex: 1 }
+        }
+    }
+
     component OverlayActionButton: Rectangle {
         id: actionButton
         property string title: ""
         property string shortcut: ""
+        property string gestureHint: ""
+        readonly property string inputHint: [shortcut, gestureHint].filter(function(part) {
+            return part.length > 0
+        }).join(" · ")
         property color fillColor: "#1A2230"
         property color hoverColor: "#232E40"
         property color pressedColor: "#2B3850"
@@ -41,6 +90,7 @@ ApplicationWindow {
         property string busyLabel: "处理中"
         signal triggered()
 
+        implicitWidth: Math.max(82, Math.ceil(actionHintMetrics.advanceWidth) + 24)
         implicitHeight: 44
         radius: 10
         color: actionMouse.pressed
@@ -50,6 +100,14 @@ ApplicationWindow {
         border.color: outlineColor
         Accessible.role: Accessible.Button
         Accessible.name: title + (shortcut.length > 0 ? "，快捷键 " + shortcut : "")
+                        + (gestureHint.length > 0 ? "，手势 " + gestureHint : "")
+
+        TextMetrics {
+            id: actionHintMetrics
+            text: actionButton.inputHint
+            font.family: root.uiFontFamily
+            font.pixelSize: 10
+        }
 
         Behavior on color {
             ColorAnimation { duration: 90 }
@@ -116,14 +174,14 @@ ApplicationWindow {
                     }
 
                     Text {
+                        objectName: actionButton.objectName + "InputHint"
                         height: 11
                         text: actionButton.busy
                               ? actionButton.busyLabel
-                              : actionButton.shortcut
+                              : actionButton.inputHint
                         color: actionButton.shortcutColor
                         font.family: root.uiFontFamily
-                        font.pixelSize: 9
-                        font.letterSpacing: 0.4
+                        font.pixelSize: 10
                         verticalAlignment: Text.AlignVCenter
                         wrapMode: Text.NoWrap
                     }
@@ -1631,7 +1689,7 @@ ApplicationWindow {
                         Label { text: "撤销浮窗显示时长"; color: root.textMuted; font.pixelSize: 12 }
                         Item { Layout.fillWidth: true }
                         Label {
-                            text: Math.round(appliedOverlayDurationSlider.value) + " 秒"
+                            text: (Math.round(appliedOverlayDurationSlider.value * 2) / 2) + " 秒"
                             color: root.textMain
                             font.pixelSize: 12
                             font.bold: true
@@ -1645,9 +1703,10 @@ ApplicationWindow {
                         Layout.rightMargin: 20
                         from: 1
                         to: 10
-                        stepSize: 1
+                        stepSize: 0.5
+                        snapMode: Slider.SnapAlways
                         value: appController.appliedOverlayDurationSeconds
-                        onMoved: appController.appliedOverlayDurationSeconds = Math.round(value)
+                        onMoved: appController.appliedOverlayDurationSeconds = value
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
@@ -1688,6 +1747,43 @@ ApplicationWindow {
                         wrapMode: Text.Wrap
                     }
 
+                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
+
+                    SettingsSectionHeader {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        objectName: "gestureSettingsSection"
+                        title: "手势操作"
+                        badge: "即时生效"
+                        accent: "#69CDB8"
+                    }
+                    Label {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: "每项最多设置两个手势。已分配的手势不会出现在其他位置；更换用途时先将原位置设为“未设置”。按键仍可独立使用。"
+                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                    }
+                    GestureBindingRow { actionName: "confirm"; title: "确认 · 结束本句语音" }
+                    GestureBindingRow { actionName: "undo"; title: "撤销 · 处理中用于取消" }
+                    GestureBindingRow { actionName: "switch_mode"; title: "转换 · 听写与编辑类型" }
+                    Label {
+                        objectName: "gestureSettingsErrorLabel"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        visible: appController.gestureSettingsError.length > 0
+                        text: appController.gestureSettingsError
+                        color: "#F0B85A"; font.pixelSize: 12; wrapMode: Text.Wrap
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        Label {
+                            Layout.fillWidth: true
+                            text: "确认至少保留一个手势。设置会自动保存。"
+                            color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                        }
+                        Button {
+                            objectName: "resetGestureBindingsButton"
+                            text: "恢复默认手势"
+                            onClicked: appController.resetGestureBindings()
+                        }
+                    }
                     Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
 
                     Label { text: "听写与指令识别"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
@@ -1916,6 +2012,91 @@ ApplicationWindow {
     }
 
     Window {
+        id: ringDisconnectNotice
+        objectName: "ringDisconnectNotice"
+        transientParent: null
+        width: 420
+        height: 216
+        x: Screen.virtualX + Math.round((Screen.width - width) / 2)
+        y: Screen.virtualY + Math.round((Screen.height - height) / 3)
+        visible: appController.ringDisconnectNoticeVisible
+        title: appController.ringDisconnectNoticeTitle
+        color: "transparent"
+        Material.theme: Material.Dark
+        Material.accent: root.primary
+        flags: Qt.Window | Qt.FramelessWindowHint
+               | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
+        onClosing: function(close) {
+            close.accepted = false
+            appController.dismissRingDisconnectNotice()
+        }
+
+        Rectangle {
+            anchors.fill: parent
+            radius: 16
+            color: "#111620"
+            border.color: "#96505D"
+            border.width: 1
+
+            ColumnLayout {
+                anchors.fill: parent
+                anchors.margins: 22
+                spacing: 8
+                Label {
+                    Layout.fillWidth: true
+                    text: appController.ringDisconnectNoticeTitle
+                    color: "#FFB5C1"
+                    font.pixelSize: 21
+                    font.bold: true
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: appController.ringDisconnectNoticeDevice
+                    color: root.textMuted
+                    font.pixelSize: 12
+                    elide: Text.ElideRight
+                }
+                Label {
+                    Layout.fillWidth: true
+                    text: "语音和手势交互已停止。\n请重新连接 Ring 后再继续。"
+                    color: root.textMain
+                    font.pixelSize: 14
+                    wrapMode: Text.Wrap
+                }
+                Item { Layout.fillHeight: true }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+                    Label {
+                        Layout.fillWidth: true
+                        text: appController.busy ? "正在释放设备资源…" : ""
+                        color: root.textMuted
+                        font.pixelSize: 11
+                    }
+                    Button {
+                        objectName: "dismissRingDisconnectNoticeButton"
+                        text: "知道了"
+                        onClicked: appController.dismissRingDisconnectNotice()
+                    }
+                    Button {
+                        objectName: "reconnectRingFromNoticeButton"
+                        text: "重新连接"
+                        highlighted: true
+                        enabled: appController.canReconnect && !appController.busy
+                                 && !appController.scanBusy
+                        onClicked: {
+                            root.showNormal()
+                            root.raise()
+                            root.requestActivate()
+                            appController.reconnectDevice()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Window {
         id: transcriptOverlay
         objectName: "transcriptOverlay"
         transientParent: null
@@ -1932,8 +2113,20 @@ ApplicationWindow {
         }
         width: showsProcessingModeSwitch
             ? Math.min(620, Screen.width - 32)
-            : (appController.interactionCanCancel ? 366 : 300)
-        height: 64
+            : (appController.interactionCanCancel
+               ? 284 + cancelUtteranceButton.Layout.preferredWidth : 300)
+        readonly property real availableScreenHeight: Screen.desktopAvailableHeight > 0
+            ? Screen.desktopAvailableHeight : Screen.height
+        readonly property real maximumContentHeight: Math.max(64, Math.floor(availableScreenHeight * 0.7))
+        readonly property real naturalHeight: 20 + Math.max(
+            44, overlayStatusText.implicitHeight
+                + (overlayText.text.length > 0 ? 4 + overlayText.implicitHeight : 0))
+        readonly property bool textOverflows: naturalHeight > maximumContentHeight
+        height: Math.min(maximumContentHeight, naturalHeight)
+        Behavior on height {
+            enabled: transcriptOverlay.visible
+            NumberAnimation { duration: 180; easing.type: Easing.OutCubic }
+        }
         x: Math.round((Screen.width - width) / 2)
         // desktopAvailableHeight excludes the macOS Dock / Windows taskbar.
         // Keep an additional breathing gap so an auto-revealed Dock cannot
@@ -1946,6 +2139,8 @@ ApplicationWindow {
         ))
         visible: appController.transcriptVisible
         color: "transparent"
+        Material.theme: Material.Dark
+        Material.accent: root.primary
         flags: (Qt.platform.os === "osx" ? Qt.Window : Qt.Tool)
                | Qt.FramelessWindowHint
                | Qt.WindowStaysOnTopHint
@@ -1961,11 +2156,14 @@ ApplicationWindow {
                 anchors.fill: parent
                 anchors.leftMargin: 18
                 anchors.rightMargin: 12
+                anchors.topMargin: 10
+                anchors.bottomMargin: 10
                 spacing: 10
                 ColumnLayout {
                     Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignVCenter
-                    spacing: 2
+                    Layout.fillHeight: true
+                    Layout.minimumWidth: 0
+                    spacing: 4
                     Label {
                         id: overlayStatusText
                         objectName: "statusOverlayText"
@@ -1976,16 +2174,64 @@ ApplicationWindow {
                         font.pixelSize: 10
                         elide: Text.ElideRight
                     }
-                    Label {
-                        id: overlayText
-                        objectName: "asrOverlayText"
+                    Flickable {
+                        id: transcriptViewport
+                        objectName: "transcriptViewport"
                         Layout.fillWidth: true
-                        text: appController.transcriptPrimaryText
-                        visible: text.length > 0
-                        color: appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB"
-                        font.family: root.uiFontFamily
-                        font.pixelSize: 15
-                        elide: Text.ElideRight
+                        Layout.fillHeight: true
+                        Layout.minimumHeight: 0
+                        visible: overlayText.text.length > 0
+                        contentWidth: width
+                        contentHeight: overlayText.implicitHeight
+                        clip: true
+                        boundsBehavior: Flickable.StopAtBounds
+                        flickableDirection: Flickable.VerticalFlick
+                        interactive: transcriptOverlay.textOverflows
+                        property bool followTail: true
+                        property bool updatingScroll: false
+
+                        function updateScrollPosition() {
+                            updatingScroll = true
+                            if (!transcriptOverlay.textOverflows) {
+                                contentY = 0
+                                followTail = true
+                            } else if (followTail) {
+                                contentY = Math.max(0, contentHeight - height)
+                            }
+                            updatingScroll = false
+                        }
+                        onContentYChanged: {
+                            if (!updatingScroll)
+                                followTail = contentY >= Math.max(0, contentHeight - height) - 2
+                        }
+                        onContentHeightChanged: Qt.callLater(updateScrollPosition)
+                        onHeightChanged: Qt.callLater(updateScrollPosition)
+                        onVisibleChanged: {
+                            if (!visible) {
+                                followTail = true
+                                contentY = 0
+                            }
+                        }
+                        ScrollBar.vertical: ScrollBar {
+                            objectName: "transcriptScrollBar"
+                            policy: transcriptOverlay.textOverflows ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                        }
+                        Label {
+                            id: overlayText
+                            objectName: "asrOverlayText"
+                            // Reserve a small scrollbar gutter so overflow
+                            // never changes the wrap width during streaming.
+                            width: Math.max(0, transcriptViewport.width - 10)
+                            text: appController.transcriptPrimaryText
+                            textFormat: Text.PlainText
+                            wrapMode: Text.Wrap
+                            elide: Text.ElideNone
+                            color: appController.transcriptFinal ? "#8BE2C5" : "#F5F7FB"
+                            font.family: root.uiFontFamily
+                            font.pixelSize: 15
+                            lineHeightMode: Text.FixedHeight
+                            lineHeight: 22
+                        }
                     }
                 }
                 OverlayActionButton {
@@ -1997,10 +2243,12 @@ ApplicationWindow {
                     visible: transcriptOverlay.showsProcessingModeSwitch
                     enabled: appController.processingModeCorrectionAvailable
                     opacity: enabled ? 1 : 0
-                    Layout.preferredWidth: 132
+                    Layout.preferredWidth: Math.max(132, implicitWidth)
                     Layout.preferredHeight: 44
+                    Layout.alignment: Qt.AlignBottom
                     title: "刚刚是输入内容"
                     shortcut: appController.modeCorrectionShortcut
+                    gestureHint: appController.gestureButtonHints.switch_mode
                     fillColor: "#17302D"
                     hoverColor: "#1D3D38"
                     pressedColor: "#244B44"
@@ -2019,10 +2267,12 @@ ApplicationWindow {
                     id: cancelUtteranceButton
                     objectName: "cancelUtteranceButton"
                     visible: appController.interactionCanCancel
-                    Layout.preferredWidth: 82
+                    Layout.preferredWidth: implicitWidth
                     Layout.preferredHeight: 44
+                    Layout.alignment: Qt.AlignBottom
                     title: "取消"
                     shortcut: "Esc"
+                    gestureHint: appController.gestureButtonHints.undo
                     fillColor: "#2A1E24"
                     hoverColor: "#3B252E"
                     pressedColor: "#4B2934"
@@ -2060,7 +2310,8 @@ ApplicationWindow {
             appController.appliedPopupCaretHeight > 0
         width: Math.min(
             compactStyle
-                ? (showsModeCorrection ? 316 : 134)
+                ? 44 + undoAppliedButton.Layout.preferredWidth
+                  + (showsModeCorrection ? 6 + switchModeButton.Layout.preferredWidth : 0)
                 : (showsModeCorrection ? 430 : 360),
             Screen.width - 16
         )
@@ -2080,8 +2331,8 @@ ApplicationWindow {
         }
         function automaticY() {
             if (!hasCaretBounds)
-                return Math.round(Screen.height - height - 96)
-            var gap = 16
+                return Math.round(Math.max(8, Screen.height - height - 120))
+            var gap = 40
             var preferred = appController.appliedPopupCaretY - height - gap
             if (hasTargetBounds) {
                 var targetLeft = appController.appliedPopupTargetX
@@ -2357,12 +2608,12 @@ ApplicationWindow {
                     OverlayActionButton {
                         id: undoAppliedButton
                         objectName: "undoAppliedButton"
-                        Layout.preferredWidth: appliedActionOverlay.compactStyle ? 90 : 104
+                        Layout.preferredWidth: Math.max(
+                            appliedActionOverlay.compactStyle ? 90 : 104, implicitWidth)
                         Layout.preferredHeight: 44
-                        title: appController.undoDepth > 1
-                               ? "撤销（" + appController.undoDepth + "）"
-                               : "撤销"
+                        title: "撤销"
                         shortcut: "Esc"
+                        gestureHint: appController.gestureButtonHints.undo
                         onTriggered: appController.dispatchVoiceAction("undo")
                     }
                     OverlayActionButton {
@@ -2371,12 +2622,13 @@ ApplicationWindow {
                         visible: appliedActionOverlay.showsModeCorrection
                         enabled: appController.modeCorrectionAvailable
                                  && !appController.modeCorrectionPending
-                        Layout.preferredWidth: 176
+                        Layout.preferredWidth: Math.max(176, implicitWidth)
                         Layout.preferredHeight: 44
                         title: appController.modeCorrectionFailed
                                ? "指令转换失败"
                                : appController.modeCorrectionLabel
                         shortcut: appController.modeCorrectionShortcut
+                        gestureHint: appController.gestureButtonHints.switch_mode
                         busy: appController.modeCorrectionPending
                         fillColor: appController.modeCorrectionFailed
                                    ? "#382027" : "#17302D"

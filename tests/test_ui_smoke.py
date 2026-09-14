@@ -261,8 +261,8 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
 
     assert desktop_target.undone == [target]
     assert desktop_target.replaced == []
-    assert controller.undoAvailable is False
-    assert controller.interactionState == "idle"
+    assert controller.undoAvailable is True
+    assert controller.interactionState == "applied"
     assert "听写 · 已发送撤销" in controller.sessionHistoryText
 
     controller._hide_overlay_timer.stop()
@@ -290,8 +290,8 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
     assert desktop_target.current_text == "原始文本"
     assert desktop_target.replaced == ["正式文本"]
     assert desktop_target.undone == [target, target]
-    assert controller.undoAvailable is False
-    assert controller.interactionState == "idle"
+    assert controller.undoAvailable is True
+    assert controller.interactionState == "applied"
     assert controller.associationRecommendationVisible is False
     assert "修改 · 已发送撤销" in controller.sessionHistoryText
     controller._close_voice_history()
@@ -705,6 +705,11 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     mode_correction_shortcut_combo = window.findChild(
         QObject, "modeCorrectionShortcutCombo"
     )
+    gesture_selectors = {
+        (action, slot): window.findChild(QObject, f"{action}Gesture{slot}")
+        for action in ("confirm", "undo", "switch_mode") for slot in (0, 1)
+    }
+    assert all(selector is not None for selector in gesture_selectors.values())
     audio_encoding_combo = window.findChild(QObject, "audioEncodingCombo")
     stage1_sensitivity_slider = window.findChild(
         QObject, "stage1SensitivitySlider"
@@ -745,8 +750,10 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert desktop_output_switch is not None
     assert applied_overlay_style_combo.property("currentIndex") == 0
     assert controller.appliedOverlayStyle == "normal"
-    assert applied_overlay_duration_slider.property("value") == 3
-    assert controller.appliedOverlayDurationSeconds == 3
+    assert applied_overlay_duration_slider.property("value") == 1.5
+    assert applied_overlay_duration_slider.property("stepSize") == 0.5
+    assert controller.appliedOverlayDurationSeconds == 1.5
+    assert controller._applied_action_hide_timer.interval() == 1500
     assert controller.modeCorrectionShortcut == "F8"
     assert mode_correction_shortcut_combo.property("currentText") == "F8"
     assert settings_dialog.property("visible") is False
@@ -764,6 +771,35 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert applied_overlay_style_combo.property("enabled") is True
     assert applied_overlay_duration_slider.property("enabled") is True
     assert mode_correction_shortcut_combo.property("enabled") is True
+    assert all(selector.property("enabled") for selector in gesture_selectors.values())
+    assert gesture_selectors[("confirm", 0)].property("currentText") == "轻点（tap）"
+    assert gesture_selectors[("confirm", 1)].property("currentText") == "未设置"
+    assert gesture_selectors[("undo", 0)].property("currentText") == "左滑"
+    assert gesture_selectors[("undo", 1)].property("currentText") == "下滑"
+    assert gesture_selectors[("switch_mode", 0)].property("currentText") == "右滑"
+    assert gesture_selectors[("switch_mode", 1)].property("currentText") == "上滑"
+    from PySide6.QtCore import Q_ARG
+
+    # Exercise the actual QML activation handler and rejected-selection reset.
+    confirm_combo = gesture_selectors[("confirm", 0)]
+    confirm_combo.setProperty("currentIndex", 0)
+    assert QMetaObject.invokeMethod(confirm_combo, "activated", Q_ARG(int, 0))
+    app.processEvents()
+    assert controller.gestureBindings["confirm"] == ["tap", ""]
+    assert confirm_combo.property("currentText") == "轻点（tap）"
+    assert window.findChild(QObject, "gestureSettingsErrorLabel").property("visible")
+    snap_index = next(index for index, row in enumerate(controller.gestureOptionsForSlot("confirm", 0)) if row["value"] == "snap")
+    confirm_combo.setProperty("currentIndex", snap_index)
+    assert QMetaObject.invokeMethod(confirm_combo, "activated", Q_ARG(int, snap_index))
+    app.processEvents()
+    assert controller.gestureBindings["confirm"] == ["snap", ""]
+    assert confirm_combo.property("currentText") == "弹指（snap）"
+    assert controller.setGestureBinding("confirm", 1, "tap")
+    app.processEvents()
+    assert gesture_selectors[("confirm", 1)].property("currentText") == "轻点（tap）"
+    controller.resetGestureBindings()
+    app.processEvents()
+    assert confirm_combo.property("currentText") == "轻点（tap）"
     assert input_routing_mode_combo.property("enabled") is True
     assert llm_provider_combo.property("enabled") is True
     assert dictation_llm_switch.property("enabled") is True
@@ -817,18 +853,46 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     )
     assert action_overlay.property("visible") is False
     assert window.findChild(QObject, "cancelUtteranceButton") is not None
+    cancel_button = window.findChild(QObject, "cancelUtteranceButton")
+    undo_button = window.findChild(QObject, "undoAppliedButton")
+    switch_button = window.findChild(QObject, "switchModeButton")
     processing_switch = window.findChild(QObject, "processingSwitchModeButton")
     assert processing_switch is not None
+    for button in (cancel_button, undo_button):
+        assert button.property("inputHint") == "Esc · 左滑/下滑"
+    for button in (processing_switch, switch_button):
+        assert button.property("inputHint") == "F7 · 右滑/上滑"
     status_text = window.findChild(QObject, "statusOverlayText")
     asr_text = window.findChild(QObject, "asrOverlayText")
     assert status_text is not None
     assert asr_text is not None
-    assert status_text.property("text") == "正在收听语音"
+    assert status_text.property("text") == "正在收听语音 · tap 结束"
     assert asr_text.property("visible") is False
+
+    # Settings changes reach both overlays while the current voice session is
+    # open; clearing both slots leaves the keyboard hint with no separator.
+    assert controller.setGestureBinding("confirm", 0, "snap")
+    assert controller.setGestureBinding("undo", 0, "tap")
+    assert controller.setGestureBinding("undo", 1, "")
+    assert controller.setGestureBinding("switch_mode", 0, "swipe-left")
+    app.processEvents()
+    assert "弹指" in status_text.property("text")
+    for button in (cancel_button, undo_button):
+        assert button.property("inputHint") == "Esc · 轻点"
+    for button in (processing_switch, switch_button):
+        assert button.property("inputHint") == "F7 · 左滑/上滑"
+    assert controller.setGestureBinding("undo", 0, "")
+    app.processEvents()
+    for button in (cancel_button, undo_button):
+        assert button.property("inputHint") == "Esc"
+    controller.resetGestureBindings()
+    app.processEvents()
+    for button in (cancel_button, undo_button):
+        assert button.property("inputHint") == "Esc · 左滑/下滑"
 
     controller._apply_runtime_update("正在形成的识别文本", False, "", 41)
     app.processEvents()
-    assert status_text.property("text") == "正在收听语音"
+    assert status_text.property("text") == "正在收听语音 · tap 结束"
     assert asr_text.property("text") == "正在形成的识别文本"
     assert asr_text.property("visible") is True
 
@@ -910,7 +974,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
         )
         == "compact"
     )
-    assert action_overlay.width() == 134
+    assert action_overlay.width() == 44 + undo_button.width()
     assert action_overlay.height() == 56
     assert window.findChild(QObject, "appliedActionSummaryRow").property("visible") is False
 
@@ -926,7 +990,12 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     )
     assert overlaps is False
     assert action_overlay.x() >= target.caret_x + target.caret_width
-    assert overlay_bottom <= target.screen_y - 16
+    assert overlay_bottom == target.screen_y - 40
+    for button in (cancel_button, processing_switch, undo_button):
+        hint = button.findChild(QQuickItem, button.objectName() + "InputHint")
+        assert hint is not None
+        assert hint.property("text") == button.property("inputHint")
+        assert hint.width() <= button.width() - 14
 
     # Once the user has moved the action pill, result/summary updates must not
     # snap it back to the caret-derived automatic position.
@@ -992,6 +1061,20 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert action_overlay.property("userPositioned") is True
     assert action_overlay.x() == dragged_x
     assert action_overlay.y() == dragged_y
+    # Apps without caret geometry (including WeChat) also start farther above
+    # the bottom edge, in either overlay style.
+    controller._show_applied_interaction(
+        _AppliedInteraction(
+            "dictation", DesktopTargetRef(7, 8, "无光标坐标", process_id=32),
+            4, 0, "测试输入", "测试输入", summary="已输入文本",
+        ),
+        message="听写已应用",
+    )
+    for style in ("normal", "compact"):
+        controller.appliedOverlayStyle = style
+        app.processEvents()
+        assert action_overlay.property("userPositioned") is False
+        assert action_overlay.y() + action_overlay.height() == action_overlay.screen().geometry().height() - 120
     window.close()
     controller._close_voice_history()
 

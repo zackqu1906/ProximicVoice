@@ -27,6 +27,7 @@ from .asr import ASRBackendCache
 from .audio import RingAudioSource
 from .cli import _build_detector, _build_session_controller
 from .events import Stage2Event
+from .gesture_settings import BoundGestureEvent, GestureBindings
 from .runner import format_event
 
 
@@ -443,6 +444,9 @@ class RuntimeSettings:
     asr_stage1_inactivity_s: float = 1.25
     asr_min_duration_s: float = 0.40
     asr_max_duration_s: float = 15.0
+    # The desktop UI opts into tap; headless/offline callers keep auto END.
+    asr_end_on_tap: bool = False
+    gesture_bindings: GestureBindings = GestureBindings()
 
     desktop_output: bool = WINDOWS_DESKTOP_INPUT_SUPPORTED
     push_to_talk: bool = WINDOWS_DESKTOP_INPUT_SUPPORTED
@@ -505,6 +509,7 @@ class RuntimeSettings:
             asr_stage1_inactivity=self.asr_stage1_inactivity_s,
             asr_min_duration=self.asr_min_duration_s,
             asr_max_duration=self.asr_max_duration_s,
+            asr_end_on_tap=self.asr_end_on_tap,
             disable_proximic_detector=False,
             direct_asr_session_duration=5.0,
             asr_partial_min_interval=0.0,
@@ -535,6 +540,7 @@ class RecognitionRuntime:
         on_connected: Callable[[], None],
         on_disconnected: Callable[[], None],
         on_started: Callable[[], None],
+        on_stopping: Callable[[], None] | None = None,
         on_push_to_talk: Callable[[bool], None] | None = None,
         on_session_started: Callable[[int], None] | None = None,
         on_session_ended: Callable[[], None] | None = None,
@@ -548,6 +554,7 @@ class RecognitionRuntime:
         | None = None,
         asr_gain_db_provider: Callable[[], float] | None = None,
         stage1_threshold_provider: Callable[[], float] | None = None,
+        gesture_bindings_provider: Callable[[], GestureBindings] | None = None,
     ) -> None:
         args = self.settings.to_namespace()
         selected_backend = self.settings.asr_backend.strip().lower().replace(
@@ -562,7 +569,7 @@ class RecognitionRuntime:
         # dataset metadata; the supplied gesture model requires exactly 200 Hz.
         imu_hz = (
             GESTURE_SAMPLE_RATE_HZ
-            if on_gesture is not None
+            if on_gesture is not None or self.settings.asr_end_on_tap
             else self.settings.imu_sample_rate_hz
         )
         imu_buffer = (
@@ -590,6 +597,8 @@ class RecognitionRuntime:
         watcher_done = threading.Event()
         connection_attempted = threading.Event()
         source_disconnected = threading.Event()
+        stopping_reported = False
+        stopping_lock = threading.Lock()
         source_close_lock = threading.Lock()
 
         def publish_raw_utterance(session_id: int, audio_16k: object) -> None:
@@ -620,12 +629,23 @@ class RecognitionRuntime:
 
         def close_source_and_report() -> None:
             """Close the physical device once and publish that independently."""
+            nonlocal stopping_reported
+            # Stop interaction and notify before BLE/model cleanup, which can
+            # take seconds. The stop event is also set on unexpected EOF/errors.
+            disconnect_event.set()
+            recognition_event.clear()
             gestures_enabled.clear()
+            with stopping_lock:
+                if not stopping_reported:
+                    stopping_reported = True
+                    if on_stopping is not None:
+                        on_stopping()
             with source_close_lock:
-                source.close()
-                if connection_attempted.is_set() and not source_disconnected.is_set():
+                if not source_disconnected.is_set():
+                    source.close()
                     source_disconnected.set()
-                    on_disconnected()
+                    if connection_attempted.is_set():
+                        on_disconnected()
 
         def stop_source_when_requested() -> None:
             while not watcher_done.wait(0.1):
@@ -696,28 +716,60 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
-            if on_gesture is not None:
+            if on_gesture is not None or self.settings.asr_end_on_tap:
                 on_state("正在加载电脑端手势模型…")
                 try:
                     from ring_python_sdk.gestures import GestureRecognizer, GestureWorker
                     from ring_python_sdk.gestures import classifier as gesture_classifier
 
                     def publish_gesture(event: object) -> None:
+                        bindings = (
+                            gesture_bindings_provider() if gesture_bindings_provider
+                            else self.settings.gesture_bindings
+                        )
+                        name = str(getattr(event, "name", ""))
                         accepted = (
                             gestures_enabled.is_set()
                             and not disconnect_event.is_set()
                             and source.error is None
                         )
+                        is_confirm_endpoint = (
+                            self.settings.asr_end_on_tap
+                            and bool(name) and name in bindings.confirm
+                        )
+                        confirm_requested = False
+                        if accepted and is_confirm_endpoint:
+                            # Do this before logging or queuing any GUI work.
+                            # The audio producer owns END and closes the normal
+                            # interaction gate before submitting final ASR.
+                            confirm_requested = (
+                                recognition_event.is_set()
+                                and not (
+                                    cancel_utterance_event is not None
+                                    and cancel_utterance_event.is_set()
+                                )
+                                and controller.request_tap_end()
+                            )
                         # Record model output before application state gating.
                         on_state("[GESTURE_RECOGNIZED] " + json.dumps({
                             "name": getattr(event, "name", ""),
                             "confidence": getattr(event, "confidence", None),
                             "device_timestamp_ms": getattr(event, "timestamp_ms", None),
                             "forwarded": accepted,
-                            "reason": "ui_dispatch" if accepted else "runtime_stopped",
+                            "reason": (
+                                "runtime_stopped" if not accepted else
+                                "confirm_end_requested" if confirm_requested else
+                                "no_active_utterance_or_duplicate" if is_confirm_endpoint else
+                                "ui_dispatch"
+                            ),
                         }, ensure_ascii=False))
-                        if accepted:
-                            on_gesture(event)
+                        if confirm_requested:
+                            on_state(f"[手势] {name} → 结束本句")
+                        if accepted and not is_confirm_endpoint and on_gesture is not None:
+                            on_gesture(
+                                BoundGestureEvent(event, bindings)
+                                if gesture_bindings_provider else event
+                            )
 
                     recognizer = GestureRecognizer(on_gesture=publish_gesture)
                     gesture_threads = _configure_gesture_cpu_threads(recognizer, selected_backend)
@@ -739,11 +791,17 @@ class RecognitionRuntime:
                             recognizer, "packet_timestamp_tolerance_ms", None
                         ),
                     }, ensure_ascii=False))
-                    on_state("电脑端手势已就绪：左/下取消或撤销，右/上转换类型")
+                    on_state(
+                        "电脑端手势已就绪，使用设置中的手势分配"
+                    )
                 except Exception as exc:
                     gestures_enabled.clear()
                     gesture_error_reported = True
-                    on_state(f"电脑端手势不可用，按键和语音继续工作：{exc}")
+                    on_state(
+                        f"电脑端手势不可用，确认手势无法结束语音，请用 Esc 取消本句并重连：{exc}"
+                        if self.settings.asr_end_on_tap else
+                        f"电脑端手势不可用，按键和语音继续工作：{exc}"
+                    )
             if disconnect_event.is_set():
                 return
 
@@ -765,7 +823,11 @@ class RecognitionRuntime:
                     if gesture_error is not None:
                         gesture_error_reported = True
                         gestures_enabled.clear()
-                        on_state(f"电脑端手势已停止，按键和语音继续工作：{gesture_error}")
+                        on_state(
+                            f"电脑端手势已停止，确认手势无法结束语音，请用 Esc 取消本句并重连：{gesture_error}"
+                            if self.settings.asr_end_on_tap else
+                            f"电脑端手势已停止，按键和语音继续工作：{gesture_error}"
+                        )
                 if gesture_worker is not None and time.monotonic() >= next_gesture_status_at:
                     stats = gesture_worker.snapshot()
                     stats["status"] = (
@@ -828,7 +890,14 @@ class RecognitionRuntime:
                 # ProxiMic always evaluates the untouched Ring waveform.  Gain
                 # is applied only after detection, so both ASR and the raw
                 # utterance observer/history receive the same enhanced audio.
-                events = detector.feed(block)
+                was_active = bool(getattr(controller, "active", False))
+                # ACTIVATE is needed only to start. Once listening for tap,
+                # skip Stage2 inference entirely, keeping audio and gestures
+                # free from reject inference and its CPU/GIL scheduling cost.
+                events = (
+                    [] if self.settings.asr_end_on_tap and was_active
+                    else detector.feed(block)
+                )
                 for event in events:
                     if isinstance(event, Stage2Event):
                         on_state(format_event(event))
@@ -845,6 +914,12 @@ class RecognitionRuntime:
                     events,
                     block_end_monotonic_ns=block_end_monotonic_ns,
                 )
+                if self.settings.asr_end_on_tap and was_active and not controller.active:
+                    # Reset even if a very fast final/application already
+                    # reopened recognition before this loop saw the pause.
+                    controller.reset()
+                    detector.reset()
+                    recognition_was_enabled = False
                 set_continuation_mode = getattr(
                     detector, "set_continuation_mode", None
                 )
@@ -853,22 +928,23 @@ class RecognitionRuntime:
                         bool(getattr(controller, "active", False))
                     )
 
-            if recognition_was_enabled and not disconnect_event.is_set():
-                controller.flush()
+            # Ring EOF ends the device session; it must not submit a partial
+            # utterance as if the user had performed the confirmation gesture.
         finally:
             watcher_done.set()
-            close_source_and_report()
-            if gesture_worker is not None:
-                try:
-                    gesture_worker.close()
-                    on_state(f"电脑端手势统计：{gesture_worker.snapshot()}")
-                except Exception as exc:
-                    on_state(f"电脑端手势清理异常：{exc}")
-            if watcher is not threading.current_thread():
-                watcher.join(timeout=1.0)
-            if controller is not None:
-                if disconnect_event.is_set():
+            try:
+                close_source_and_report()
+            finally:
+                if gesture_worker is not None:
+                    try:
+                        gesture_worker.close()
+                        on_state(f"电脑端手势统计：{gesture_worker.snapshot()}")
+                    except Exception as exc:
+                        on_state(f"电脑端手势清理异常：{exc}")
+                if watcher is not threading.current_thread():
+                    watcher.join(timeout=1.0)
+                if controller is not None:
                     abort = getattr(controller, "abort", None)
                     if callable(abort):
                         abort()
-                controller.close()
+                    controller.close()
