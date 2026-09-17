@@ -1,0 +1,40 @@
+{
+  "model_version": "v3",
+  "recommended_stage2_threshold": 0.1552720069885254,
+  "label_mapping": {
+    "near": 0,
+    "far": 1,
+    "artifact": 1
+  },
+  "binary_task": {
+    "0": "near_speech",
+    "1": "realistic_non_target_audio"
+  },
+  "score_definition": "logits[0] - logits[1]",
+  "model_revision": "near_vs_nontarget_plus24db_hard_negative_v4",
+  "model_sha256": "1b2c6850426c99a078773490ba464f05a1815af2ad0b138175c0a59d65a8f7ce",
+  "training": {
+    "created_utc": "2026-09-14T09:20:44.263264+00:00",
+    "device": "mps",
+    "init": "pretrained",
+    "init_checkpoint_revision": "near_vs_nontarget_plus24db_positive_v3",
+    "source_record_count": 593,
+    "near_record_count": 213,
+    "non_target_record_count": 380,
+    "mined_free_speech_count": 121,
+    "mined_airflow_count": 69,
+    "mined_false_activation_count": 344,
+    "best_epoch": 27
+  },
+  "validation": {
+    "balanced_accuracy": 0.9935285416526591,
+    "near_recall": 0.9906542056074766,
+    "non_target_recall": 0.9964028776978417
+  },
+  "test": {
+    "balanced_accuracy": 0.9934088657217939,
+    "near_recall": 0.9940119760479041,
+    "non_target_recall": 0.9928057553956835,
+    "mined_false_activation_rejection_rate": 0.9649122807017544
+  }
+}

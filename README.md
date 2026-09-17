@@ -432,7 +432,7 @@ CLI 入口：
 | `train` | 训练新的近场二分类模型 |
 
 主项目随附的近点模型使用 `ringo-near-vN.model` 版本号。当前默认是
-`ringo-near-v2.model`；`ringo-near-v1.model` 保留用于回退。完整版本、训练修订、
+`ringo-near-v3.model`；`ringo-near-v1.model` 和 `ringo-near-v2.model` 保留用于回退。完整版本、训练修订、
 推荐 Stage-2 阈值和 SHA256 记录在
 `src/proximic_ring/assets/proximity_model_versions.json`。
 
@@ -448,7 +448,7 @@ CLI 入口：
 
 ```powershell
 .\.runtime\venv\Scripts\python.exe -m proximic_ring ring `
-  --model .\src\proximic_ring\assets\ringo-near-v2.model `
+  --model .\src\proximic_ring\assets\ringo-near-v3.model `
   --stage1-threshold 0.005 `
   --asr streaming_sensevoice `
   --asr volcengine `

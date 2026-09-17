@@ -11,6 +11,7 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from .edit_response import apply_edit_response
+from .edit_constraints import validate_expansion_result
 from .edit_tool import (
     DEFAULT_EDIT_MODE,
     EDIT_MODE_FRAGMENT,
@@ -41,6 +42,18 @@ from .prompts import (
     EDIT_TOOL_REQUIRED_PROMPT,
     INPUT_MODE_ROUTER_PROMPT,
 )
+
+
+INPUT_MODE_MAX_OUTPUT_TOKENS = 16
+TEXT_PROCESSING_MAX_OUTPUT_TOKENS = 32768
+
+
+def _text_output_budget(settings: LLMSettings) -> int:
+    # A short source can still request an expanded rewrite. Do not size the
+    # output from its character count; keep classification's budget separate.
+    if normalize_llm_provider(settings.provider) == LLM_PROVIDER_LOCAL:
+        return min(TEXT_PROCESSING_MAX_OUTPUT_TOKENS, settings.local_context_size)
+    return TEXT_PROCESSING_MAX_OUTPUT_TOKENS
 
 
 class LLMResponseProcessingError(RuntimeError):
@@ -123,7 +136,7 @@ class OpenAICompatibleTextProcessor:
             system_prompt=INPUT_MODE_ROUTER_PROMPT,
             user_content=f"<用户语音>\n{raw_text}\n</用户语音>",
             temperature=0.0,
-            max_tokens=32,
+            max_tokens=INPUT_MODE_MAX_OUTPUT_TOKENS,
             edit_tool=None,
         )
         model_output = self._model_output_text(response)
@@ -227,12 +240,13 @@ class OpenAICompatibleTextProcessor:
             f"{raw_text}\n"
             "</修改要求>"
         )
-        max_tokens = max(1024, min(8192, len(target) * 2 + 512))
+        max_tokens = _text_output_budget(settings)
         return self._process_edit_race_with_collection(
             settings,
             target=target,
             user_content=user_content,
             max_tokens=max_tokens,
+            instruction=raw_text,
             on_collection_complete=on_collection_complete,
         )
 
@@ -272,15 +286,14 @@ class OpenAICompatibleTextProcessor:
                 f"{raw_text}\n"
                 "</修改要求>"
             )
-            # Whole-document rewrites remain valid in both edit strategies,
-            # so the output budget must still scale with the captured source.
-            max_tokens = max(1024, min(8192, len(target) * 2 + 512))
+            max_tokens = _text_output_budget(settings)
             if normalized_edit_mode == EDIT_MODE_RACE:
                 return self._process_edit_race(
                     settings,
                     target=target,
                     user_content=user_content,
                     max_tokens=max_tokens,
+                    instruction=raw_text,
                 )
             system_prompt = (
                 EDIT_FRAGMENT_PROMPT
@@ -290,7 +303,7 @@ class OpenAICompatibleTextProcessor:
         else:
             system_prompt = DICTATION_PROMPT
             user_content = raw_text
-            max_tokens = 1024
+            max_tokens = _text_output_budget(settings)
         if normalized_mode == INPUT_MODE_EDIT:
             return self._process_edit_with_retry(
                 settings,
@@ -299,6 +312,7 @@ class OpenAICompatibleTextProcessor:
                 user_content=user_content,
                 max_tokens=max_tokens,
                 edit_mode=normalized_edit_mode,
+                instruction=raw_text,
             )
         response = self._request_chat(
             settings,
@@ -326,6 +340,7 @@ class OpenAICompatibleTextProcessor:
         max_tokens: int,
         edit_mode: str,
         max_attempts: int = 2,
+        instruction: str = "",
     ) -> tuple[str, tuple[str, ...]]:
         """Retry any failed edit attempt once without guessing a repair."""
 
@@ -389,6 +404,7 @@ class OpenAICompatibleTextProcessor:
             model_outputs.append(model_output)
             try:
                 final_text = apply_edit_response(target, response, edit_mode)
+                validate_expansion_result(instruction, target, final_text)
             except Exception as exc:
                 if not final_attempt:
                     retry_error = str(exc)
@@ -410,6 +426,7 @@ class OpenAICompatibleTextProcessor:
         target: str,
         user_content: str,
         max_tokens: int,
+        instruction: str = "",
     ) -> tuple[str, tuple[str, ...]]:
         """Race both edit contracts and return the first valid response."""
 
@@ -442,6 +459,7 @@ class OpenAICompatibleTextProcessor:
                 # The parallel protocols already provide two independent
                 # attempts. Retrying both would double the user's wait time.
                 max_attempts=1,
+                instruction=instruction,
             ): mode
             for mode, prompt in jobs
         }
@@ -504,6 +522,7 @@ class OpenAICompatibleTextProcessor:
         target: str,
         user_content: str,
         max_tokens: int,
+        instruction: str = "",
         on_collection_complete: (
             Callable[[tuple[LLMBranchTrace, ...], str], None] | None
         ) = None,
@@ -532,6 +551,7 @@ class OpenAICompatibleTextProcessor:
                     max_tokens=max_tokens,
                     edit_mode=edit_mode,
                     max_attempts=1,
+                    instruction=instruction,
                 )
                 if candidate == target:
                     return (

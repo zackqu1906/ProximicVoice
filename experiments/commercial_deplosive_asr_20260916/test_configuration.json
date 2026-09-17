@@ -1,0 +1,29 @@
+{
+  "main_project": "/Users/admin/Downloads/ProximicVoice-main",
+  "python": "3.11.16",
+  "packages": {
+    "torch": "2.11.0",
+    "numpy": "1.26.4",
+    "funasr": "1.4.2",
+    "transformers": "5.15.0"
+  },
+  "program_sha256": {
+    "tools/compare_asr_audio.py": "92dc802d20dbab155035896386712eec6a0a5e8a0b7981c40dba790c88f5cfe3",
+    "tools/test_doubao_audio.py": "6ee48fc533c94a044506a46caa3741f280b57025295fb66c6858cb3ca4ff01f2",
+    "src/proximic_ring/asr/backends/streaming_sensevoice.py": "7db5411654f5d6ec27dab6a9e42d0afa410cd934f340084259913ad352371ee4",
+    "src/proximic_ring/asr/backends/funasr_nano.py": "d2e6cbc3356a85dbc2ccf32fb0aee901e6f1b6ecd748f10688a23feca9593e59"
+  },
+  "settings": {
+    "language": "zh",
+    "device": "cpu",
+    "gain_db": 0,
+    "final_redecode": true,
+    "max_seconds": 0,
+    "hotwords": [],
+    "llm_text_cleanup": false,
+    "doubao_pace": 1
+  },
+  "cloud_status": "complete",
+  "cloud_authorization": "User explicitly allowed sending the original and commercial recordings to the configured Doubao/Volcengine ASR service.",
+  "completed_transcriptions": 60
+}

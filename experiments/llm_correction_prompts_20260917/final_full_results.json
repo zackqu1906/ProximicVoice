@@ -1,0 +1,190 @@
+{
+  "at": "2026-09-17T04:33:07.444999+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "provider": "volcengine",
+  "prompt_sha256": {
+    "INPUT_MODE_ROUTER_PROMPT": "68153d23d3a64f2418519d7081462574e48d23336549a2ef5beffbb46c755f95",
+    "EDIT_FRAGMENT_PROMPT": "e4bc2e1a6ee5bc78ec6ca15e4130aa6d554206ccfa88cd849285647f8e4479f6",
+    "EDIT_FULL_TEXT_PROMPT": "e5d336605a6e4157cb0a08237f14740c3d99989dbfdd55daf334d7c227d2ad00"
+  },
+  "passed": 15,
+  "total": 16,
+  "results": [
+    {
+      "id": "already_correct",
+      "phase": "full",
+      "expected": "这个街面还不错",
+      "actual": "这个街面还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"这个街面还不错\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.794
+    },
+    {
+      "id": "ambiguous_repeated_target",
+      "phase": "full",
+      "expected": "第一个界面不错，第二个界面也不错",
+      "actual": "第一个界面不错，第二个界面也不错",
+      "raw_returns": [
+        "{\"modified_text\": \"第一个界面不错，第二个界面也不错\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 2.052
+    },
+    {
+      "id": "explained_homophone",
+      "phase": "full",
+      "expected": "这个街面还不错",
+      "actual": "这个街面还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"这个街面还不错\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.565
+    },
+    {
+      "id": "explained_variant",
+      "phase": "full",
+      "expected": "这是每个人的权利。",
+      "actual": "这是每个人的权利。",
+      "raw_returns": [
+        "{\"modified_text\": \"这是每个人的权利。\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.869
+    },
+    {
+      "id": "explicit_all",
+      "phase": "full",
+      "expected": "上午四点开会，下午四点培训",
+      "actual": "上午四点开会，下午四点培训",
+      "raw_returns": [
+        "{\"modified_text\": \"上午四点开会，下午四点培训\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.606
+    },
+    {
+      "id": "explicit_last_target",
+      "phase": "full",
+      "expected": "第一个界面不错，第二个街面也不错",
+      "actual": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"modified_text\": \"第一个界面不错，第二个街面也不错\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.917
+    },
+    {
+      "id": "legacy_keep_adjacent_word",
+      "phase": "full",
+      "expected": "我们用新模型处理文本",
+      "actual": "我们用新模型处理文本",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用新模型处理文本\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.8
+    },
+    {
+      "id": "legacy_short_correction",
+      "phase": "full",
+      "expected": "识别效果还不错",
+      "actual": "识别效果还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"识别效果还不错\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.648
+    },
+    {
+      "id": "negative_then_positive",
+      "phase": "full",
+      "expected": "这里的水很清",
+      "actual": "这里的水很清",
+      "raw_returns": [
+        "{\"modified_text\": \"这里的水很清\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.481
+    },
+    {
+      "id": "no_corresponding_target",
+      "phase": "full",
+      "expected": "明天下午去公园散步",
+      "actual": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 6.447
+    },
+    {
+      "id": "spelled_case",
+      "phase": "full",
+      "expected": "请安装 Python",
+      "actual": "请安装 Python",
+      "raw_returns": [
+        "{\"modified_text\": \"请安装 Python\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 2.166
+    },
+    {
+      "id": "spelled_chinese_transcription",
+      "phase": "full",
+      "expected": "我们用Python处理数据。",
+      "actual": "我们用 Python 处理数据。",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用 Python 处理数据。\"}"
+      ],
+      "passed": false,
+      "elapsed_s": 1.9
+    },
+    {
+      "id": "spelled_english",
+      "phase": "full",
+      "expected": "我们用 numpy 处理数组",
+      "actual": "我们用 numpy 处理数组",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用 numpy 处理数组\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.964
+    },
+    {
+      "id": "spelled_preserve_case",
+      "phase": "full",
+      "expected": "请安装 Java。",
+      "actual": "请安装 Java。",
+      "raw_returns": [
+        "{\"modified_text\": \"请安装 Java。\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 2.278
+    },
+    {
+      "id": "spelled_separator",
+      "phase": "full",
+      "expected": "请填写变量 api_key。",
+      "actual": "请填写变量 api_key。",
+      "raw_returns": [
+        "{\"modified_text\": \"请填写变量 api_key。\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.738
+    },
+    {
+      "id": "surname_components",
+      "phase": "full",
+      "expected": "请联系李静",
+      "actual": "请联系李静",
+      "raw_returns": [
+        "{\"modified_text\": \"请联系李静\"}"
+      ],
+      "passed": true,
+      "elapsed_s": 1.535
+    }
+  ]
+}

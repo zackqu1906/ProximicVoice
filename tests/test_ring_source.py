@@ -180,6 +180,56 @@ def test_ring_source_can_rechunk_sdk_callbacks():
     np.testing.assert_allclose(second, np.array([500, 600], np.float32) / scale)
 
 
+def test_imu_only_connection_never_starts_mic_and_detects_ble_loss(monkeypatch, tmp_path):
+    import ring_python_sdk
+    from types import SimpleNamespace
+
+    sessions, calls = [], []
+
+    class Session:
+        def __init__(self, **kwargs):
+            self.client = SimpleNamespace(is_connected=True)
+            self.mic_active = False
+            sessions.append(self)
+
+        async def connect(self):
+            return True
+
+        async def imu_on(self, **kwargs):
+            assert kwargs["gyro_hz"] == kwargs["accel_hz"] == 200
+            calls.append("imu")
+
+        async def imu_off(self):
+            calls.append("imu-off")
+
+        async def mic_on(self, **kwargs):
+            raise AssertionError("DJI mode must never enable Ring MIC")
+
+        async def disconnect(self):
+            calls.append("disconnect")
+
+    monkeypatch.setattr(ring_python_sdk, "RingSession", Session)
+    source = RingAudioSource(
+        data_root=tmp_path, audio_enabled=False, imu_hz=200,
+        imu_sample_observer=lambda sample: None,
+    )
+    try:
+        source.connect()
+        source.start_stream()
+        assert calls == ["imu"]
+        assert not source._watchdog_armed.is_set()
+        assert not source._buffer_audio.is_set()
+        sessions[0].client.is_connected = False
+        deadline = time.monotonic() + 2
+        while source.error is None and time.monotonic() < deadline:
+            time.sleep(.01)
+        assert source.error is not None
+        assert "physically lost" in str(source.error)
+    finally:
+        source.close()
+    assert "disconnect" in calls
+
+
 def test_ring_source_thread_uses_sdk_live_callback(monkeypatch, tmp_path):
     import sys
     import types

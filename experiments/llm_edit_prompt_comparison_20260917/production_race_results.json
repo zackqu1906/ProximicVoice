@@ -1,0 +1,158 @@
+{
+  "at": "2026-09-17T05:51:37.278663+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "suite": "screen",
+  "repeat": 3,
+  "prompt_hashes": {
+    "production": {
+      "fragment": "14e5ca0c8693a4df410660e4deca38c213abbb6f73e2e2606cce3ea05084ab54",
+      "full": "b381f4d935b1fa6458a59e47beb28b264490b4e7480601b7613122f9ee90129c"
+    }
+  },
+  "cases": [
+    {
+      "id": "reported_polish",
+      "suite": "screen",
+      "source": "我准备开车去。根本就没有这种开法。",
+      "utterance": "润色一下这段话。",
+      "changed": true,
+      "must_include": [
+        "开车"
+      ],
+      "forbidden": [
+        "公司",
+        "机场",
+        "因为",
+        "交通规则",
+        "危险"
+      ],
+      "review": "保留准备开车及否定这种开法的两层意思，不添加目的地、原因或解释。"
+    }
+  ],
+  "results": [
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 3,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我准备开车过去。根本就没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我准备开车过去。根本就没有这种开法。",
+          "latency_s": 1.8709666670001752,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我准备开车去。根本没有这种开法。",
+          "latency_s": 1.4420185830003902,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "我准备开车去。根本没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.872
+    },
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 2,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我打算开车去。根本没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我打算开车去。根本没有这种开法。",
+          "latency_s": 1.9583854169995902,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"我准备开车去，根本就没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我准备开车去，根本就没有这种开法。",
+          "latency_s": 1.5608480829996552,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "我准备开车去，根本就没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去，根本就没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.959
+    },
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 1,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我打算开车去。根本没有这样的开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我打算开车去。根本没有这样的开法。",
+          "latency_s": 1.9812574999996286,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"我准备开车去，根本就没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我准备开车去，根本就没有这种开法。",
+          "latency_s": 1.4364864170001965,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "我准备开车去，根本就没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去，根本就没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.982
+    }
+  ],
+  "summary": {
+    "production": {
+      "passed": 3,
+      "total": 3,
+      "median_s": 1.959
+    }
+  }
+}

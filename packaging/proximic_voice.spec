@@ -71,6 +71,7 @@ hiddenimports += [
     "transformers",
     "opuslib",
     "websocket",
+    "sounddevice",
     "asr_decoder",
     "online_fbank",
     "modelscope_hub.compat.snapshot_download",
@@ -234,6 +235,6 @@ if platform.system() == "Darwin":
             "LSMinimumSystemVersion": "15.0",
             "NSBluetoothAlwaysUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
             "NSBluetoothPeripheralUsageDescription": "Proximic Voice 使用蓝牙连接 Ringo 并接收语音。",
-            "NSMicrophoneUsageDescription": "Proximic Voice 处理来自 Ringo 的语音以完成转写。",
+            "NSMicrophoneUsageDescription": "Proximic Voice 使用你选定的电脑麦克风（例如 DJI）采集语音并转写。",
         },
     )

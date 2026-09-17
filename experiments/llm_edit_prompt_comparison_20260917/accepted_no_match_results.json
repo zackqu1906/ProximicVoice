@@ -1,0 +1,114 @@
+{
+  "at": "2026-09-17T05:54:52.224456+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "suite": "corrections",
+  "repeat": 3,
+  "prompt_hashes": {
+    "production": {
+      "fragment": "42c62fed0db277f8b0df2d693eecc4fc8944606bb89abc43dfd5b5bdcde0619c",
+      "full": "5b883ffec8a8711e4413da7bdd3f34af3f74ddd712fb2c19460ebf52a34c9571"
+    }
+  },
+  "cases": [
+    {
+      "id": "no_corresponding_target",
+      "utterance": "那个英文词拼作 P Y T H O N",
+      "route": "edit",
+      "source": "明天下午去公园散步",
+      "expected": "明天下午去公园散步"
+    }
+  ],
+  "results": [
+    {
+      "case": "no_corresponding_target",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"original_text\": \"明天下午去公园散步\", \"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.332
+    },
+    {
+      "case": "no_corresponding_target",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 2,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"original_text\": \"明天下午去公园散步\", \"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.407
+    },
+    {
+      "case": "no_corresponding_target",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 3.111
+    },
+    {
+      "case": "no_corresponding_target",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 3,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"original_text\": \"明天下午去公园散步\", \"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.459
+    },
+    {
+      "case": "no_corresponding_target",
+      "variant": "production",
+      "branch": "full",
+      "trial": 3,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.346
+    },
+    {
+      "case": "no_corresponding_target",
+      "variant": "production",
+      "branch": "full",
+      "trial": 2,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 6.71
+    }
+  ],
+  "summary": {
+    "production": {
+      "passed": 6,
+      "total": 6,
+      "median_s": 2.433
+    }
+  }
+}

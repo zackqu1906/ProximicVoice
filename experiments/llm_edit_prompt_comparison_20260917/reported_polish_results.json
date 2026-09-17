@@ -1,0 +1,229 @@
+{
+  "at": "2026-09-17T05:41:10.632682+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "suite": "screen",
+  "repeat": 2,
+  "prompt_hashes": {
+    "baseline": {
+      "fragment": "e4bc2e1a6ee5bc78ec6ca15e4130aa6d554206ccfa88cd849285647f8e4479f6",
+      "full": "e5d336605a6e4157cb0a08237f14740c3d99989dbfdd55daf334d7c227d2ad00"
+    },
+    "scope_prefix": {
+      "fragment": "3365ce78759a147c1854a175c3ce2225d3773e615af4d174e773981e3a03c2e7",
+      "full": "46444481b7224640d1d18e417e4c611fe957a5dbf694da7e9bf4a726c1eca3fe"
+    },
+    "balanced": {
+      "fragment": "7fc349f35325104e7bd0c531a116b29b679212d76e7e2f5e02a3c1a8ad4420b5",
+      "full": "e965481bcd3bd4d5c87204f11c5cc9dc9e2e7bd6ea57d80163cd4e61ed28c350"
+    }
+  },
+  "cases": [
+    {
+      "id": "reported_polish",
+      "suite": "screen",
+      "source": "我准备开车去。根本就没有这种开法。",
+      "utterance": "润色一下这段话。",
+      "changed": true,
+      "must_include": [
+        "开车"
+      ],
+      "forbidden": [
+        "公司",
+        "机场",
+        "因为",
+        "交通规则",
+        "危险"
+      ],
+      "review": "保留准备开车及否定这种开法的两层意思，不添加目的地、原因或解释。"
+    }
+  ],
+  "results": [
+    {
+      "case": "reported_polish",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我准备开车去，但根本就没有这种开法。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我准备开车去，但根本就没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.85
+    },
+    {
+      "case": "reported_polish",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我准备开车去。根本就没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去。根本就没有这种开法。\"}"
+      ],
+      "failures": [
+        "unchanged"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 1.591
+    },
+    {
+      "case": "reported_polish",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我准备开车去。根本就不是这种开法。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我准备开车去。根本就不是这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 3.721
+    },
+    {
+      "case": "reported_polish",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我准备开车去。根本就不是这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去。根本就不是这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.642
+    },
+    {
+      "case": "reported_polish",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我准备开车过去，但根本就不是这么开的。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车过去，但根本就不是这么开的。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.096
+    },
+    {
+      "case": "reported_polish",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我准备开车去，但根本就没有这种开法。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我准备开车去，但根本就没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 6.304
+    },
+    {
+      "case": "reported_polish",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 2,
+      "final_text": "我打算开车过去，可根本就不是这么开的。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我打算开车过去，可根本就不是这么开的。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.518
+    },
+    {
+      "case": "reported_polish",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 2,
+      "final_text": "我准备开车过去。根本就不是这种开法。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我准备开车过去。根本就不是这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 4.146
+    },
+    {
+      "case": "reported_polish",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 2,
+      "final_text": "我准备开车去，但根本就没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去，但根本就没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.577
+    },
+    {
+      "case": "reported_polish",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 2,
+      "final_text": "我准备开车去，但根本就没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去，但根本就没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.932
+    },
+    {
+      "case": "reported_polish",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 2,
+      "final_text": "我准备开车过去。根本就没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车过去。根本就没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.195
+    },
+    {
+      "case": "reported_polish",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 2,
+      "final_text": "我准备开车去。可根本就没有这种开法。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我准备开车去。可根本就没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 11.367
+    }
+  ],
+  "summary": {
+    "baseline": {
+      "passed": 3,
+      "total": 4,
+      "median_s": 4.441
+    },
+    "scope_prefix": {
+      "passed": 4,
+      "total": 4,
+      "median_s": 3.327
+    },
+    "balanced": {
+      "passed": 4,
+      "total": 4,
+      "median_s": 2.146
+    }
+  }
+}

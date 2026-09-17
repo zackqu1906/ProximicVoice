@@ -1069,6 +1069,8 @@ class _MacOSAccessibilityTextBridge:
                         value.value, 3, ctypes.byref(rect)
                     ):
                         return 0, 0, 0, 0
+                    if rect.size.height <= 0:
+                        return 0, 0, 0, 0
                     x = rect.origin.x + (rect.size.width if use_right_edge else 0)
                     return (
                         int(round(x)),
@@ -1125,6 +1127,8 @@ class _MacOSAccessibilityTextBridge:
             if not self._application_services.AXValueGetValue(
                 bounds_value.value, 3, ctypes.byref(rect)
             ):
+                return 0, 0, 0, 0
+            if rect.size.height <= 0:
                 return 0, 0, 0, 0
             return (
                 int(round(rect.origin.x + rect.size.width)),
@@ -1193,6 +1197,7 @@ class MacOSDesktopTextTarget:
     KEY_Z = 6
     KEY_DELETE = 51
     KEY_RIGHT = 124
+    KEY_DOWN = 125
     _MANUAL_AX_APPLICATIONS = frozenset({"wechat", "weixin", "微信"})
 
     @staticmethod
@@ -1264,17 +1269,6 @@ class MacOSDesktopTextTarget:
         except BaseException:
             return 0, "当前光标"
 
-    @staticmethod
-    def _pointer_position() -> tuple[int, int]:
-        """Last-resort anchor for editors that hide all AX text geometry."""
-        try:
-            import Quartz
-
-            point = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
-            return int(round(point.x)), int(round(point.y))
-        except BaseException:
-            return 0, 0
-
     def capture_reference(self) -> DesktopTargetRef:
         process_id, name = self._frontmost_application()
         bounds = (0, 0, 0, 0)
@@ -1304,16 +1298,15 @@ class MacOSDesktopTextTarget:
                 )
             except BaseException:
                 caret = (0, 0, 0, 0)
-        if caret[3] <= 0:
-            pointer_x, pointer_y = self._pointer_position()
-            pointer_is_plausible = pointer_x > 0 and pointer_y > 0
-            if bounds[2] > 0 and bounds[3] > 0:
-                pointer_is_plausible = pointer_is_plausible and (
-                    bounds[0] <= pointer_x <= bounds[0] + bounds[2]
-                    and bounds[1] <= pointer_y <= bounds[1] + bounds[3]
-                )
-            if pointer_is_plausible:
-                caret = (pointer_x, pointer_y, 2, 18)
+        # An arbitrary mouse location is not the text caret. When AX cannot
+        # locate it, let the popup use the field bounds or a screen fallback.
+        # Some web editors also return a stale caret outside the focused field.
+        if caret[3] > 0 and bounds[2] > 0 and bounds[3] > 0:
+            if not (
+                bounds[0] - 2 <= caret[0] <= bounds[0] + bounds[2] + 2
+                and bounds[1] - 2 <= caret[1] <= bounds[1] + bounds[3] + 2
+            ):
+                caret = (0, 0, 0, 0)
         return DesktopTargetRef(
             window_handle=0,
             control_handle=0,
@@ -1740,6 +1733,7 @@ class MacOSDesktopTextTarget:
                     if observed is not None and macos_texts_equivalent(
                         observed, replacement
                     ):
+                        self._move_replacement_caret_to_end(snapshot.target, observed)
                         return
                     if attempt == 0:
                         time.sleep(0.08)
@@ -1759,6 +1753,32 @@ class MacOSDesktopTextTarget:
         # Posted Quartz events are asynchronous. Do not let immediate readback
         # steal the focus before the target app consumes the final chunk.
         time.sleep(max(self._shortcut_settle_s, 0.12))
+        self._move_replacement_caret_to_end(snapshot.target, replacement)
+
+    def _move_replacement_caret_to_end(
+        self, target: DesktopTargetRef, text: str
+    ) -> None:
+        """Finish a whole-field replacement at its end, never a dictation paste.
+
+        Setting AXValue may leave the old insertion offset in the new text.
+        AX ranges count UTF-16 units, including both units of an emoji. If the
+        control cannot set a range, Command+Down moves to the document end (a
+        plain Right only moves one character when no selection is active).
+        """
+        setter = getattr(self._accessibility_text, "set_focused_selected_range", None)
+        if callable(setter):
+            try:
+                end = len(text.encode("utf-16-le", errors="surrogatepass")) // 2
+                if setter(target.process_id, (end, 0)):
+                    return
+            except Exception:
+                pass
+        try:
+            self._injector.command_key(self.KEY_DOWN)
+        except Exception:
+            # Text was already written. A caret failure must not cause a
+            # second replacement and an extra entry in the native undo stack.
+            pass
 
     def undo(self, target: DesktopTargetRef) -> None:
         """Internal rollback: activate, undo, then settle before readback."""
@@ -1771,8 +1791,24 @@ class MacOSDesktopTextTarget:
         self._injector.command_key(self.KEY_Z)
 
     def release_selection(self, target: DesktopTargetRef) -> None:
+        """Collapse only a known active selection; leave an insertion caret alone."""
         try:
-            self._activate(target)
+            process_id, _name = self._frontmost_application()
+            if process_id != int(target.process_id):
+                return
+            reader = getattr(self._accessibility_text, "focused_selected_range", None)
+            if not callable(reader):
+                return
+            selected = reader(target.process_id)
+            if selected is None or selected[1] <= 0:
+                return
+            setter = getattr(self._accessibility_text, "set_focused_selected_range", None)
+            if callable(setter):
+                try:
+                    if setter(target.process_id, (selected[0] + selected[1], 0)):
+                        return
+                except Exception:
+                    pass
             self._injector.press_key(self.KEY_RIGHT)
         except BaseException:
             return

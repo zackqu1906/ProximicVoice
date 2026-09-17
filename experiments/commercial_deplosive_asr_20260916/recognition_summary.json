@@ -1,0 +1,41 @@
+{
+  "coverage": {
+    "doubao": {
+      "original": {
+        "nonempty": 9,
+        "errors": 0,
+        "total": 9
+      },
+      "commercial": {
+        "nonempty": 6,
+        "errors": 0,
+        "total": 9
+      }
+    },
+    "sensevoice": {
+      "original": {
+        "nonempty": 9,
+        "errors": 0,
+        "total": 9
+      },
+      "commercial": {
+        "nonempty": 9,
+        "errors": 0,
+        "total": 9
+      }
+    },
+    "funasr_nano": {
+      "original": {
+        "nonempty": 9,
+        "errors": 0,
+        "total": 9
+      },
+      "commercial": {
+        "nonempty": 9,
+        "errors": 0,
+        "total": 9
+      }
+    }
+  },
+  "note": "Nonempty output is not accuracy; all wording is retained exactly."
+}

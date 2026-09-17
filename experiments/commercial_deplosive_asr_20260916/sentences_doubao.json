@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "cases": {
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/01_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/01_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.7,
+      "results": {
+        "doubao": {
+          "text": "朋友帮着爸爸病。",
+          "elapsed_s": 7.917,
+          "error": null
+        }
+      },
+      "sentence": 1,
+      "reading_prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/01_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/01_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.7,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 7.892,
+          "error": null
+        }
+      },
+      "sentence": 1,
+      "reading_prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/02_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/02_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 6.7,
+      "results": {
+        "doubao": {
+          "text": "person 的皮球滚到了葡萄架旁边。",
+          "elapsed_s": 7.143,
+          "error": null
+        }
+      },
+      "sentence": 2,
+      "reading_prompt": "白色的皮球滚到了葡萄架旁。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/02_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/02_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 6.7,
+      "results": {
+        "doubao": {
+          "text": "白色的啤酒放到了家旁边。",
+          "elapsed_s": 6.852,
+          "error": null
+        }
+      },
+      "sentence": 2,
+      "reading_prompt": "白色的皮球滚到了葡萄架旁。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/03_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/03_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "8本笔记。",
+          "elapsed_s": 7.918,
+          "error": null
+        }
+      },
+      "sentence": 3,
+      "reading_prompt": "葡萄皮薄不怕碰，白布包着八本笔记。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/03_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/03_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 7.819,
+          "error": null
+        }
+      },
+      "sentence": 3,
+      "reading_prompt": "葡萄皮薄不怕碰，白布包着八本笔记。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/04_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/04_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 10.2,
+      "results": {
+        "doubao": {
+          "text": "怎么变？请帮房间。",
+          "elapsed_s": 10.375,
+          "error": null
+        }
+      },
+      "sentence": 4,
+      "reading_prompt": "包裹放在旁边，请帮朋友搬进房间。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/04_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/04_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 10.2,
+      "results": {
+        "doubao": {
+          "text": "怎么编辑和剪辑？",
+          "elapsed_s": 10.35,
+          "error": null
+        }
+      },
+      "sentence": 4,
+      "reading_prompt": "包裹放在旁边，请帮朋友搬进房间。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/05_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/05_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.3,
+      "results": {
+        "doubao": {
+          "text": "他提着袋子来到大厅，哥哥看过感情的天空。",
+          "elapsed_s": 7.494,
+          "error": null
+        }
+      },
+      "sentence": 5,
+      "reading_prompt": "他提着袋子到大厅，哥哥看过干净的天空。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/05_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/05_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.3,
+      "results": {
+        "doubao": {
+          "text": "天生的孩子。感情的天空。",
+          "elapsed_s": 7.494,
+          "error": null
+        }
+      },
+      "sentence": 5,
+      "reading_prompt": "他提着袋子到大厅，哥哥看过干净的天空。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/06_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/06_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 5.2,
+      "results": {
+        "doubao": {
+          "text": "不停下降，等待租房。",
+          "elapsed_s": 5.406,
+          "error": null
+        }
+      },
+      "sentence": 6,
+      "reading_prompt": "我们停下脚步，等同伴一起出发。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/06_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/06_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 5.2,
+      "results": {
+        "doubao": {
+          "text": "停下脚步，等待一起出发！",
+          "elapsed_s": 5.488,
+          "error": null
+        }
+      },
+      "sentence": 6,
+      "reading_prompt": "我们停下脚步，等同伴一起出发。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/07_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/07_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "明天我们一起讨论旅行安排。",
+          "elapsed_s": 7.766,
+          "error": null
+        }
+      },
+      "sentence": 7,
+      "reading_prompt": "明天我们一起讨论旅行安排。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/07_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/07_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "会计道德性安排。",
+          "elapsed_s": 7.758,
+          "error": null
+        }
+      },
+      "sentence": 7,
+      "reading_prompt": "明天我们一起讨论旅行安排。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/08_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/08_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 4.8,
+      "results": {
+        "doubao": {
+          "text": "带上水杯和地图，慢慢走过门前的小桥。",
+          "elapsed_s": 5.018,
+          "error": null
+        }
+      },
+      "sentence": 8,
+      "reading_prompt": "带上水杯和地图，慢慢走过门前的小桥。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/08_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/08_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 4.8,
+      "results": {
+        "doubao": {
+          "text": "带上水，带个地图，慢慢走，我面前的小桥。",
+          "elapsed_s": 4.993,
+          "error": null
+        }
+      },
+      "sentence": 8,
+      "reading_prompt": "带上水杯和地图，慢慢走过门前的小桥。"
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/09_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/09_original.wav",
+      "group": "original",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 5.5,
+      "results": {
+        "doubao": {
+          "text": "怀孕的蚊子。",
+          "elapsed_s": 5.713,
+          "error": null
+        }
+      },
+      "sentence": 9,
+      "reading_prompt": "Please put the blue paper beside the purple box."
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/09_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences/09_commercial.wav",
+      "group": "commercial",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 5.5,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 5.684,
+          "error": null
+        }
+      },
+      "sentence": 9,
+      "reading_prompt": "Please put the blue paper beside the purple box."
+    }
+  },
+  "configuration": {
+    "backends": [
+      "doubao"
+    ],
+    "dataset": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/sentences",
+    "dataset_limit": -1,
+    "recent_empty": 0,
+    "recent_recognized": 0,
+    "max_seconds": 0.0,
+    "doubao_pace": 1.0
+  },
+  "updated_at": "2026-09-16T03:41:16+00:00"
+}

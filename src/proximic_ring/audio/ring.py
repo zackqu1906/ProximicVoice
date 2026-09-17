@@ -76,6 +76,7 @@ class RingAudioSource(AudioSource):
         ]
         | None = None,
         imu_hz: int = _DEFAULT_IMU_HZ,
+        audio_enabled: bool = True,
     ) -> None:
         encoding = encoding.lower()
         if encoding not in {"pcm", "adpcm", "opus"}:
@@ -97,6 +98,7 @@ class RingAudioSource(AudioSource):
         self.imu_sample_observer = imu_sample_observer
         self.battery_observer = battery_observer
         self.imu_hz = int(imu_hz)
+        self.audio_enabled = bool(audio_enabled)
 
         self._queue: queue.Queue[object] = queue.Queue(maxsize=queue_blocks)
         self._pending = np.empty(0, dtype=np.float32)
@@ -195,7 +197,7 @@ class RingAudioSource(AudioSource):
         """
         if self._thread is None:
             self.connect()
-        if buffer_audio:
+        if buffer_audio and self.audio_enabled:
             self._buffer_audio.set()
         else:
             self._buffer_audio.clear()
@@ -210,7 +212,7 @@ class RingAudioSource(AudioSource):
             err = self._error
             self.close()
             raise RuntimeError(f"Failed to start Ring microphone audio: {err}") from err
-        if buffer_audio:
+        if buffer_audio and self.audio_enabled:
             self._watchdog_armed.set()
 
     def begin_buffering(self) -> None:
@@ -763,6 +765,20 @@ class RingAudioSource(AudioSource):
                 await asyncio.sleep(0.05)
 
             if self._stop.is_set():
+                return
+
+            if not self.audio_enabled:
+                # DJI supplies PCM independently; this BLE session only owns
+                # battery/IMU. Never issue MIC ON or arm the PCM watchdog.
+                await self._start_imu_best_effort(session)
+                if self.imu_stream_error is not None:
+                    raise RuntimeError(f"Ring 手势数据启动失败：{self.imu_stream_error}")
+                self._ready.set()
+                while not self._stop.is_set():
+                    client = getattr(session, "client", None)
+                    if client is not None and not bool(getattr(client, "is_connected", False)):
+                        raise RuntimeError("Ring BLE connection was physically lost")
+                    await asyncio.sleep(0.05)
                 return
 
             # The receiver is normally operated with a short human pause

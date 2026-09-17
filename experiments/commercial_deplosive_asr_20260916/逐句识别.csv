@@ -1,0 +1,55 @@
+﻿sentence,version,backend,prompt,text,elapsed_s,error,clip
+1,original,doubao,爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。,朋友帮着爸爸病。,7.917,,sentences/01_original.wav
+1,original,sensevoice,爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。,胖的狗是宝宝泡宝，宝胖的朋友防止不护病。,1.012,,sentences/01_original.wav
+1,original,funasr_nano,爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。,爬爬爬山跑跑跑步胖胖的朋友不这么稳定,2.86,,sentences/01_original.wav
+1,commercial,doubao,爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。,,7.892,,sentences/01_commercial.wav
+1,commercial,sensevoice,爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。,他的故事高老，宝他的朋友同知不病。,1.045,,sentences/01_commercial.wav
+1,commercial,funasr_nano,爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。,他们不是能逃跑的，逃跑的朋友总是不稳定。,2.451,,sentences/01_commercial.wav
+2,original,doubao,白色的皮球滚到了葡萄架旁。,person 的皮球滚到了葡萄架旁边。,7.143,,sentences/02_original.wav
+2,original,sensevoice,白色的皮球滚到了葡萄架旁。,白色的啤酒混到了葡萄家旁边。,0.983,,sentences/02_original.wav
+2,original,funasr_nano,白色的皮球滚到了葡萄架旁。,白色的皮球滚到了葡萄架旁边。,2.261,,sentences/02_original.wav
+2,commercial,doubao,白色的皮球滚到了葡萄架旁。,白色的啤酒放到了家旁边。,6.852,,sentences/02_commercial.wav
+2,commercial,sensevoice,白色的皮球滚到了葡萄架旁。,白色啤箱放到了我家旁边。,1.051,,sentences/02_commercial.wav
+2,commercial,funasr_nano,白色的皮球滚到了葡萄架旁。,白色的皮球滚到了葡萄架旁边。,2.29,,sentences/02_commercial.wav
+3,original,doubao,葡萄皮薄不怕碰，白布包着八本笔记。,8本笔记。,7.918,,sentences/03_original.wav
+3,original,sensevoice,葡萄皮薄不怕碰，白布包着八本笔记。,不但皮不过不怕胖，白宝如保着怕本笔记。,1.159,,sentences/03_original.wav
+3,original,funasr_nano,葡萄皮薄不怕碰，白布包着八本笔记。,不打屁股不怕疼，白跑步跑上八百米。,2.925,,sentences/03_original.wav
+3,commercial,doubao,葡萄皮薄不怕碰，白布包着八本笔记。,,7.819,,sentences/03_commercial.wav
+3,commercial,sensevoice,葡萄皮薄不怕碰，白布包着八本笔记。,皮肤，外毛偶疹阿分脾7。,1.042,,sentences/03_commercial.wav
+3,commercial,funasr_nano,葡萄皮薄不怕碰，白布包着八本笔记。,皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬皮蓬,60.346,,sentences/03_commercial.wav
+4,original,doubao,包裹放在旁边，请帮朋友搬进房间。,怎么变？请帮房间。,10.375,,sentences/04_original.wav
+4,original,sensevoice,包裹放在旁边，请帮朋友搬进房间。,包过发生毛便，警方朋友搬进房间。,1.09,,sentences/04_original.wav
+4,original,funasr_nano,包裹放在旁边，请帮朋友搬进房间。,包裹都在旁边请帮朋友搬进房间,2.257,,sentences/04_original.wav
+4,commercial,doubao,包裹放在旁边，请帮朋友搬进房间。,怎么编辑和剪辑？,10.35,,sentences/04_commercial.wav
+4,commercial,sensevoice,包裹放在旁边，请帮朋友搬进房间。,后金风间附近。,1.1,,sentences/04_commercial.wav
+4,commercial,funasr_nano,包裹放在旁边，请帮朋友搬进房间。,在O K情况波动的起伏间。,2.351,,sentences/04_commercial.wav
+5,original,doubao,他提着袋子到大厅，哥哥看过干净的天空。,他提着袋子来到大厅，哥哥看过感情的天空。,7.494,,sentences/05_original.wav
+5,original,sensevoice,他提着袋子到大厅，哥哥看过干净的天空。,他提着袋子来到大厅，偷看过干净的天空。,1.076,,sentences/05_original.wav
+5,original,funasr_nano,他提着袋子到大厅，哥哥看过干净的天空。,他提着袋子来到大厅，刚刚看过干净的店铺。,2.743,,sentences/05_original.wav
+5,commercial,doubao,他提着袋子到大厅，哥哥看过干净的天空。,天生的孩子。感情的天空。,7.494,,sentences/05_commercial.wav
+5,commercial,sensevoice,他提着袋子到大厅，哥哥看过干净的天空。,子那个大厅偷偷看过干净的天。,1.065,,sentences/05_commercial.wav
+5,commercial,funasr_nano,他提着袋子到大厅，哥哥看过干净的天空。,他提着袋子来到大厅，偷偷的看过了干净的店铺。,2.918,,sentences/05_commercial.wav
+6,original,doubao,我们停下脚步，等同伴一起出发。,不停下降，等待租房。,5.406,,sentences/06_original.wav
+6,original,sensevoice,我们停下脚步，等同伴一起出发。,我停下脚步，躺在动板一及厨房。,1.051,,sentences/06_original.wav
+6,original,funasr_nano,我们停下脚步，等同伴一起出发。,我不停下脚步等待同伴一起出发,2.068,,sentences/06_original.wav
+6,commercial,doubao,我们停下脚步，等同伴一起出发。,停下脚步，等待一起出发！,5.488,,sentences/06_commercial.wav
+6,commercial,sensevoice,我们停下脚步，等同伴一起出发。,我们停下脚步，打带同伴一起出发。,1.02,,sentences/06_commercial.wav
+6,commercial,funasr_nano,我们停下脚步，等同伴一起出发。,我们停下脚步，等待同伴一起出发。,2.319,,sentences/06_commercial.wav
+7,original,doubao,明天我们一起讨论旅行安排。,明天我们一起讨论旅行安排。,7.766,,sentences/07_original.wav
+7,original,sensevoice,明天我们一起讨论旅行安排。,明天我起讨的旅行安排。,1.126,,sentences/07_original.wav
+7,original,funasr_nano,明天我们一起讨论旅行安排。,明天我会接到的旅行安排,2.08,,sentences/07_original.wav
+7,commercial,doubao,明天我们一起讨论旅行安排。,会计道德性安排。,7.758,,sentences/07_commercial.wav
+7,commercial,sensevoice,明天我们一起讨论旅行安排。,明天我会系统履行安排。,1.173,,sentences/07_commercial.wav
+7,commercial,funasr_nano,明天我们一起讨论旅行安排。,明天我会去讨论路线安排。,2.113,,sentences/07_commercial.wav
+8,original,doubao,带上水杯和地图，慢慢走过门前的小桥。,带上水杯和地图，慢慢走过门前的小桥。,5.018,,sentences/08_original.wav
+8,original,sensevoice,带上水杯和地图，慢慢走过门前的小桥。,带上水杯和地图，慢慢走过门前的小桥。,1.0,,sentences/08_original.wav
+8,original,funasr_nano,带上水杯和地图，慢慢走过门前的小桥。,带上水杯和地图慢慢走过门前的小桥,2.311,,sentences/08_original.wav
+8,commercial,doubao,带上水杯和地图，慢慢走过门前的小桥。,带上水，带个地图，慢慢走，我面前的小桥。,4.993,,sentences/08_commercial.wav
+8,commercial,sensevoice,带上水杯和地图，慢慢走过门前的小桥。,带上水杯和地毯，慢慢走过门前的小桥。,1.011,,sentences/08_commercial.wav
+8,commercial,funasr_nano,带上水杯和地图，慢慢走过门前的小桥。,带上水杯和地图慢慢走过门前的小桥,2.312,,sentences/08_commercial.wav
+9,original,doubao,Please put the blue paper beside the purple box.,怀孕的蚊子。,5.713,,sentences/09_original.wav
+9,original,sensevoice,Please put the blue paper beside the purple box.,Please put the black paper beside the purple box.,1.038,,sentences/09_original.wav
+9,original,funasr_nano,Please put the blue paper beside the purple box.,It is made of blue pepper besides the purple moss.,2.465,,sentences/09_original.wav
+9,commercial,doubao,Please put the blue paper beside the purple box.,,5.684,,sentences/09_commercial.wav
+9,commercial,sensevoice,Please put the blue paper beside the purple box.,Please pepper beside purple box.,1.023,,sentences/09_commercial.wav
+9,commercial,funasr_nano,Please put the blue paper beside the purple box.,"It is not the proper purpose, as the river flows.",2.536,,sentences/09_commercial.wav

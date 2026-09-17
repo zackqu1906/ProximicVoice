@@ -1074,8 +1074,13 @@ ApplicationWindow {
                             property bool editEntry: entry.mode === "edit"
                             property bool nativeUndoSent: entry.outcome === "native_undo_sent"
                             property bool undoneEntry: entry.outcome === "undone" || nativeUndoSent
-                            property bool resultAvailable: Boolean(entry.candidateAvailable)
-                                                           || Boolean(entry.candidateText)
+                            property bool appliedEntry: entry.outcome === "applied" || entry.outcome === "confirm"
+                            property bool failedEntry: entry.outcome === "apply_failed" || entry.outcome === "abandoned"
+                            property bool cancelledEntry: entry.outcome === "cancelled" || entry.outcome === "cancel"
+                            property bool resultAvailable: appliedEntry
+                                                           && (entry.candidateAvailable !== undefined
+                                                               ? Boolean(entry.candidateAvailable)
+                                                               : Boolean(entry.candidateText))
                             property bool resultEmpty: Boolean(entry.candidateEmpty)
                             width: voiceHistoryList.width
                             height: Math.max(82, historyContent.implicitHeight + 18)
@@ -1126,11 +1131,16 @@ ApplicationWindow {
                                                           : (editEntry ? "#75639D" : "#37647F")
                                             Label {
                                                 id: historyModeLabel
+                                                objectName: "voiceHistoryModeLabel"
                                                 anchors.centerIn: parent
                                                 text: nativeUndoSent
                                                       ? "已发送撤销"
                                                       : undoneEntry
                                                       ? (editEntry ? "已撤回编辑" : "已撤回听写")
+                                                      : failedEntry
+                                                      ? (editEntry ? "修改未完成" : "输入未完成")
+                                                      : cancelledEntry
+                                                      ? "已取消"
                                                       : (entry.modeLabel
                                                          || (editEntry ? "编辑指令" : "听写输入"))
                                                 color: undoneEntry
@@ -1183,6 +1193,7 @@ ApplicationWindow {
                                         objectName: "voiceHistoryEditSummary"
                                         Layout.fillWidth: true
                                         visible: editEntry
+                                                 && (appliedEntry || undoneEntry)
                                                  && (Boolean(entry.editSummary)
                                                      || (!undoneEntry && resultAvailable))
                                         text: (nativeUndoSent ? "原修改摘要："
@@ -1311,6 +1322,10 @@ ApplicationWindow {
             modal: true
             popupType: Popup.Item
             title: "设置"
+            onOpened: {
+                if (appController.audioSource === "microphone")
+                    appController.refreshMicrophones()
+            }
             closePolicy: Popup.CloseOnEscape
             readonly property bool deviceSettingsLocked:
                 appController.connected || appController.busy
@@ -1368,15 +1383,69 @@ ApplicationWindow {
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "通过主界面的“选择并连接设备”扫描附近设备，再点击对应设备连接。"
+                        text: "先连接 Ring 以使用手势。音频可选 Ring 或电脑连接的 DJI 麦克风。"
                         color: root.textMain
                         font.pixelSize: 12
                         wrapMode: Text.Wrap
                     }
-                    Label { text: "连接质量"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    Label { text: "音频来源"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                    ComboBox {
+                        objectName: "audioSourceCombo"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        Layout.preferredHeight: 44
+                        model: ["Ring 麦克风", "电脑麦克风（DJI）"]
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                        currentIndex: appController.audioSource === "microphone" ? 1 : 0
+                        onActivated: {
+                            appController.audioSource = currentIndex === 1 ? "microphone" : "ring"
+                            if (currentIndex === 1) appController.refreshMicrophones()
+                        }
+                    }
+                    RowLayout {
+                        visible: appController.audioSource === "microphone"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        ComboBox {
+                            objectName: "microphoneDeviceCombo"
+                            Layout.fillWidth: true
+                            Layout.minimumWidth: 0
+                            Layout.preferredHeight: 44
+                            enabled: !runtimeSettingsDialog.deviceSettingsLocked && !appController.microphoneScanBusy
+                            model: appController.microphoneDevices
+                            textRole: "label"
+                            valueRole: "value"
+                            currentIndex: {
+                                var rows = appController.microphoneDevices
+                                for (var i = 0; i < rows.length; ++i)
+                                    if (rows[i].value === appController.microphoneDevice) return i
+                                return 0
+                            }
+                            onActivated: appController.microphoneDevice = currentValue
+                        }
+                        Button {
+                            objectName: "refreshMicrophonesButton"
+                            text: appController.microphoneScanBusy ? "检测中…" : "刷新"
+                            enabled: !runtimeSettingsDialog.deviceSettingsLocked && !appController.microphoneScanBusy
+                            onClicked: appController.refreshMicrophones()
+                        }
+                    }
+                    Label {
+                        visible: appController.audioSource === "microphone"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.microphoneDevicesError.length > 0
+                              ? appController.microphoneDevicesError
+                              : "可自动识别 DJI，也可指定输入设备；未找到时不会切换到其他麦克风。Ring 或麦克风断开都会停止交互。"
+                        color: appController.microphoneDevicesError.length > 0 ? "#F3AA82" : root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
+                    }
+                    Label {
+                        visible: appController.audioSource === "ring"
+                        text: "连接质量"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20
+                    }
                     ComboBox {
                         id: audioEncodingCombo
                         objectName: "audioEncodingCombo"
+                        visible: appController.audioSource === "ring"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
                         Layout.preferredHeight: 44
                         model: ["稳定优先（推荐）", "平衡模式", "原始音质"]
@@ -1386,6 +1455,7 @@ ApplicationWindow {
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        visible: appController.audioSource === "ring"
                         text: appController.audioEncoding === "pcm"
                               ? "原始 PCM 带宽最高，BLE 链路繁忙时更容易出现音频停流。"
                               : appController.audioEncoding === "adpcm"
@@ -1399,9 +1469,29 @@ ApplicationWindow {
 
                     SettingsSectionHeader {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        title: "靠近说话检测"
-                        badge: "实时生效"
+                        title: "语音启停方式"
+                        badge: runtimeSettingsDialog.deviceSettingsLocked ? "断开后修改" : "可修改"
                         accent: "#55D6AE"
+                    }
+                    ComboBox {
+                        objectName: "speechControlModeCombo"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        Layout.preferredHeight: 44
+                        model: ["靠近说话开始 · 确认手势结束", "纯手势 · 确认手势开始／结束"]
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                        currentIndex: appController.speechControlMode === "gesture" ? 1 : 0
+                        onActivated: appController.speechControlMode = currentIndex === 1 ? "gesture" : "proximity"
+                    }
+                    Label {
+                        objectName: "speechControlModeHint"
+                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                        text: appController.speechControlMode === "gesture"
+                              ? "开启语音识别后，" + appController.confirmGestureHint + " 开始，再做一次结束。不使用近点模型；本句处理完成后才能开始下一句。"
+                              : "保持原有启停方式：靠近说话开始，" + appController.confirmGestureHint + " 结束。"
+                                + (appController.audioSource === "microphone" ? "靠近检测和语音识别均使用选定麦克风的音频。" : "")
+                        color: root.textMuted
+                        font.pixelSize: 11
+                        wrapMode: Text.Wrap
                     }
                     RowLayout {
                         Layout.fillWidth: true
@@ -1419,6 +1509,7 @@ ApplicationWindow {
                     Slider {
                         id: stage1SensitivitySlider
                         objectName: "stage1SensitivitySlider"
+                        enabled: appController.speechControlMode === "proximity"
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
@@ -1432,7 +1523,9 @@ ApplicationWindow {
                         Layout.fillWidth: true
                         Layout.leftMargin: 20
                         Layout.rightMargin: 20
-                        text: "数值越高越容易触发；连接期间调整会立即生效。"
+                        text: appController.speechControlMode === "gesture"
+                              ? "纯手势模式不使用声音触发灵敏度，原设置会保留。"
+                              : "数值越高越容易触发；连接期间调整会立即生效。"
                         color: root.textMuted
                         font.pixelSize: 11
                         wrapMode: Text.Wrap
@@ -1758,7 +1851,7 @@ ApplicationWindow {
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "每项最多设置两个手势。已分配的手势不会出现在其他位置；更换用途时先将原位置设为“未设置”。按键仍可独立使用。"
+                        text: "每项最多设置两个手势，不能重复分配。确认手势在纯手势模式下同时用于开始和结束；按键仍可独立使用。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
                     }
                     GestureBindingRow { actionName: "confirm"; title: "确认 · 结束本句语音" }
@@ -1938,7 +2031,7 @@ ApplicationWindow {
                         id: pushToTalkSwitch
                         objectName: "pushToTalkSwitch"
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                        enabled: !runtimeSettingsDialog.deviceSettingsLocked && appController.speechControlMode !== "gesture"
                         text: "启用右 Alt 按住说话"
                         checked: appController.pushToTalkEnabled
                         onToggled: appController.pushToTalkEnabled = checked
@@ -1952,7 +2045,9 @@ ApplicationWindow {
                     }
                     Label {
                         Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: Qt.platform.os === "windows"
+                        text: appController.speechControlMode === "gesture"
+                            ? "纯手势模式仅由确认手势开始和结束，右 Alt 按住说话不启用。暂停识别不会断开 Ring。"
+                            : Qt.platform.os === "windows"
                             ? "设备连接和语音识别相互独立；暂停识别不会断开 Ring。识别开启时，按键优先于自动靠近检测。"
                             : "设备连接和语音识别相互独立；暂停识别不会断开 Ring。"
                         color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
@@ -2100,6 +2195,7 @@ ApplicationWindow {
         id: transcriptOverlay
         objectName: "transcriptOverlay"
         transientParent: null
+        readonly property bool llmProcessing: appController.llmTextProcessing
         readonly property bool showsRecognizedInstruction:
             appController.transcriptText.indexOf(" · 指令：") >= 0
         readonly property bool showsProcessingModeSwitch:
@@ -2119,7 +2215,7 @@ ApplicationWindow {
             ? Screen.desktopAvailableHeight : Screen.height
         readonly property real maximumContentHeight: Math.max(64, Math.floor(availableScreenHeight * 0.7))
         readonly property real naturalHeight: 20 + Math.max(
-            44, overlayStatusText.implicitHeight
+            44, overlayStatusRow.implicitHeight
                 + (overlayText.text.length > 0 ? 4 + overlayText.implicitHeight : 0))
         readonly property bool textOverflows: naturalHeight > maximumContentHeight
         height: Math.min(maximumContentHeight, naturalHeight)
@@ -2147,11 +2243,14 @@ ApplicationWindow {
                | Qt.WindowDoesNotAcceptFocus
 
         Rectangle {
+            objectName: "transcriptOverlayPanel"
             anchors.fill: parent
             radius: 16
-            color: "#E9111620"
-            border.color: appController.transcriptFinal ? "#594DD4AC" : "#477892FF"
-            border.width: 1
+            color: transcriptOverlay.llmProcessing ? "#F0211935" : "#E9111620"
+            border.color: transcriptOverlay.llmProcessing
+                          ? "#B497FF"
+                          : (appController.transcriptFinal ? "#594DD4AC" : "#477892FF")
+            border.width: transcriptOverlay.llmProcessing ? 2 : 1
             RowLayout {
                 anchors.fill: parent
                 anchors.leftMargin: 18
@@ -2164,15 +2263,30 @@ ApplicationWindow {
                     Layout.fillHeight: true
                     Layout.minimumWidth: 0
                     spacing: 4
-                    Label {
-                        id: overlayStatusText
-                        objectName: "statusOverlayText"
+                    RowLayout {
+                        id: overlayStatusRow
                         Layout.fillWidth: true
-                        text: transcriptOverlay.statusText
-                        color: "#93A0B4"
-                        font.family: root.uiFontFamily
-                        font.pixelSize: 10
-                        elide: Text.ElideRight
+                        spacing: 8
+                        BusyIndicator {
+                            objectName: "llmProcessingSpinner"
+                            visible: transcriptOverlay.llmProcessing
+                            running: transcriptOverlay.visible && visible
+                            Layout.preferredWidth: 22
+                            Layout.preferredHeight: 22
+                            Material.accent: "#C5ADFF"
+                        }
+                        Label {
+                            id: overlayStatusText
+                            objectName: "statusOverlayText"
+                            Layout.fillWidth: true
+                            text: transcriptOverlay.llmProcessing
+                                  ? "LLM 正在处理文本…" : transcriptOverlay.statusText
+                            color: transcriptOverlay.llmProcessing ? "#E0D2FF" : "#93A0B4"
+                            font.family: root.uiFontFamily
+                            font.pixelSize: transcriptOverlay.llmProcessing ? 14 : 10
+                            font.bold: transcriptOverlay.llmProcessing
+                            elide: Text.ElideRight
+                        }
                     }
                     Flickable {
                         id: transcriptViewport
@@ -2299,6 +2413,17 @@ ApplicationWindow {
             appController.appliedPopupApplicationKey
         readonly property bool compactStyle:
             appController.appliedOverlayStyle === "compact"
+        // AX positions and QWindow positions are global logical coordinates.
+        // Keep the monitor origin and exclude its Dock/menu bar/taskbar.
+        readonly property var screenArea: appController.appliedPopupScreenGeometry
+        readonly property real screenLeft: screenArea.x !== undefined
+            ? screenArea.x : Screen.virtualX
+        readonly property real screenTop: screenArea.y !== undefined
+            ? screenArea.y : Screen.virtualY
+        readonly property real screenWidth: screenArea.width || Screen.width
+        readonly property real screenHeight: screenArea.height || Screen.height
+        readonly property real screenRight: screenLeft + screenWidth
+        readonly property real screenBottom: screenTop + screenHeight
         readonly property bool showsModeCorrection:
             appController.modeCorrectionAvailable
             || appController.modeCorrectionFailed
@@ -2308,30 +2433,34 @@ ApplicationWindow {
             && appController.appliedPopupTargetHeight > 0
         readonly property bool hasCaretBounds:
             appController.appliedPopupCaretHeight > 0
+            && appController.appliedPopupCaretX >= screenLeft
+            && appController.appliedPopupCaretX <= screenRight
+            && appController.appliedPopupCaretY >= screenTop
+            && appController.appliedPopupCaretY < screenBottom
         width: Math.min(
             compactStyle
                 ? 44 + undoAppliedButton.Layout.preferredWidth
                   + (showsModeCorrection ? 6 + switchModeButton.Layout.preferredWidth : 0)
                 : (showsModeCorrection ? 430 : 360),
-            Screen.width - 16
+            screenWidth - 16
         )
         height: compactStyle ? 56 : 120
         function automaticX() {
             if (!hasCaretBounds)
-                return Math.round((Screen.width - width) / 2)
+                return Math.round(screenLeft + (screenWidth - width) / 2)
             var right = appController.appliedPopupCaretX
                       + appController.appliedPopupCaretWidth + 8
             var left = appController.appliedPopupCaretX - width - 8
-            if (right + width <= Screen.width - 8)
+            if (right >= screenLeft + 8 && right + width <= screenRight - 8)
                 return Math.round(right)
-            if (left >= 8)
+            if (left >= screenLeft + 8 && left + width <= screenRight - 8)
                 return Math.round(left)
-            return Math.round(Math.max(8, Math.min(Screen.width - width - 8,
-                                                   right)))
+            return Math.round(Math.max(screenLeft + 8,
+                Math.min(screenRight - width - 8, right)))
         }
         function automaticY() {
             if (!hasCaretBounds)
-                return Math.round(Math.max(8, Screen.height - height - 120))
+                return Math.round(Math.max(screenTop + 8, screenBottom - height - 120))
             var gap = 40
             var preferred = appController.appliedPopupCaretY - height - gap
             if (hasTargetBounds) {
@@ -2344,15 +2473,15 @@ ApplicationWindow {
                         preferred,
                         appController.appliedPopupTargetY - height - gap
                     )
-                if (preferred < 8 && horizontallyOverlaps)
+                if (preferred < screenTop + 8 && horizontallyOverlaps)
                     preferred = appController.appliedPopupTargetY
                               + appController.appliedPopupTargetHeight + gap
             }
-            if (preferred < 8)
+            if (preferred < screenTop + 8)
                 preferred = appController.appliedPopupCaretY
                           + appController.appliedPopupCaretHeight + gap
-            return Math.round(Math.max(8, Math.min(Screen.height - height - 8,
-                                                   preferred)))
+            return Math.round(Math.max(screenTop + 8,
+                Math.min(screenBottom - height - 8, preferred)))
         }
         function finishSystemDrag() {
             userX = appliedActionOverlay.x
@@ -2371,7 +2500,13 @@ ApplicationWindow {
             var remembered = applicationKey !== ""
                            ? rememberedApplicationPositions[applicationKey]
                            : undefined
-            if (remembered !== undefined) {
+            // A saved position on a disconnected/different monitor must not
+            // pin the pill against the edge of the current screen.
+            if (remembered !== undefined
+                && remembered.x >= screenLeft
+                && remembered.y >= screenTop
+                && remembered.x + width <= screenRight
+                && remembered.y + height <= screenBottom) {
                 userX = remembered.x
                 userY = remembered.y
                 userPositioned = true
@@ -2382,10 +2517,10 @@ ApplicationWindow {
             }
         }
         x: userPositioned
-            ? Math.round(Math.max(8, Math.min(Screen.width - width - 8, userX)))
+            ? Math.round(Math.max(screenLeft + 8, Math.min(screenRight - width - 8, userX)))
             : automaticX()
         y: userPositioned
-            ? Math.round(Math.max(8, Math.min(Screen.height - height - 8, userY)))
+            ? Math.round(Math.max(screenTop + 8, Math.min(screenBottom - height - 8, userY)))
             : automaticY()
         onXChanged: {
             if (systemDragActive)
@@ -2407,6 +2542,10 @@ ApplicationWindow {
             restoreApplicationPosition()
         }
         onApplicationKeyChanged: {
+            if (!systemDragActive)
+                restoreApplicationPosition()
+        }
+        onScreenAreaChanged: {
             if (!systemDragActive)
                 restoreApplicationPosition()
         }

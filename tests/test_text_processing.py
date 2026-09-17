@@ -20,6 +20,11 @@ from proximic_ring.text_processing import (
     TextProcessingWorker,
     validate_edit_target_text,
 )
+from proximic_ring.text_processing.prompts import (
+    EDIT_FRAGMENT_PROMPT,
+    EDIT_FULL_TEXT_PROMPT,
+    EDIT_TOOL_REQUIRED_PROMPT,
+)
 
 
 class _Response(io.BytesIO):
@@ -84,8 +89,8 @@ def test_openai_compatible_processor_uses_mode_specific_prompt(monkeypatch):
     )
     assert edit_result == "这是正式的原草稿。"
     edit_body = json.loads(requests[1][0].data.decode("utf-8"))
-    assert "modified_text：用于替换 original_text 的新片段" in (
-        edit_body["messages"][0]["content"]
+    assert edit_body["messages"][0]["content"] == (
+        EDIT_FRAGMENT_PROMPT + EDIT_TOOL_REQUIRED_PROMPT
     )
     assert "<待修改文本>\n这是原来的草稿" in edit_body["messages"][1]["content"]
     assert "<修改要求>\n改得正式一点" in edit_body["messages"][1]["content"]
@@ -161,7 +166,7 @@ def test_processor_classifies_dictation_and_edit_instructions(
         requests[0]["messages"][1]["content"]
     )
     assert "不要输出 JSON" in requests[0]["messages"][0]["content"]
-    assert requests[0]["max_tokens"] == 32
+    assert requests[0]["max_tokens"] == 16
 
 
 def test_deepseek_router_disables_reasoning(monkeypatch):
@@ -196,7 +201,7 @@ def test_deepseek_router_disables_reasoning(monkeypatch):
 
     assert mode == INPUT_MODE_EDIT
     assert requests[0]["thinking"] == {"type": "disabled"}
-    assert requests[0]["max_output_tokens"] == 32
+    assert requests[0]["max_output_tokens"] == 16
 
 
 def test_routing_worker_returns_fallback_mode_and_latency_on_failure():
@@ -330,8 +335,8 @@ def test_full_text_edit_mode_uses_single_field_schema_for_comparison():
     parameters = body["tools"][0]["function"]["parameters"]
     assert set(parameters["properties"]) == {"modified_text"}
     assert parameters["required"] == ["modified_text"]
-    assert "modified_text 必须是修改后的完整文本" in (
-        body["messages"][0]["content"]
+    assert body["messages"][0]["content"] == (
+        EDIT_FULL_TEXT_PROMPT + EDIT_TOOL_REQUIRED_PROMPT
     )
 
 
@@ -444,7 +449,7 @@ def test_race_rejects_prompt_echo_and_uses_other_protocol_without_retry():
     assert sorted(calls) == ["fragment", "full"]
 
 
-def test_edit_output_budget_scales_for_complete_modified_text():
+def test_edit_output_budget_allows_expansion_beyond_source_length():
     captured = []
     target = "原" * 2000
 
@@ -481,7 +486,55 @@ def test_edit_output_budget_scales_for_complete_modified_text():
     )
 
     assert result == target
-    assert captured[0]["max_tokens"] == 4512
+    assert captured[0]["max_tokens"] == 32768
+
+
+@pytest.mark.parametrize("provider,budget", [
+    ("openai", 32768), (LLM_PROVIDER_VOLCENGINE, 32768), (LLM_PROVIDER_LOCAL, 8192),
+])
+@pytest.mark.parametrize("mode,edit_mode", [
+    (INPUT_MODE_DICTATION, ""), (INPUT_MODE_EDIT, EDIT_MODE_FULL),
+    (INPUT_MODE_EDIT, EDIT_MODE_RACE),
+])
+def test_text_budget_is_shared_by_cleanup_edit_branches_and_retries(
+    monkeypatch, provider, budget, mode, edit_mode,
+):
+    from collections import Counter
+
+    processor = OpenAICompatibleTextProcessor()
+    requests = []
+    attempts = Counter()
+
+    def request(_settings, **kwargs):
+        requests.append(kwargs)
+        tool = kwargs["edit_tool"]
+        if tool is None:
+            return "整理后的文本。"
+        fragment = "original_text" in tool["function"]["parameters"]["properties"]
+        branch = "fragment" if fragment else "full"
+        attempts[branch] += 1
+        if edit_mode != EDIT_MODE_RACE and attempts[branch] == 1:
+            raise RuntimeError("retry this edit branch")
+        result = {"modified_text": "新的完整文本。"}
+        if fragment:
+            result["original_text"] = "原文"
+        return result
+
+    monkeypatch.setattr(processor, "_request_chat", request)
+    settings = LLMSettings(
+        enabled=True, provider=provider, model="test-model",
+        api_key_env="", api_key="test-key" if provider == LLM_PROVIDER_VOLCENGINE else "",
+    )
+    result = processor.process_with_collection_trace(
+        "处理这段文本", mode, settings,
+        target_text="原文" if mode == INPUT_MODE_EDIT else "",
+        edit_mode=edit_mode,
+    )
+    assert result[0] == ("新的完整文本。" if mode == INPUT_MODE_EDIT else "整理后的文本。")
+    assert requests and all(item["max_tokens"] == budget for item in requests)
+    if mode == INPUT_MODE_EDIT:
+        assert all(count == (1 if edit_mode == EDIT_MODE_RACE else 2) for count in attempts.values())
+        assert len(attempts) == (2 if edit_mode == EDIT_MODE_RACE else 1)
 
 
 def test_volcengine_request_disables_thinking(monkeypatch):
@@ -527,6 +580,7 @@ def test_volcengine_request_disables_thinking(monkeypatch):
     assert body["input"][0]["role"] == "system"
     assert body["input"][1]["content"][0]["text"] == "原始文本"
     assert body["thinking"] == {"type": "disabled"}
+    assert body["max_output_tokens"] == 32768
     assert "tools" not in body
     assert captured[0].headers["Authorization"] == "Bearer test-ark-key"
 
@@ -575,7 +629,7 @@ def test_volcengine_edit_uses_function_call_json(monkeypatch):
     assert "tool_choice" not in body
     system_prompt = body["input"][0]["content"][0]["text"]
     assert "必须真正调用 submit_text_edit 工具" in system_prompt
-    assert "modified_text：用于替换 original_text 的新片段" in system_prompt
+    assert system_prompt == EDIT_FRAGMENT_PROMPT + EDIT_TOOL_REQUIRED_PROMPT
     parameters = body["tools"][0]["parameters"]
     assert set(parameters["properties"]) == {"original_text", "modified_text"}
     assert parameters["required"] == ["original_text", "modified_text"]

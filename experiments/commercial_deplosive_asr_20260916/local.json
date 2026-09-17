@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-16T03:29:52+00:00",
+  "cases": {
+    "/private/var/folders/zv/32h1qwfs6vz4_xldkffz857c0000gn/T/ring-commercial-asr-w3bkl_d7/inputs/01_original.wav": {
+      "path": "/private/var/folders/zv/32h1qwfs6vz4_xldkffz857c0000gn/T/ring-commercial-asr-w3bkl_d7/inputs/01_original.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 98.0,
+      "results": {
+        "sensevoice": {
+          "text": "慢房提着子来到大厅哥哥过明天我一起旅带上水杯和地图慢慢走过的小桥 beside。",
+          "elapsed_s": 6.239,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "啊，明年五月五夜就合理和平行。我也放出了树林，远处的云慢慢飘过。啊，爸爸抱着宝宝跑步，胖胖的朋友捧着宝宝的饼。啊，白色的啤酒混到了葡萄架旁边，爸爸抱着爸爸一起出发。啊，爸爸抱着宝宝，爸爸一起出发。啊，爸爸抱着宝宝，爸爸抱着爸爸一起出发。啊，爸爸抱着爸爸，爸爸抱着爸爸一起出发。啊，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸抱着爸爸，爸爸",
+          "elapsed_s": 65.406,
+          "error": null
+        }
+      }
+    },
+    "/private/var/folders/zv/32h1qwfs6vz4_xldkffz857c0000gn/T/ring-commercial-asr-w3bkl_d7/inputs/02_commercial.wav": {
+      "path": "/private/var/folders/zv/32h1qwfs6vz4_xldkffz857c0000gn/T/ring-commercial-asr-w3bkl_d7/inputs/02_commercial.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 108.0,
+      "results": {
+        "sensevoice": {
+          "text": "带上水杯和地慢慢走过的小 beside。",
+          "elapsed_s": 6.327,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "啊，我明天我约黄先生去旅行，我们除了树林，远处的云慢慢飘过。他提着袋子，带着大灯，远远的看着黄先生。他提着袋子来到大厅，看看看过干净的天空。如果看过干净的天空，那么就不要去厨房，不要去碰杯，不要去碰瓶。白色的皮球晃荡着葡萄酒香，旁边。在屋顶，前方朋友看见房间。",
+          "elapsed_s": 15.78,
+          "error": null
+        }
+      }
+    }
+  },
+  "configuration": {
+    "backends": [
+      "sensevoice",
+      "funasr_nano"
+    ],
+    "dataset": "/private/var/folders/zv/32h1qwfs6vz4_xldkffz857c0000gn/T/ring-commercial-asr-w3bkl_d7/inputs",
+    "dataset_limit": -1,
+    "recent_empty": 0,
+    "recent_recognized": 0,
+    "max_seconds": 0.0,
+    "doubao_pace": 1.0
+  },
+  "updated_at": "2026-09-16T03:31:53+00:00"
+}

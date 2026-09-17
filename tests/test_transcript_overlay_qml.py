@@ -157,3 +157,62 @@ def test_very_long_transcript_remains_complete_and_scrollable(overlay_ui):
     assert ui.overlay.height() == 64
     assert not ui.viewport.property("interactive")
     assert ui.viewport.property("contentY") == 0
+
+
+def test_llm_indicator_is_visible_only_for_selected_text_processing(overlay_ui, tmp_path):
+    from PySide6.QtQuick import QQuickItem
+    from PySide6.QtTest import QTest
+    from proximic_ring.text_processing import TextProcessingResult
+    from proximic_ring.ui.controller import _AutoInteraction, _PendingInteraction
+
+    ui = overlay_ui
+    controller = ui.controller
+    spinner = ui.root.findChild(QQuickItem, "llmProcessingSpinner")
+    status = ui.root.findChild(QQuickItem, "statusOverlayText")
+    assert not spinner.property("visible")
+    assert "LLM" not in status.property("text")
+
+    controller._latest_asr_session_id = 1
+    controller._pending_text_requests.update((11, 12))
+    controller._pending_interactions.update({
+        11: _PendingInteraction(auto_route_id=10, session_id=1),
+        12: _PendingInteraction(auto_route_id=10, session_id=1),
+    })
+    interaction = _AutoInteraction(
+        route_id=10, session_id=1, raw_text="把这段话润色得更自然", target=None,
+        selected_mode="edit", routed_at=0,
+        request_ids={"edit": 11, "dictation": 12},
+    )
+    controller._active_auto_interaction = interaction
+    controller._transcript_text = "正在判断听写或指令"
+    controller._set_interaction_state("processing")
+    controller.transcriptChanged.emit()
+    ui.app.processEvents()
+    assert not spinner.property("visible")
+    assert status.property("text") == "正在判断听写或指令"
+
+    interaction.classified = True
+    controller._transcript_text = controller._processing_overlay_text("edit", interaction.raw_text)
+    controller._transcript_primary_text = interaction.raw_text
+    controller.transcriptChanged.emit()
+    QTest.qWait(240)
+    assert spinner.property("visible") and spinner.property("running")
+    assert status.property("text") == "LLM 正在处理文本…"
+    assert status.property("font").bold()
+    assert status.property("font").pixelSize() == 14
+    assert not status.property("truncated")
+    assert ui.text.property("text") == interaction.raw_text
+    screenshot = ui.overlay.grabWindow()
+    assert not screenshot.isNull()
+    assert screenshot.save(str(tmp_path / "llm-processing-overlay.png"))
+
+    # The other candidate is still running, but the selected one has returned.
+    # Keep preparing=True so this layout test does not write to a real app.
+    controller._apply_text_processed(TextProcessingResult(
+        11, 1, "edit", interaction.raw_text, "修改后的内容", 0.2, True,
+        target_text="原文",
+    ))
+    ui.app.processEvents()
+    assert controller._pending_text_requests == {12}
+    assert not spinner.property("visible") and not spinner.property("running")
+    assert "LLM" not in status.property("text")

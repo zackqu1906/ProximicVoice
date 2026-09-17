@@ -1,0 +1,204 @@
+{
+  "at": "2026-09-17T06:24:02.440116+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "provider": "volcengine",
+  "repeat": 1,
+  "cases": [
+    {
+      "id": "expand_fiction",
+      "phase": "edit",
+      "category": "扩写",
+      "source": "小猫推开了门。",
+      "utterance": "把这句话扩写成80到100字的小故事，可以虚构情节，要有开头和结尾",
+      "changed": true,
+      "min_chars": 80,
+      "max_chars": 100,
+      "must_include": [
+        "小猫"
+      ],
+      "review": "用户明确允许虚构，应产生连贯的小故事；不能因事实保护规则拒绝扩写。"
+    },
+    {
+      "id": "expand_weekday_holdout",
+      "phase": "edit",
+      "category": "扩写",
+      "source": "书画展本周四开放，仅对校内师生免费。",
+      "utterance": "扩写为80字左右的通知，不补原文没有的信息",
+      "changed": true,
+      "min_chars": 64,
+      "max_chars": 96,
+      "must_include": [
+        "本周四",
+        "免费"
+      ],
+      "forbidden": [
+        "每周",
+        "预约",
+        "上午",
+        "下午",
+        "家长"
+      ],
+      "review": "保留仅校内师生免费，不新增周期、地点、报名条件或具体时段；事实优先于凑字数。"
+    },
+    {
+      "id": "expand_status_holdout",
+      "phase": "edit",
+      "category": "扩写",
+      "source": "图书馆今天暂停借书，阅览区正常开放。",
+      "utterance": "扩写成80字左右的通知，不虚构原因或其他安排",
+      "changed": true,
+      "min_chars": 64,
+      "max_chars": 96,
+      "must_include": [
+        "今天",
+        "阅览区"
+      ],
+      "forbidden": [
+        "维修",
+        "盘点",
+        "明天",
+        "恢复",
+        "预约"
+      ],
+      "review": "只保留今天暂停借书、阅览区正常开放，不推测原因、恢复时间或要求；事实优先于字数。"
+    }
+  ],
+  "results": [
+    {
+      "id": "expand_fiction",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"小猫推开了门。\", \"modified_text\": \"一个阳光明媚的早晨，小花猫看到那扇从未打开过的门，心里充满了好奇。它用爪子轻轻一推，门吱呀一声开了。门外是一片绿油油的草地，蝴蝶在花丛中翩翩起舞。小猫开心地跑了出去，开始了全新的冒险。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"小猫推开了门。\", \"modified_text\": \"一个阳光明媚的早晨，小花猫看到那扇从未打开过的门，心里充满了好奇。它用爪子轻轻一推，门吱呀一声开了。门外是一片绿油油的草地，蝴蝶在花丛中翩翩起舞。小猫开心地跑了出去，开始了全新的冒险。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "一个阳光明媚的早晨，小花猫看到那扇从未打开过的门，心里充满了好奇。它用爪子轻轻一推，门吱呀一声开了。门外是一片绿油油的草地，蝴蝶在花丛中翩翩起舞。小猫开心地跑了出去，开始了全新的冒险。",
+          "latency_s": 2.633624666999822,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"寒冬的夜晚，一只流浪小猫蜷缩在角落，冻得瑟瑟发抖。它望着不远处透出暖光的木门，鼓起勇气，伸出爪子轻轻一推。门吱呀一声开了，屋里的小女孩看见它，温柔地说：\\\"快进来吧。\\\"小猫推开了门，也推开了通往温暖与家的路。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "寒冬的夜晚，一只流浪小猫蜷缩在角落，冻得瑟瑟发抖。它望着不远处透出暖光的木门，鼓起勇气，伸出爪子轻轻一推。门吱呀一声开了，屋里的小女孩看见它，温柔地说：\"快进来吧。\"小猫推开了门，也推开了通往温暖与家的路。",
+          "latency_s": 2.6435545830008778,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "一个阳光明媚的早晨，小花猫看到那扇从未打开过的门，心里充满了好奇。它用爪子轻轻一推，门吱呀一声开了。门外是一片绿油油的草地，蝴蝶在花丛中翩翩起舞。小猫开心地跑了出去，开始了全新的冒险。",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 2.645
+    },
+    {
+      "id": "expand_status_holdout",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"modified_text\": \"各位读者：图书馆今天暂停借书服务，阅览区正常开放，欢迎前来阅览学习。请读者相互转告，如有不便敬请谅解。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"图书馆今天暂停借书，阅览区正常开放。\", \"modified_text\": \"各位读者：图书馆今天暂停借书服务，图书借还业务暂时无法办理，请读者予以理解。馆内阅览区正常开放，读者可照常入馆阅读学习。如有其他变动，请关注后续通知。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "各位读者：图书馆今天暂停借书服务，图书借还业务暂时无法办理，请读者予以理解。馆内阅览区正常开放，读者可照常入馆阅读学习。如有其他变动，请关注后续通知。",
+          "latency_s": 2.320001041998694,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"各位读者：图书馆今天暂停借书服务，阅览区正常开放，欢迎前来阅览学习。请读者相互转告，如有不便敬请谅解。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "各位读者：图书馆今天暂停借书服务，阅览区正常开放，欢迎前来阅览学习。请读者相互转告，如有不便敬请谅解。",
+          "latency_s": 1.9100792499993986,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "status": "candidate",
+      "actual": "各位读者：图书馆今天暂停借书服务，阅览区正常开放，欢迎前来阅览学习。请读者相互转告，如有不便敬请谅解。",
+      "failures": [
+        "too_short:51<64"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 2.32
+    },
+    {
+      "id": "expand_weekday_holdout",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"书画展本周四开放，仅对校内师生免费。\", \"modified_text\": \"书画展将于本周四正式开放，展出地点位于校内展厅。本次活动仅面向校内师生，可凭有效证件免费入场参观，欢迎广大师生届时到场观展。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"书画展本周四开放，仅对校内师生免费。\", \"modified_text\": \"书画展将于本周四正式开放，展出地点位于校内展厅。本次活动仅面向校内师生，可凭有效证件免费入场参观，欢迎广大师生届时到场观展。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "书画展将于本周四正式开放，展出地点位于校内展厅。本次活动仅面向校内师生，可凭有效证件免费入场参观，欢迎广大师生届时到场观展。",
+          "latency_s": 2.712835708000057,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"书画展将于本周四正式面向校内师生开放。本次展览仅面向校内师生免费开放，欢迎广大师生届时前来参观欣赏书画佳作，感受艺术魅力与传统文化之美。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "书画展将于本周四正式面向校内师生开放。本次展览仅面向校内师生免费开放，欢迎广大师生届时前来参观欣赏书画佳作，感受艺术魅力与传统文化之美。",
+          "latency_s": 12.128144292000798,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "书画展将于本周四正式开放，展出地点位于校内展厅。本次活动仅面向校内师生，可凭有效证件免费入场参观，欢迎广大师生届时到场观展。",
+      "failures": [
+        "too_short:62<64"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 12.129
+    }
+  ],
+  "prompt_sha256": {
+    "EDIT_FRAGMENT_PROMPT": "a1bf384cc66cae92c61fb99d188269181ca7b3474041e48ae41f39ae587f7f0a",
+    "EDIT_FULL_TEXT_PROMPT": "91c4da309738db38dab393b427d864f5a4c8c321c573064d38600030a00974b5",
+    "DICTATION_PROMPT": "e1dca8edfca7784914c2642b148dcb3e45556c6814660d9dea3189ee634a029d",
+    "INPUT_MODE_ROUTER_PROMPT": "68153d23d3a64f2418519d7081462574e48d23336549a2ef5beffbb46c755f95"
+  },
+  "summary": {
+    "扩写": {
+      "passed": 1,
+      "total": 3
+    }
+  }
+}

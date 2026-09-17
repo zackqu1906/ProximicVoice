@@ -1,0 +1,26 @@
+{
+  "caveat": "参考是屏幕提示词，未逐字人工核听；仅辅助比较，不能当成真实识别准确率。只统计前 8 句中文，第 9 句英文另看原文。",
+  "results": {
+    "doubao": {
+      "reference_characters": 117,
+      "original_edits": 57,
+      "commercial_edits": 85,
+      "original_prompt_cer": 0.48717948717948717,
+      "commercial_prompt_cer": 0.7264957264957265
+    },
+    "sensevoice": {
+      "reference_characters": 117,
+      "original_edits": 47,
+      "commercial_edits": 69,
+      "original_prompt_cer": 0.4017094017094017,
+      "commercial_prompt_cer": 0.5897435897435898
+    },
+    "funasr_nano": {
+      "reference_characters": 117,
+      "original_edits": 37,
+      "commercial_edits": 551,
+      "original_prompt_cer": 0.3162393162393162,
+      "commercial_prompt_cer": 4.7094017094017095
+    }
+  }
+}

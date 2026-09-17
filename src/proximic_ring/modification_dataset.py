@@ -114,6 +114,15 @@ class ModificationDatasetCollector:
         self._history_entries: dict[str, dict] | None = None
         self._history_rows: list[dict] = []
         self._history_dirty_ids: set[str] = set()
+        self._capture_configuration = {"audio_source": "ring", "speech_control_mode": "proximity"}
+
+    def set_capture_configuration(self, *, audio_source: str, speech_control_mode: str, microphone_device: str = "") -> None:
+        with self._lock:
+            self._capture_configuration = {
+                "audio_source": audio_source,
+                "speech_control_mode": speech_control_mode,
+                "microphone_device": microphone_device,
+            }
 
     def reset_runtime(self) -> None:
         """Drop in-memory request/session bindings from an interrupted run."""
@@ -159,6 +168,8 @@ class ModificationDatasetCollector:
         with self._lock:
             interaction_id = self._ensure_interaction_locked(session_id)
             record = self._interaction_data(interaction_id)
+            if not record.get("near_field", {}).get("enabled", True):
+                return
             occurred_at = _utc_now()
             record.setdefault("near_field", {}).update(
                 {
@@ -679,6 +690,9 @@ class ModificationDatasetCollector:
                 record["updated_at"] = _utc_now()
                 self._write_json(self._interaction_path(interaction_id), record)
                 self._append_event_locked(interaction_id, unified_event)
+                # A failed desktop write must refresh the visible history just
+                # like record_application(), without waiting for another utterance.
+                self._publish_history_locked(interaction_id, force=True)
 
     def abandon_request(self, request_id: int, error: str) -> None:
         self.feedback(request_id, "abandoned", error=error)
@@ -1285,6 +1299,7 @@ class ModificationDatasetCollector:
             "interaction_id": interaction_id,
             "anonymous_user_id": self.user_id,
             "asr_session_id": session_id,
+            "capture": dict(self._capture_configuration),
             "created_at": started_at,
             "updated_at": _utc_now(),
             "audio": {
@@ -1315,6 +1330,7 @@ class ModificationDatasetCollector:
                 "alignment_method": "",
             },
             "near_field": {
+                "enabled": self._capture_configuration["speech_control_mode"] != "gesture",
                 "audio_score": None,
                 "activation_score": None,
                 "imu_evidence_score": None,
@@ -1523,10 +1539,10 @@ class ModificationDatasetCollector:
     @staticmethod
     def _display_candidate_text(record: dict) -> str:
         outcome = record.get("outcome", {})
-        # Undo keeps its restoration text in the raw Interaction record for
-        # diagnostics, but Voice History must not present that snapshot as a
-        # still-active LLM/edit result.
-        if str(outcome.get("status", "")) in {"undone", "native_undo_sent"}:
+        # This field is the result shown as applied in Voice History, not a
+        # speculative model answer. Failed/unchanged candidates and restored
+        # originals remain in the raw record for diagnostics and associations.
+        if str(outcome.get("status", "")) not in {"applied", "confirm"}:
             return ""
         outcome_status = str(outcome.get("status", ""))
         final_value = outcome.get("final_text")
@@ -1545,22 +1561,13 @@ class ModificationDatasetCollector:
                 and "candidate_text" in request
             ):
                 return str(request.get("candidate_text") or "").strip()
-        for request in reversed(requests):
-            candidate = str(request.get("candidate_text", "") or "").strip()
-            if candidate:
-                return candidate
-        if final_text:
-            return final_text
-        asr = record.get("asr", {})
-        return str(
-            asr.get("corrected_text") or asr.get("final_text") or ""
-        ).strip()
+        return ""
 
     @staticmethod
     def _display_candidate_available(record: dict) -> bool:
         outcome = record.get("outcome", {})
         outcome_status = str(outcome.get("status", ""))
-        if outcome_status in {"undone", "native_undo_sent"}:
+        if outcome_status not in {"applied", "confirm"}:
             return False
         if (
             outcome_status in {"applied", "confirm"}
@@ -1583,6 +1590,10 @@ class ModificationDatasetCollector:
         record: dict, display_mode: str
     ) -> tuple[str, str]:
         if str(display_mode) != "edit":
+            return "", ""
+        outcome = record.get("outcome", {})
+        outcome_status = str(outcome.get("status", ""))
+        if outcome_status not in {"applied", "confirm", "undone", "native_undo_sent"}:
             return "", ""
         selected_request = next(
             (
@@ -1608,8 +1619,6 @@ class ModificationDatasetCollector:
             )
             request_result_known = True
 
-        outcome = record.get("outcome", {})
-        outcome_status = str(outcome.get("status", ""))
         if (
             outcome_status in {"applied", "confirm"}
             and outcome.get("final_text") is not None

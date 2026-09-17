@@ -1,0 +1,1475 @@
+{
+  "at": "2026-09-17T05:40:02.079167+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "suite": "screen",
+  "repeat": 1,
+  "prompt_hashes": {
+    "baseline": {
+      "fragment": "e4bc2e1a6ee5bc78ec6ca15e4130aa6d554206ccfa88cd849285647f8e4479f6",
+      "full": "e5d336605a6e4157cb0a08237f14740c3d99989dbfdd55daf334d7c227d2ad00"
+    },
+    "scope_prefix": {
+      "fragment": "3365ce78759a147c1854a175c3ce2225d3773e615af4d174e773981e3a03c2e7",
+      "full": "46444481b7224640d1d18e417e4c611fe957a5dbf694da7e9bf4a726c1eca3fe"
+    },
+    "balanced": {
+      "fragment": "7fc349f35325104e7bd0c531a116b29b679212d76e7e2f5e02a3c1a8ad4420b5",
+      "full": "e965481bcd3bd4d5c87204f11c5cc9dc9e2e7bd6ea57d80163cd4e61ed28c350"
+    }
+  },
+  "cases": [
+    {
+      "id": "natural_polish",
+      "suite": "screen",
+      "source": "这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。",
+      "utterance": "润色一下",
+      "changed": true,
+      "must_include": [
+        "今天",
+        "明天"
+      ],
+      "forbidden": [
+        "保证",
+        "领导"
+      ],
+      "review": "表达更简洁流畅，保留今天完成、明天检查，不新增承诺。"
+    },
+    {
+      "id": "formal_facts",
+      "suite": "screen",
+      "source": "王敏说那个预算可能是8万元，周五之前还得再确认一下。",
+      "utterance": "改得正式一些",
+      "changed": true,
+      "must_include": [
+        "王敏",
+        "8万元",
+        "周五"
+      ],
+      "any_include": [
+        "可能",
+        "预计",
+        "尚待"
+      ],
+      "review": "保留预算不确定和仍需确认，不改成确定已批准。"
+    },
+    {
+      "id": "scoped_polish",
+      "suite": "screen",
+      "source": "编号A-17，预算300元。然后这个方案的话我感觉还算可以吧。日期待定。",
+      "utterance": "只润色第二句，其他不动",
+      "changed": true,
+      "starts_with": "编号A-17，预算300元。",
+      "ends_with": "日期待定。",
+      "review": "只改善中间句，保留对方案较温和的评价。"
+    },
+    {
+      "id": "translation",
+      "suite": "screen",
+      "source": "我们可能在周五交付，但不能保证。",
+      "utterance": "翻译成英文",
+      "changed": true,
+      "any_include": [
+        "may",
+        "might",
+        "possible"
+      ],
+      "must_include": [
+        "Friday"
+      ],
+      "review": "英语通顺，保留可能交付和不能保证，不添加细节。"
+    },
+    {
+      "id": "expansion",
+      "suite": "screen",
+      "source": "周五开会讨论下季度的计划。",
+      "utterance": "扩写到大约80个字，别编造具体安排",
+      "changed": true,
+      "min_length": 55,
+      "max_length": 115,
+      "must_include": [
+        "周五",
+        "下季度"
+      ],
+      "forbidden": [
+        "会议室",
+        "上午",
+        "下午",
+        "九点",
+        "张"
+      ],
+      "review": "展开表达主题，不编造确定人员、具体时间、地点或已作决定。"
+    },
+    {
+      "id": "format_list",
+      "suite": "screen",
+      "source": "准备材料；确认时间；发送通知",
+      "utterance": "改成三条编号列表",
+      "changed": true,
+      "must_include": [
+        "准备材料",
+        "确认时间",
+        "发送通知"
+      ],
+      "lines": 3,
+      "review": "只有三个步骤，顺序不变，清楚编号。"
+    },
+    {
+      "id": "clear_all",
+      "suite": "screen",
+      "source": "第一句。第二句。",
+      "utterance": "清空全部文字",
+      "expected": ""
+    },
+    {
+      "id": "homophone",
+      "suite": "screen",
+      "source": "这个界面还不错",
+      "utterance": "街道的街面包的面",
+      "expected": "这个街面还不错"
+    },
+    {
+      "id": "short_correction",
+      "suite": "screen",
+      "source": "事情效果还不错",
+      "utterance": "识别",
+      "expected": "识别效果还不错"
+    },
+    {
+      "id": "spelling_case",
+      "suite": "screen",
+      "source": "请安装 Jvaa。",
+      "utterance": "拼写改为 j a v a",
+      "expected": "请安装 Java。"
+    },
+    {
+      "id": "spelling_inline",
+      "suite": "screen",
+      "source": "我们用派森处理数据。",
+      "utterance": "那个编程语言拼作 p y t h o n，首字母大写",
+      "expected": "我们用Python处理数据。"
+    },
+    {
+      "id": "ambiguous_word",
+      "suite": "screen",
+      "source": "上午三点开会，下午三点培训",
+      "utterance": "四点",
+      "expected": "上午三点开会，下午三点培训"
+    },
+    {
+      "id": "last_occurrence",
+      "suite": "screen",
+      "source": "第一个界面不错，第二个界面也不错",
+      "utterance": "最后一个界面改成街道的街面包的面",
+      "expected": "第一个界面不错，第二个街面也不错"
+    },
+    {
+      "id": "no_match",
+      "suite": "screen",
+      "source": "明天下午去公园散步",
+      "utterance": "识别",
+      "expected": "明天下午去公园散步"
+    },
+    {
+      "id": "delete_one",
+      "suite": "screen",
+      "source": "甲已经确认。乙尚未回复。丙同意参加。",
+      "utterance": "删掉第二句话",
+      "expected": "甲已经确认。丙同意参加。"
+    }
+  ],
+  "results": [
+    {
+      "case": "natural_polish",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这件事我们今天已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"original_text\": \"这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。\", \"modified_text\": \"这件事我们今天已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.831
+    },
+    {
+      "case": "natural_polish",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这个事情我们今天已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"original_text\": \"这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。\", \"modified_text\": \"这个事情我们今天已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 3.441
+    },
+    {
+      "case": "natural_polish",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "今天的事情我们已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"original_text\": \"这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。\", \"modified_text\": \"今天的事情我们已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 3.547
+    },
+    {
+      "case": "natural_polish",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这个事情我们今天已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"modified_text\": \"这个事情我们今天已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.87
+    },
+    {
+      "case": "natural_polish",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我们今天已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"modified_text\": \"我们今天已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.496
+    },
+    {
+      "case": "natural_polish",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这件事我们今天已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"modified_text\": \"这件事我们今天已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.542
+    },
+    {
+      "case": "formal_facts",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "王敏表示，该预算可能为8万元，需在周五之前再次确认。",
+      "raw_returns": [
+        "{\"original_text\": \"王敏说那个预算可能是8万元，周五之前还得再确认一下。\", \"modified_text\": \"王敏表示，该预算可能为8万元，需在周五之前再次确认。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.319
+    },
+    {
+      "case": "formal_facts",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "王敏表示，该预算大约为8万元，需在周五之前再次确认。",
+      "raw_returns": [
+        "{\"original_text\": \"王敏说那个预算可能是8万元，周五之前还得再确认一下。\", \"modified_text\": \"王敏表示，该预算大约为8万元，需在周五之前再次确认。\"}"
+      ],
+      "failures": [
+        "missing_alternative"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 2.131
+    },
+    {
+      "case": "formal_facts",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "王敏表示，该预算可能为8万元，需在周五之前进一步确认。",
+      "raw_returns": [
+        "{\"original_text\": \"王敏说那个预算可能是8万元，周五之前还得再确认一下。\", \"modified_text\": \"王敏表示，该预算可能为8万元，需在周五之前进一步确认。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.406
+    },
+    {
+      "case": "formal_facts",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "王敏说那个预算可能是8万元，周五之前还得再确认一下。",
+      "raw_returns": [
+        "{\"modified_text\": \"王敏说那个预算可能是8万元，周五之前还得再确认一下。\"}"
+      ],
+      "failures": [
+        "unchanged"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 1.433
+    },
+    {
+      "case": "formal_facts",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "王敏表示，该预算可能为8万元，需在周五之前再做确认。",
+      "raw_returns": [
+        "{\"modified_text\": \"王敏表示，该预算可能为8万元，需在周五之前再做确认。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.555
+    },
+    {
+      "case": "formal_facts",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "王敏表示，该预算可能为8万元，周五之前还需进一步确认。",
+      "raw_returns": [
+        "{\"modified_text\": \"王敏表示，该预算可能为8万元，周五之前还需进一步确认。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.026
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "编号A-17，预算300元。这个方案我感觉还算可以。日期待定。",
+      "raw_returns": [
+        "{\"original_text\": \"然后这个方案的话我感觉还算可以吧。\", \"modified_text\": \"这个方案我感觉还算可以。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.84
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "编号A-17，预算300元。这个方案我感觉还可以。日期待定。",
+      "raw_returns": [
+        "{\"original_text\": \"然后这个方案的话我感觉还算可以吧。\", \"modified_text\": \"这个方案我感觉还可以。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.627
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "编号A-17，预算300元。这个方案我感觉还可以。日期待定。",
+      "raw_returns": [
+        "{\"original_text\": \"然后这个方案的话我感觉还算可以吧。\", \"modified_text\": \"这个方案我感觉还可以。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.982
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "编号A-17，预算300元。然后这个方案我感觉还算可以吧。日期待定。",
+      "raw_returns": [
+        "{\"modified_text\": \"编号A-17，预算300元。然后这个方案我感觉还算可以吧。日期待定。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.118
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "编号A-17，预算300元。这个方案我感觉还算可以。日期待定。",
+      "raw_returns": [
+        "{\"modified_text\": \"编号A-17，预算300元。这个方案我感觉还算可以。日期待定。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.053
+    },
+    {
+      "case": "translation",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "We may deliver on Friday, but we can't guarantee it.",
+      "raw_returns": [
+        "{\"original_text\": \"我们可能在周五交付，但不能保证。\", \"modified_text\": \"We may deliver on Friday, but we can't guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.177
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "编号A-17，预算300元。这个方案我感觉还算可以。日期待定。",
+      "raw_returns": [
+        "{\"modified_text\": \"编号A-17，预算300元。这个方案我感觉还算可以。日期待定。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.888
+    },
+    {
+      "case": "translation",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "We may deliver on Friday, but we cannot guarantee it.",
+      "raw_returns": [
+        "{\"original_text\": \"我们可能在周五交付，但不能保证。\", \"modified_text\": \"We may deliver on Friday, but we cannot guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.83
+    },
+    {
+      "case": "translation",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "We may deliver on Friday, but we can't guarantee it.",
+      "raw_returns": [
+        "{\"original_text\": \"我们可能在周五交付，但不能保证。\", \"modified_text\": \"We may deliver on Friday, but we can't guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 3.5
+    },
+    {
+      "case": "translation",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "We might deliver it on Friday, but we can't guarantee it.",
+      "raw_returns": [
+        "{\"modified_text\": \"We might deliver it on Friday, but we can't guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.604
+    },
+    {
+      "case": "translation",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "We may deliver on Friday, but we cannot guarantee it.",
+      "raw_returns": [
+        "{\"modified_text\": \"We may deliver on Friday, but we cannot guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.614
+    },
+    {
+      "case": "translation",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "We may deliver on Friday, but we cannot guarantee it.",
+      "raw_returns": [
+        "{\"modified_text\": \"We may deliver on Friday, but we cannot guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 5.185
+    },
+    {
+      "case": "expansion",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "周五开会讨论下季度的计划。会上将回顾上一阶段的工作进展，并初步分析当前面临的主要挑战。会议重点围绕下季度的目标方向进行讨论，具体分工和细节安排待后续进一步明确。",
+      "raw_returns": [
+        "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"周五开会讨论下季度的计划。会上将回顾上一阶段的工作进展，并初步分析当前面临的主要挑战。会议重点围绕下季度的目标方向进行讨论，具体分工和细节安排待后续进一步明确。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.47
+    },
+    {
+      "case": "expansion",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "定于周五召开会议，重点讨论下个季度的工作计划与安排，大家需提前做好准备，届时将围绕目标、分工和时间节点等主要内容展开沟通与协调。",
+      "raw_returns": [
+        "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"定于周五召开会议，重点讨论下个季度的工作计划与安排，大家需提前做好准备，届时将围绕目标、分工和时间节点等主要内容展开沟通与协调。\"}"
+      ],
+      "failures": [
+        "missing:下季度"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 3.084
+    },
+    {
+      "case": "expansion",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "周五开会讨论下季度的计划，主要围绕工作重点、资源分配和时间节点进行沟通，具体安排待会上再进一步明确。",
+      "raw_returns": [
+        "{\"modified_text\": \"周五开会讨论下季度的计划，主要围绕工作重点、资源分配和时间节点进行沟通，具体安排待会上再进一步明确。\"}"
+      ],
+      "failures": [
+        "min_length"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 1.878
+    },
+    {
+      "case": "expansion",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "周五召开会议，大家一起讨论下季度的整体计划，包括主要目标、重点任务和大致时间安排，为后续工作做好准备。",
+      "raw_returns": [
+        "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"周五召开会议，大家一起讨论下季度的整体计划，包括主要目标、重点任务和大致时间安排，为后续工作做好准备。\"}"
+      ],
+      "failures": [
+        "min_length"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 2.722
+    },
+    {
+      "case": "expansion",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "周五我们将召开会议，重点讨论下季度的工作计划，包括主要目标、重点任务和时间安排等方面，以确保各项工作能够顺利推进并取得预期成果。",
+      "raw_returns": [
+        "{\"modified_text\": \"周五我们将召开会议，重点讨论下季度的工作计划，包括主要目标、重点任务和时间安排等方面，以确保各项工作能够顺利推进并取得预期成果。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.919
+    },
+    {
+      "case": "expansion",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "周五开会讨论下季度的计划，主要围绕整体目标和方向进行沟通。大家先谈谈各自的想法，再梳理一下重点任务和时间节点，确保后续工作有条不紊地推进。",
+      "raw_returns": [
+        "{\"modified_text\": \"周五开会讨论下季度的计划，主要围绕整体目标和方向进行沟通。大家先谈谈各自的想法，再梳理一下重点任务和时间节点，确保后续工作有条不紊地推进。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.407
+    },
+    {
+      "case": "format_list",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "1. 准备材料；2. 确认时间；3. 发送通知",
+      "raw_returns": [
+        "{\"original_text\": \"准备材料；确认时间；发送通知\", \"modified_text\": \"1. 准备材料；2. 确认时间；3. 发送通知\"}"
+      ],
+      "failures": [
+        "line_count"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 2.248
+    },
+    {
+      "case": "format_list",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "1. 准备材料\n2. 确认时间\n3. 发送通知",
+      "raw_returns": [
+        "{\"original_text\": \"准备材料；确认时间；发送通知\", \"modified_text\": \"1. 准备材料\\n2. 确认时间\\n3. 发送通知\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.76
+    },
+    {
+      "case": "format_list",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "1. 准备材料；2. 确认时间；3. 发送通知",
+      "raw_returns": [
+        "{\"modified_text\": \"1. 准备材料；2. 确认时间；3. 发送通知\"}"
+      ],
+      "failures": [
+        "line_count"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 1.717
+    },
+    {
+      "case": "format_list",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "1. 准备材料\n2. 确认时间\n3. 发送通知",
+      "raw_returns": [
+        "{\"original_text\": \"准备材料；确认时间；发送通知\", \"modified_text\": \"1. 准备材料\\n2. 确认时间\\n3. 发送通知\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.165
+    },
+    {
+      "case": "format_list",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "1. 准备材料；\n2. 确认时间；\n3. 发送通知",
+      "raw_returns": [
+        "{\"modified_text\": \"1. 准备材料；\\n2. 确认时间；\\n3. 发送通知\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.853
+    },
+    {
+      "case": "format_list",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "1. 准备材料；\n2. 确认时间；\n3. 发送通知",
+      "raw_returns": [
+        "{\"modified_text\": \"1. 准备材料；\\n2. 确认时间；\\n3. 发送通知\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.727
+    },
+    {
+      "case": "clear_all",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "",
+      "raw_returns": [
+        "{\"original_text\": \"第一句。第二句。\", \"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.365
+    },
+    {
+      "case": "clear_all",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "",
+      "raw_returns": [
+        "{\"original_text\": \"第一句。第二句。\", \"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.931
+    },
+    {
+      "case": "clear_all",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "",
+      "raw_returns": [
+        "{\"original_text\": \"第一句。第二句。\", \"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.262
+    },
+    {
+      "case": "clear_all",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "",
+      "raw_returns": [
+        "{\"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.357
+    },
+    {
+      "case": "clear_all",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "",
+      "raw_returns": [
+        "{\"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.721
+    },
+    {
+      "case": "clear_all",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "",
+      "raw_returns": [
+        "{\"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.617
+    },
+    {
+      "case": "homophone",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"original_text\": \"界面\", \"modified_text\": \"街面\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.779
+    },
+    {
+      "case": "homophone",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"original_text\": \"界面\", \"modified_text\": \"街面\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.651
+    },
+    {
+      "case": "homophone",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"这个街面还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.43
+    },
+    {
+      "case": "homophone",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"这个街面还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 3.69
+    },
+    {
+      "case": "homophone",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"这个街面还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.219
+    },
+    {
+      "case": "homophone",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"original_text\": \"界面\", \"modified_text\": \"街面\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 6.575
+    },
+    {
+      "case": "short_correction",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "识别效果还不错",
+      "raw_returns": [
+        "{\"original_text\": \"事情\", \"modified_text\": \"识别\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.055
+    },
+    {
+      "case": "short_correction",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "识别效果还不错",
+      "raw_returns": [
+        "{\"original_text\": \"事情\", \"modified_text\": \"识别\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.646
+    },
+    {
+      "case": "short_correction",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "识别效果还不错",
+      "raw_returns": [
+        "{\"original_text\": \"事情\", \"modified_text\": \"识别\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.983
+    },
+    {
+      "case": "short_correction",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "识别效果还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"识别效果还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.602
+    },
+    {
+      "case": "short_correction",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "识别效果还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"识别效果还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.909
+    },
+    {
+      "case": "short_correction",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "识别效果还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"识别效果还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.615
+    },
+    {
+      "case": "spelling_case",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "请安装 Java。",
+      "raw_returns": [
+        "{\"original_text\": \"Jvaa\", \"modified_text\": \"Java\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 3.093
+    },
+    {
+      "case": "spelling_case",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "请安装 Java。",
+      "raw_returns": [
+        "{\"original_text\": \"Jvaa\", \"modified_text\": \"Java\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.748
+    },
+    {
+      "case": "spelling_case",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "请安装 Java。",
+      "raw_returns": [
+        "{\"modified_text\": \"请安装 Java。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.107
+    },
+    {
+      "case": "spelling_case",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "请安装 Java。",
+      "raw_returns": [
+        "{\"modified_text\": \"请安装 Java。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.463
+    },
+    {
+      "case": "spelling_case",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "请安装 Java。",
+      "raw_returns": [
+        "{\"original_text\": \"Jvaa\", \"modified_text\": \"Java\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 5.154
+    },
+    {
+      "case": "spelling_case",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "请安装 Java。",
+      "raw_returns": [
+        "{\"modified_text\": \"请安装 Java。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.883
+    },
+    {
+      "case": "spelling_inline",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我们用Python处理数据。",
+      "raw_returns": [
+        "{\"original_text\": \"派森\", \"modified_text\": \"Python\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.084
+    },
+    {
+      "case": "spelling_inline",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我们用Python处理数据。",
+      "raw_returns": [
+        "{\"original_text\": \"派森\", \"modified_text\": \"Python\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.035
+    },
+    {
+      "case": "spelling_inline",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我们用Python处理数据。",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用Python处理数据。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.427
+    },
+    {
+      "case": "spelling_inline",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我们用Python处理数据。",
+      "raw_returns": [
+        "{\"original_text\": \"派森\", \"modified_text\": \"Python\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 4.031
+    },
+    {
+      "case": "spelling_inline",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我们用 Python 处理数据。",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用 Python 处理数据。\"}"
+      ],
+      "failures": [
+        "exact_text"
+      ],
+      "checks_passed": false,
+      "review_required": false,
+      "elapsed_s": 1.606
+    },
+    {
+      "case": "ambiguous_word",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "上午三点开会，下午三点培训",
+      "raw_returns": [
+        "{\"original_text\": \"上午三点开会，下午三点培训\", \"modified_text\": \"上午三点开会，下午三点培训\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.217
+    },
+    {
+      "case": "spelling_inline",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我们用Python处理数据。",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用Python处理数据。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.614
+    },
+    {
+      "case": "ambiguous_word",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "上午三点开会，下午三点培训",
+      "raw_returns": [
+        "{\"original_text\": \"上午三点开会，下午三点培训\", \"modified_text\": \"上午三点开会，下午三点培训\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.347
+    },
+    {
+      "case": "ambiguous_word",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "上午三点开会，下午三点培训",
+      "raw_returns": [
+        "{\"original_text\": \"上午三点开会，下午三点培训\", \"modified_text\": \"上午三点开会，下午三点培训\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.121
+    },
+    {
+      "case": "ambiguous_word",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "上午三点开会，下午三点培训",
+      "raw_returns": [
+        "{\"modified_text\": \"上午三点开会，下午三点培训\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.819
+    },
+    {
+      "case": "ambiguous_word",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "上午三点开会，下午三点培训",
+      "raw_returns": [
+        "{\"modified_text\": \"上午三点开会，下午三点培训\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.278
+    },
+    {
+      "case": "ambiguous_word",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "上午三点开会，下午三点培训",
+      "raw_returns": [
+        "{\"modified_text\": \"上午三点开会，下午三点培训\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.964
+    },
+    {
+      "case": "last_occurrence",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"original_text\": \"第二个界面\", \"modified_text\": \"第二个街面\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.49
+    },
+    {
+      "case": "last_occurrence",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"original_text\": \"第二个界面\", \"modified_text\": \"第二个街面\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.856
+    },
+    {
+      "case": "last_occurrence",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"modified_text\": \"第一个界面不错，第二个街面也不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.804
+    },
+    {
+      "case": "last_occurrence",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"modified_text\": \"第一个界面不错，第二个街面也不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.734
+    },
+    {
+      "case": "no_match",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"original_text\": \"明天下午去公园散步\", \"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.627
+    },
+    {
+      "case": "last_occurrence",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"modified_text\": \"第一个界面不错，第二个街面也不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.785
+    },
+    {
+      "case": "last_occurrence",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"original_text\": \"第二个界面\", \"modified_text\": \"第二个街面\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 5.94
+    },
+    {
+      "case": "no_match",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"original_text\": \"明天下午去公园散步\", \"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.405
+    },
+    {
+      "case": "no_match",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.805
+    },
+    {
+      "case": "no_match",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.009
+    },
+    {
+      "case": "delete_one",
+      "variant": "baseline",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "甲已经确认。丙同意参加。",
+      "raw_returns": [
+        "{\"original_text\": \"乙尚未回复。\", \"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.446
+    },
+    {
+      "case": "delete_one",
+      "variant": "scope_prefix",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "甲已经确认。丙同意参加。",
+      "raw_returns": [
+        "{\"original_text\": \"乙尚未回复。\", \"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.944
+    },
+    {
+      "case": "no_match",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 4.881
+    },
+    {
+      "case": "delete_one",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "甲已经确认。丙同意参加。",
+      "raw_returns": [
+        "{\"original_text\": \"乙尚未回复。\", \"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.229
+    },
+    {
+      "case": "delete_one",
+      "variant": "baseline",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "甲已经确认。丙同意参加。",
+      "raw_returns": [
+        "{\"modified_text\": \"甲已经确认。丙同意参加。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.306
+    },
+    {
+      "case": "no_match",
+      "variant": "balanced",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"original_text\": \"明天下午去公园散步\", \"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 10.773
+    },
+    {
+      "case": "delete_one",
+      "variant": "scope_prefix",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "甲已经确认。丙同意参加。",
+      "raw_returns": [
+        "{\"modified_text\": \"甲已经确认。丙同意参加。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.146
+    },
+    {
+      "case": "delete_one",
+      "variant": "balanced",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "甲已经确认。丙同意参加。",
+      "raw_returns": [
+        "{\"modified_text\": \"甲已经确认。丙同意参加。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.969
+    }
+  ],
+  "summary": {
+    "baseline": {
+      "passed": 26,
+      "total": 30,
+      "median_s": 2.197
+    },
+    "scope_prefix": {
+      "passed": 28,
+      "total": 30,
+      "median_s": 2.08
+    },
+    "balanced": {
+      "passed": 28,
+      "total": 30,
+      "median_s": 2.148
+    }
+  }
+}

@@ -1,0 +1,581 @@
+{
+  "method": "Butterworth order 4 energy, same original-derived active mask for both signals; aligned nine prompt intervals. Relative level is commercial/original. Scalar gain match uses 500–4000 Hz.",
+  "caveat": "Frequency/time selective changes show this is not constant attenuation. They include intended noise/plosive removal and cannot alone establish lost speech or artifacts without a clean reference.",
+  "bands_aggregate": [
+    {
+      "band_hz": [
+        20,
+        250
+      ],
+      "change_db": -32.187002345856556
+    },
+    {
+      "band_hz": [
+        250,
+        500
+      ],
+      "change_db": -19.554703543354105
+    },
+    {
+      "band_hz": [
+        500,
+        1000
+      ],
+      "change_db": -6.195994592935637
+    },
+    {
+      "band_hz": [
+        1000,
+        2000
+      ],
+      "change_db": -0.3842882231702819
+    },
+    {
+      "band_hz": [
+        2000,
+        4000
+      ],
+      "change_db": -0.00997495381222285
+    },
+    {
+      "band_hz": [
+        4000,
+        7900
+      ],
+      "change_db": -0.0007493122806015012
+    }
+  ],
+  "sentences": [
+    {
+      "sentence": 1,
+      "gain_match_db": 3.424957866655509,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -38.29820254163592,
+          "gain_matched_change_db": -34.87324467498041
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -24.92994478926482,
+          "gain_matched_change_db": -21.504986922609312
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -5.721815550290174,
+          "gain_matched_change_db": -2.2968576836346646
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.32752717823191724,
+          "gain_matched_change_db": 3.097430688423592
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.016133515584640323,
+          "gain_matched_change_db": 3.408824351070869
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.002117786385740638,
+          "gain_matched_change_db": 3.4228400802697685
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -11.545804777935318,
+        -1.5016979798417287,
+        3.076806926606382
+      ]
+    },
+    {
+      "sentence": 2,
+      "gain_match_db": 4.004578341606066,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -33.999428577570534,
+          "gain_matched_change_db": -29.994850235964467
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -24.45355983699323,
+          "gain_matched_change_db": -20.448981495387162
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -7.778545233487968,
+          "gain_matched_change_db": -3.7739668918819023
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.4884985688376534,
+          "gain_matched_change_db": 3.5160797727684123
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.011557311542742593,
+          "gain_matched_change_db": 3.993021030063323
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.0006265722155409498,
+          "gain_matched_change_db": 4.003951769390524
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -4.980183179731949,
+        2.907296475332931,
+        3.9584351660231314
+      ]
+    },
+    {
+      "sentence": 3,
+      "gain_match_db": 3.702377819383634,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -33.2168972786472,
+          "gain_matched_change_db": -29.514519459263568
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -14.96878407386384,
+          "gain_matched_change_db": -11.266406254480206
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -5.961026715477759,
+          "gain_matched_change_db": -2.258648896094125
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.6519137741109586,
+          "gain_matched_change_db": 3.0504640452726752
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.010264201791715968,
+          "gain_matched_change_db": 3.692113617591918
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.0008571336181429255,
+          "gain_matched_change_db": 3.701520685765491
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -6.185175387092217,
+        0.9752030483230647,
+        3.6269726446351784
+      ]
+    },
+    {
+      "sentence": 4,
+      "gain_match_db": 5.271772375004819,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -34.52808666761962,
+          "gain_matched_change_db": -29.2563142926148
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -20.9580897768015,
+          "gain_matched_change_db": -15.686317401796682
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -7.531592077743843,
+          "gain_matched_change_db": -2.2598197027390245
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.5328760238081804,
+          "gain_matched_change_db": 4.738896351196638
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.009757100271243619,
+          "gain_matched_change_db": 5.262015274733575
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.0006257710588736454,
+          "gain_matched_change_db": 5.271146603945945
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -11.646790229130625,
+        0.9337736520940014,
+        5.141910571554146
+      ]
+    },
+    {
+      "sentence": 5,
+      "gain_match_db": 2.5155163205533566,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -30.169808601796863,
+          "gain_matched_change_db": -27.654292281243507
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -20.56147984271055,
+          "gain_matched_change_db": -18.045963522157194
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -4.24371146417538,
+          "gain_matched_change_db": -1.7281951436220235
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.3297668078579242,
+          "gain_matched_change_db": 2.1857495126954323
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.006022186269793426,
+          "gain_matched_change_db": 2.509494134283563
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.0006007055274556977,
+          "gain_matched_change_db": 2.514915615025901
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -6.817692997384845,
+        1.9784980716675933,
+        2.467183912933058
+      ]
+    },
+    {
+      "sentence": 6,
+      "gain_match_db": 3.0224643615122737,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -27.31787878004895,
+          "gain_matched_change_db": -24.295414418536676
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -19.858936595810636,
+          "gain_matched_change_db": -16.836472234298363
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -5.753367964789277,
+          "gain_matched_change_db": -2.730903603277003
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.24858132605038027,
+          "gain_matched_change_db": 2.7738830354618935
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.010185961115679768,
+          "gain_matched_change_db": 3.012278400396594
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.0007038523600948405,
+          "gain_matched_change_db": 3.021760509152179
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -9.876035502058352,
+        1.1456597733911522,
+        2.892198166380891
+      ]
+    },
+    {
+      "sentence": 7,
+      "gain_match_db": 3.3496784399587036,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -33.45715044450773,
+          "gain_matched_change_db": -30.107472004549027
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -19.951233958929933,
+          "gain_matched_change_db": -16.601555518971228
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -5.362732814884804,
+          "gain_matched_change_db": -2.0130543749261007
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.18289731328585826,
+          "gain_matched_change_db": 3.1667811266728454
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.010833021085448792,
+          "gain_matched_change_db": 3.338845418873255
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.0012282849546494286,
+          "gain_matched_change_db": 3.348450155004054
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -5.305368842616744,
+        2.312107905800646,
+        3.2197735795006257
+      ]
+    },
+    {
+      "sentence": 8,
+      "gain_match_db": 1.6622985916264406,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -30.737375003961883,
+          "gain_matched_change_db": -29.07507641233544
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -19.239006174056364,
+          "gain_matched_change_db": -17.576707582429922
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -5.276091253386416,
+          "gain_matched_change_db": -3.6137926617599754
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.1450339715062519,
+          "gain_matched_change_db": 1.5172646201201887
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.0031836588314607082,
+          "gain_matched_change_db": 1.65911493279498
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.00043804329303835497,
+          "gain_matched_change_db": 1.6618605483334021
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -6.093249552508616,
+        1.295247492594687,
+        1.5953783864974294
+      ]
+    },
+    {
+      "sentence": 9,
+      "gain_match_db": 5.335848039467413,
+      "bands": [
+        {
+          "band_hz": [
+            20,
+            250
+          ],
+          "change_db": -32.73637102508583,
+          "gain_matched_change_db": -27.400522985618416
+        },
+        {
+          "band_hz": [
+            250,
+            500
+          ],
+          "change_db": -21.714300112326043,
+          "gain_matched_change_db": -16.37845207285863
+        },
+        {
+          "band_hz": [
+            500,
+            1000
+          ],
+          "change_db": -8.292451133802142,
+          "gain_matched_change_db": -2.9566030943347297
+        },
+        {
+          "band_hz": [
+            1000,
+            2000
+          ],
+          "change_db": -0.2917365233155456,
+          "gain_matched_change_db": 5.044111516151867
+        },
+        {
+          "band_hz": [
+            2000,
+            4000
+          ],
+          "change_db": -0.010416005031562023,
+          "gain_matched_change_db": 5.325432034435851
+        },
+        {
+          "band_hz": [
+            4000,
+            7900
+          ],
+          "change_db": -0.0005090017618439925,
+          "gain_matched_change_db": 5.335339037705569
+        }
+      ],
+      "gain_matched_40ms_500_4000_change_db_percentiles_10_50_90": [
+        -4.479009284570529,
+        1.789622008588319,
+        5.261824265742179
+      ]
+    }
+  ]
+}

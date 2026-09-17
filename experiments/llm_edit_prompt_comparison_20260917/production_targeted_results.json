@@ -1,0 +1,331 @@
+{
+  "at": "2026-09-17T05:49:48.521843+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "suite": "screen",
+  "repeat": 2,
+  "prompt_hashes": {
+    "production": {
+      "fragment": "14e5ca0c8693a4df410660e4deca38c213abbb6f73e2e2606cce3ea05084ab54",
+      "full": "b381f4d935b1fa6458a59e47beb28b264490b4e7480601b7613122f9ee90129c"
+    }
+  },
+  "cases": [
+    {
+      "id": "reported_polish",
+      "suite": "screen",
+      "source": "我准备开车去。根本就没有这种开法。",
+      "utterance": "润色一下这段话。",
+      "changed": true,
+      "must_include": [
+        "开车"
+      ],
+      "forbidden": [
+        "公司",
+        "机场",
+        "因为",
+        "交通规则",
+        "危险"
+      ],
+      "review": "保留准备开车及否定这种开法的两层意思，不添加目的地、原因或解释。"
+    },
+    {
+      "id": "formal_facts",
+      "suite": "screen",
+      "source": "王敏说那个预算可能是8万元，周五之前还得再确认一下。",
+      "utterance": "改得正式一些",
+      "changed": true,
+      "must_include": [
+        "王敏",
+        "8万元",
+        "周五"
+      ],
+      "any_include": [
+        "可能",
+        "预计",
+        "尚待"
+      ],
+      "review": "保留预算不确定和仍需确认，不改成确定已批准。"
+    },
+    {
+      "id": "translation",
+      "suite": "screen",
+      "source": "我们可能在周五交付，但不能保证。",
+      "utterance": "翻译成英文",
+      "changed": true,
+      "any_include": [
+        "may",
+        "might",
+        "possible"
+      ],
+      "must_include": [
+        "Friday"
+      ],
+      "review": "英语通顺，保留可能交付和不能保证，不添加细节。"
+    },
+    {
+      "id": "expansion",
+      "suite": "screen",
+      "source": "周五开会讨论下季度的计划。",
+      "utterance": "扩写到大约80个字，别编造具体安排",
+      "changed": true,
+      "min_length": 55,
+      "max_length": 115,
+      "must_include": [
+        "周五",
+        "下季度"
+      ],
+      "forbidden": [
+        "会议室",
+        "上午",
+        "下午",
+        "九点",
+        "张"
+      ],
+      "review": "展开表达主题，不编造确定人员、具体时间、地点或已作决定。"
+    }
+  ],
+  "results": [
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我打算开车去。根本没有这种开法。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我打算开车去。根本没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.544
+    },
+    {
+      "case": "formal_facts",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "王敏表示，该预算可能为8万元，需在周五前再次确认。",
+      "raw_returns": [
+        "{\"original_text\": \"王敏说那个预算可能是8万元，周五之前还得再确认一下。\", \"modified_text\": \"王敏表示，该预算可能为8万元，需在周五前再次确认。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.694
+    },
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我准备开车去。根本就没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去。根本就没有这种开法。\"}"
+      ],
+      "failures": [
+        "unchanged"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 1.835
+    },
+    {
+      "case": "formal_facts",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "王敏表示，该预算可能为8万元，周五前需再次确认。",
+      "raw_returns": [
+        "{\"modified_text\": \"王敏表示，该预算可能为8万元，周五前需再次确认。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.634
+    },
+    {
+      "case": "translation",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "We may deliver by Friday, but we cannot guarantee it.",
+      "raw_returns": [
+        "{\"modified_text\": \"We may deliver by Friday, but we cannot guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.379
+    },
+    {
+      "case": "translation",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "We may deliver on Friday, but we cannot guarantee it.",
+      "raw_returns": [
+        "{\"original_text\": \"我们可能在周五交付，但不能保证。\", \"modified_text\": \"We may deliver on Friday, but we cannot guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.138
+    },
+    {
+      "case": "expansion",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "计划在周五召开会议，就下一季度的工作方向和重点任务进行讨论，以明确后续的整体规划与目标安排。",
+      "raw_returns": [
+        "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"计划在周五召开会议，就下一季度的工作方向和重点任务进行讨论，以明确后续的整体规划与目标安排。\"}"
+      ],
+      "failures": [
+        "missing:下季度",
+        "min_length"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 2.15
+    },
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 2,
+      "final_text": "我打算开车去。根本没有这种开法。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我打算开车去。根本没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.688
+    },
+    {
+      "case": "expansion",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "周五将召开会议，讨论下一季度的计划安排，包括整体目标、重点任务以及可能需要的资源协调。会议具体内容需进一步明确，届时再交流细节。",
+      "raw_returns": [
+        "{\"modified_text\": \"周五将召开会议，讨论下一季度的计划安排，包括整体目标、重点任务以及可能需要的资源协调。会议具体内容需进一步明确，届时再交流细节。\"}"
+      ],
+      "failures": [
+        "missing:下季度"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 2.332
+    },
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "full",
+      "trial": 2,
+      "final_text": "我准备开车去。根本没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.562
+    },
+    {
+      "case": "formal_facts",
+      "variant": "production",
+      "branch": "full",
+      "trial": 2,
+      "final_text": "王敏表示，该预算预计为8万元，需在周五之前再次确认。",
+      "raw_returns": [
+        "{\"modified_text\": \"王敏表示，该预算预计为8万元，需在周五之前再次确认。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.83
+    },
+    {
+      "case": "formal_facts",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 2,
+      "final_text": "王敏表示该预算约为8万元，需在周五前再次确认。",
+      "raw_returns": [
+        "{\"original_text\": \"王敏说那个预算可能是8万元，周五之前还得再确认一下。\", \"modified_text\": \"王敏表示该预算约为8万元，需在周五前再次确认。\"}"
+      ],
+      "failures": [
+        "missing_alternative"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 2.384
+    },
+    {
+      "case": "translation",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 2,
+      "final_text": "We may deliver on Friday, but we cannot guarantee it.",
+      "raw_returns": [
+        "{\"original_text\": \"我们可能在周五交付，但不能保证。\", \"modified_text\": \"We may deliver on Friday, but we cannot guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.742
+    },
+    {
+      "case": "translation",
+      "variant": "production",
+      "branch": "full",
+      "trial": 2,
+      "final_text": "We may deliver on Friday, but cannot guarantee it.",
+      "raw_returns": [
+        "{\"modified_text\": \"We may deliver on Friday, but cannot guarantee it.\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.623
+    },
+    {
+      "case": "expansion",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 2,
+      "final_text": "周五将召开会议，共同讨论下个季度的整体计划。会议内容主要围绕季度目标、重点工作方向以及资源安排等方面展开，进一步明确后续推进的步骤与时间节点。",
+      "raw_returns": [
+        "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"周五将召开会议，共同讨论下个季度的整体计划。会议内容主要围绕季度目标、重点工作方向以及资源安排等方面展开，进一步明确后续推进的步骤与时间节点。\"}"
+      ],
+      "failures": [
+        "missing:下季度"
+      ],
+      "checks_passed": false,
+      "review_required": true,
+      "elapsed_s": 2.708
+    },
+    {
+      "case": "expansion",
+      "variant": "production",
+      "branch": "full",
+      "trial": 2,
+      "final_text": "公司计划在周五召开会议，重点讨论下季度的整体工作规划与安排。会议将围绕下一阶段的目标、重点任务和资源配置等方面进行研讨，以明确后续的工作方向和优先事项。参会人员需提前做好准备，确保会议高效推进。",
+      "raw_returns": [
+        "{\"modified_text\": \"公司计划在周五召开会议，重点讨论下季度的整体工作规划与安排。会议将围绕下一阶段的目标、重点任务和资源配置等方面进行研讨，以明确后续的工作方向和优先事项。参会人员需提前做好准备，确保会议高效推进。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.811
+    }
+  ],
+  "summary": {
+    "production": {
+      "passed": 11,
+      "total": 16,
+      "median_s": 1.786
+    }
+  }
+}

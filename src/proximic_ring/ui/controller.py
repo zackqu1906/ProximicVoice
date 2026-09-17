@@ -34,6 +34,7 @@ from PySide6.QtGui import QDesktopServices
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
 from ..asr import ASRBackendCache
+from ..audio.microphone import input_device_choices
 from ..app_runtime import (
     ASR_GAIN_DB_DEFAULT,
     ASR_GAIN_DB_MAX,
@@ -108,7 +109,7 @@ from ..voice_actions import (
 )
 
 
-BUNDLED_NEAR_MODEL_VERSION = 2
+BUNDLED_NEAR_MODEL_VERSION = 3
 BUNDLED_NEAR_MODEL_FILENAME = f"ringo-near-v{BUNDLED_NEAR_MODEL_VERSION}.model"
 
 
@@ -118,10 +119,11 @@ def _migrated_bundled_near_model_path(
     default_model: Path,
 ) -> str:
     saved = str(saved_model_path).strip()
-    if saved_bundled_version < BUNDLED_NEAR_MODEL_VERSION and (
-        not saved or Path(saved).name == "ringo-near-v1.model"
-    ):
-        return str(default_model) if default_model.exists() else ""
+    if saved_bundled_version < BUNDLED_NEAR_MODEL_VERSION:
+        previous_default_version = max(saved_bundled_version, 1)
+        previous_default_name = f"ringo-near-v{previous_default_version}.model"
+        if not saved or Path(saved).name == previous_default_name:
+            return str(default_model) if default_model.exists() else ""
     return saved or (str(default_model) if default_model.exists() else "")
 
 
@@ -350,6 +352,7 @@ class AppController(QObject):
     inputModeChanged = Signal()
     inputRoutingModeChanged = Signal()
     textProcessingChanged = Signal()
+    llmTextProcessingChanged = Signal()
     localModelInstallationChanged = Signal()
     associationChanged = Signal()
     accessibilityChanged = Signal()
@@ -374,6 +377,8 @@ class AppController(QObject):
     _voiceActionRequested = Signal(str)
     _gestureRecognized = Signal(object, object)
     gestureSettingsChanged = Signal()
+    microphoneDevicesChanged = Signal()
+    _microphoneScanFinished = Signal(object, str)
     _associationActionRequested = Signal(str, str)
     _voiceHistorySaved = Signal(object)
 
@@ -485,6 +490,16 @@ class AppController(QObject):
             )
         )
         self._gesture_settings_error = ""
+        self._speech_control_mode = str(self._settings.value("input/speechControlMode", "proximity"))
+        if self._speech_control_mode not in {"proximity", "gesture"}:
+            self._speech_control_mode = "proximity"
+        self._audio_source = str(self._settings.value("audio/source", "ring"))
+        if self._audio_source not in {"ring", "microphone"}:
+            self._audio_source = "ring"
+        self._microphone_device = str(self._settings.value("audio/microphoneDevice", ""))
+        self._microphone_devices: list[dict] = []
+        self._microphone_scan_busy = False
+        self._microphone_devices_error = ""
         try:
             self._gesture_bindings = GestureBindings.from_json(
                 self._settings.value("input/gestureBindings", GestureBindings().to_json())
@@ -597,6 +612,7 @@ class AppController(QObject):
         self._ring_disconnect_notice_visible = False
         self._ring_disconnect_notice_title = "Ring 已断开连接"
         self._ring_disconnect_notice_device = "Ring"
+        self._audio_input_failed = False
         self._asr_backend_cache = ASRBackendCache()
         self._scan_worker: threading.Thread | None = None
         self._available_devices: list[dict[str, object]] = []
@@ -679,9 +695,9 @@ class AppController(QObject):
         except (TypeError, ValueError):
             saved_bundled_version = 0
         if saved_bundled_version < BUNDLED_NEAR_MODEL_VERSION:
-            # Migrate only the old bundled default. Preserve an explicitly
-            # selected custom checkpoint, and mark this one-time migration so
-            # the user can deliberately switch back to v1 afterwards.
+            # Migrate only the bundled default used by that app version.
+            # Preserve a custom checkpoint or an explicit rollback, and mark
+            # this migration so later launches keep the user's choice.
             migrated_model_path = _migrated_bundled_near_model_path(
                 saved_model_path,
                 saved_bundled_version,
@@ -834,7 +850,11 @@ class AppController(QObject):
         self._runtimeFinished.connect(self._apply_runtime_finished)
         self._pushToTalkChanged.connect(self._apply_push_to_talk)
         self._scanFinished.connect(self._apply_scan_finished)
+        self._microphoneScanFinished.connect(self._apply_microphone_scan_finished)
         self._textProcessed.connect(self._apply_text_processed)
+        self.textProcessingChanged.connect(self.llmTextProcessingChanged.emit)
+        self.transcriptChanged.connect(self.llmTextProcessingChanged.emit)
+        self.interactionChanged.connect(self.llmTextProcessingChanged.emit)
         self._inputModeRouted.connect(self._apply_input_mode_routed)
         self._llmTraceCollected.connect(self._apply_llm_trace_collected)
         self._llmWarmupFinished.connect(self._apply_llm_warmup_finished)
@@ -2229,6 +2249,20 @@ class AppController(QObject):
         target = self._active_undo_target()
         return target.screen_x if target is not None else 0
 
+    @Property("QVariantMap", notify=interactionChanged)
+    def appliedPopupScreenGeometry(self) -> dict:
+        from PySide6.QtGui import QCursor, QGuiApplication
+        from .overlay_geometry import popup_screen
+
+        app = QGuiApplication.instance()
+        if not isinstance(app, QGuiApplication):
+            return {}
+        screen = popup_screen(self._active_undo_target(), app.screens(), QCursor.pos())
+        if screen is None:
+            return {}
+        area = screen.availableGeometry()
+        return dict(x=area.x(), y=area.y(), width=area.width(), height=area.height())
+
     @Property(int, notify=interactionChanged)
     def appliedPopupTargetY(self) -> int:
         target = self._active_undo_target()
@@ -2379,6 +2413,95 @@ class AppController(QObject):
     def modeCorrectionShortcutOptions(self) -> list[str]:
         return list(MODE_SWITCH_SHORTCUTS)
 
+    @Property(str, notify=settingsChanged)
+    def speechControlMode(self) -> str:
+        return self._speech_control_mode
+
+    @speechControlMode.setter
+    def speechControlMode(self, value: str) -> None:
+        if self._connected or self._busy or self._runtime_active:
+            return
+        if value in {"proximity", "gesture"}:
+            self._set_setting("_speech_control_mode", value, "input/speechControlMode")
+
+    @Property(str, notify=settingsChanged)
+    def audioSource(self) -> str:
+        return self._audio_source
+
+    @audioSource.setter
+    def audioSource(self, value: str) -> None:
+        if self._connected or self._busy or self._runtime_active:
+            return
+        if value in {"ring", "microphone"}:
+            self._set_setting("_audio_source", value, "audio/source")
+
+    @Property(str, notify=settingsChanged)
+    def microphoneDevice(self) -> str:
+        return self._microphone_device
+
+    @microphoneDevice.setter
+    def microphoneDevice(self, value: str) -> None:
+        if self._connected or self._busy or self._runtime_active:
+            return
+        if value and not any(row["value"] == value for row in self._microphone_devices):
+            return
+        self._set_setting("_microphone_device", value, "audio/microphoneDevice")
+        self.microphoneDevicesChanged.emit()
+
+    @Property("QVariantList", notify=microphoneDevicesChanged)
+    def microphoneDevices(self) -> list[dict]:
+        rows = [{"label": "自动识别 DJI 麦克风", "value": ""}] + list(self._microphone_devices)
+        if self._microphone_device and not any(row["value"] == self._microphone_device for row in rows):
+            try:
+                name = str(json.loads(self._microphone_device)["name"])
+            except (ValueError, TypeError, KeyError):
+                name = "已保存的麦克风"
+            rows.append({"label": f"{name}（未检测到，请刷新）", "value": self._microphone_device})
+        return rows
+
+    @Property(bool, notify=microphoneDevicesChanged)
+    def microphoneScanBusy(self) -> bool:
+        return self._microphone_scan_busy
+
+    @Property(str, notify=microphoneDevicesChanged)
+    def microphoneDevicesError(self) -> str:
+        return self._microphone_devices_error
+
+    @Slot()
+    def refreshMicrophones(self) -> None:
+        if self._microphone_scan_busy or self._quitting or self._connected or self._busy:
+            return
+        self._microphone_scan_busy = True
+        self._microphone_devices_error = ""
+        self.microphoneDevicesChanged.emit()
+
+        def scan() -> None:
+            try:
+                rows = input_device_choices()
+                error = "" if rows else "没有检测到电脑输入设备，请连接 DJI 后刷新。"
+            except Exception as exc:
+                rows, error = [], str(exc)
+            if not self._quitting:
+                self._microphoneScanFinished.emit(rows, error)
+
+        threading.Thread(target=scan, name="ProxiMicInputDevices", daemon=True).start()
+
+    @Slot(object, str)
+    def _apply_microphone_scan_finished(self, rows: object, error: str) -> None:
+        self._microphone_scan_busy = False
+        self._microphone_devices = list(rows)
+        self._microphone_devices_error = error
+        # Refresh an explicitly selected device's transient PortAudio index.
+        if self._microphone_device and not (self._connected or self._busy):
+            try:
+                saved = json.loads(self._microphone_device)
+                matches = [row for row in self._microphone_devices if row["name"] == saved["name"] and row["api"] == saved["api"]]
+                if len(matches) == 1:
+                    self._set_setting("_microphone_device", matches[0]["value"], "audio/microphoneDevice")
+            except (ValueError, TypeError, KeyError):
+                pass
+        self.microphoneDevicesChanged.emit()
+
     @Property("QVariantMap", notify=gestureSettingsChanged)
     def gestureBindings(self) -> dict:
         return self._gesture_bindings.as_dict()
@@ -2468,6 +2591,43 @@ class AppController(QObject):
     @Property(bool, notify=textProcessingChanged)
     def textProcessing(self) -> bool:
         return bool(self._pending_text_requests or self._pending_mode_routes)
+
+    @Property(bool, notify=llmTextProcessingChanged)
+    def llmTextProcessing(self) -> bool:
+        """Whether the visible interaction is waiting for its chosen text LLM.
+
+        Routing, speculative alternate candidates, completed-result grace time
+        and desktop writes must not be presented as text-model processing.
+        """
+        if (
+            not self._transcript_visible
+            or self._interaction_state != "processing"
+            or self._disconnect_event.is_set()
+            or self._quitting
+        ):
+            return False
+        interaction = self._active_auto_interaction
+        if interaction is not None:
+            if (
+                not interaction.classified
+                or interaction.session_id != self._latest_asr_session_id
+            ):
+                return False
+            if (
+                interaction.selected_mode == INPUT_MODE_DICTATION
+                and self._pending_dictation_result is None
+            ):
+                # Once the dictation grace window commits, a slower cleanup
+                # candidate is background work and must not label the paste.
+                return False
+            request_id = interaction.request_ids.get(interaction.selected_mode)
+            return request_id in self._pending_text_requests
+        return any(
+            request_id in self._pending_text_requests
+            and not context.auto_route_id
+            and context.session_id == self._latest_asr_session_id
+            for request_id, context in self._pending_interactions.items()
+        )
 
     # Editable settings ---------------------------------------------------------
     @Property(str, notify=settingsChanged)
@@ -3042,6 +3202,11 @@ class AppController(QObject):
             return
         try:
             self._modification_dataset.reset_runtime()
+            self._modification_dataset.set_capture_configuration(
+                audio_source=settings.audio_source,
+                speech_control_mode=settings.speech_control_mode,
+                microphone_device=settings.microphone_device,
+            )
         except BaseException as exc:
             self._append_log(f"修改数据采集初始化失败：{exc}")
         self._interaction_recognition_suspended = False
@@ -3058,6 +3223,7 @@ class AppController(QObject):
         self._device_stop_handled = False
         self.dismissRingDisconnectNotice()
         self._busy = True
+        self._audio_input_failed = False
         self.busyChanged.emit()
         self._set_status(
             "正在连接设备",
@@ -3069,6 +3235,8 @@ class AppController(QObject):
             "RUNTIME_START",
             device_name=self._device_name,
             audio_encoding=self._audio_encoding,
+            audio_source=self._audio_source,
+            speech_control_mode=self._speech_control_mode,
             asr_backend=self._asr_backend,
             asr_device=self._asr_device,
             recognition_enabled=self._recognition_enabled,
@@ -3163,7 +3331,8 @@ class AppController(QObject):
             oldest_session = next(iter(self._diagnostic_session_started_at))
             self._diagnostic_session_started_at.pop(oldest_session, None)
         self._pipeline_log(
-            "会话已建立；此前的 STAGE2 ACTIVATE 已绑定到本句",
+            ("会话已建立；确认手势开启本句" if self._speech_control_mode == "gesture"
+             else "会话已建立；此前的 STAGE2 ACTIVATE 已绑定到本句"),
             session_id=normalized,
         )
         self._event_log(
@@ -3219,8 +3388,12 @@ class AppController(QObject):
         self._recognition_enabled = True
         self.recognitionEnabledChanged.emit()
         self.runningChanged.emit()
-        detail = f"靠近说话，{self.confirmGestureHint} 手势结束本句"
-        if self._push_to_talk:
+        detail = (
+            f"{self.confirmGestureHint} 开始，再做一次结束本句"
+            if self._speech_control_mode == "gesture"
+            else f"靠近说话，{self.confirmGestureHint} 手势结束本句"
+        )
+        if self._push_to_talk and self._speech_control_mode != "gesture":
             detail += "，或按住右 Alt"
         self._set_status("自动监听中", detail, "running")
         self._append_log("语音识别已开启（设备保持连接）")
@@ -3780,6 +3953,8 @@ class AppController(QObject):
 
     @Slot(str)
     def _apply_runtime_status(self, message: str) -> None:
+        if str(message).startswith("[AUDIO_INPUT_ERROR]"):
+            self._audio_input_failed = True
         text = str(message).strip()
         if not text:
             return
@@ -4151,10 +4326,13 @@ class AppController(QObject):
 
         if had_attempt and not self._disconnect_requested_by_user and not self._quitting:
             self._ring_disconnect_notice_title = (
+                "麦克风连接中断" if self._audio_input_failed else
                 "Ring 已断开连接" if was_connected or self._runtime_had_connection
                 else "Ring 连接中断"
             )
-            self._ring_disconnect_notice_device = self._device_name or "Ring"
+            self._ring_disconnect_notice_device = (
+                "电脑麦克风（DJI）" if self._audio_input_failed else self._device_name or "Ring"
+            )
             self._ring_disconnect_notice_visible = True
             self.ringDisconnectNoticeChanged.emit()
             self._event_log("RING_DISCONNECT_NOTICE", device_name=self._device_name)
@@ -4720,6 +4898,7 @@ class AppController(QObject):
             self._active_auto_interaction.request_ids[normalized_mode] = request_id
         if not was_processing:
             self.textProcessingChanged.emit()
+        self.llmTextProcessingChanged.emit()
         label = "修改" if normalized_mode == INPUT_MODE_EDIT else "输入"
         if update_overlay:
             self._transcript_text = self._processing_overlay_text(
@@ -4751,6 +4930,7 @@ class AppController(QObject):
         context = self._pending_interactions.pop(
             result.request_id, _PendingInteraction()
         )
+        self.llmTextProcessingChanged.emit()
         if not self._pending_text_requests:
             self.textProcessingChanged.emit()
         if self._disconnect_event.is_set() or self._quitting or self._status_kind == "stopping":
@@ -5047,6 +5227,7 @@ class AppController(QObject):
         if pending is None:
             return
         self._pending_dictation_result = None
+        self.llmTextProcessingChanged.emit()
         result, target = pending
         self._commit_input_text(result, target)
 
@@ -7539,6 +7720,10 @@ class AppController(QObject):
             self._finish_auto_interaction(INPUT_MODE_EDIT, retain=False)
 
     def _set_status(self, title: str, detail: str, kind: str) -> None:
+        if title == "自动监听中" and self._speech_control_mode == "gesture":
+            title = "等待开始手势"
+            if self.confirmGestureHint not in detail:
+                detail += f"；{self.confirmGestureHint} 开始下一句"
         self._status_title = title
         self._status_detail = detail
         self._status_kind = kind
@@ -7674,7 +7859,7 @@ class AppController(QObject):
 
     def _runtime_settings(self) -> RuntimeSettings:
         model = self._path_or_none(self._model_path)
-        if model is not None and not model.is_file():
+        if self._speech_control_mode != "gesture" and model is not None and not model.is_file():
             raise ValueError(f"检测模型不存在：{model}")
         repo = self._path_or_none(self._streaming_repo)
         if (
@@ -7699,6 +7884,9 @@ class AppController(QObject):
         connection_device = None
         return RuntimeSettings(
             asr_end_on_tap=True,
+            speech_control_mode=self._speech_control_mode,
+            audio_source=self._audio_source,
+            microphone_device=self._microphone_device,
             gesture_bindings=self._gesture_bindings,
             ring_name=self._device_name.strip(),
             ring_selector=self._selector.strip() or None,

@@ -1,0 +1,10 @@
+{
+  "01_original.wav": {
+    "source": "/Users/admin/Downloads/RingPlosiveLab/data/previews/deplosive_compare_speaker001_20260915T071439_605580Z/native/original.wav",
+    "sha256": "4f5fb6816d9897ae7dbfab2e90530776aa8c38c1e24148f690c30d829977a0be"
+  },
+  "02_commercial.wav": {
+    "source": "/Users/admin/Desktop/ring_raw.wav",
+    "sha256": "dcb642324a660ec42c902c311730d135af46f82e1fdcf908447625141957c821"
+  }
+}

@@ -1,0 +1,329 @@
+{
+  "schema_version": 1,
+  "cases": {
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/01_original_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/01_original_high.wav",
+      "group": "original_high",
+      "sentence": 1,
+      "audio_duration_s": 7.7,
+      "results": {
+        "doubao": {
+          "text": "朋友帮着爸爸病。",
+          "elapsed_s": 8.363,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/01_commercial_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/01_commercial_low.wav",
+      "group": "commercial_low",
+      "sentence": 1,
+      "audio_duration_s": 7.7,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 7.853,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/01_original_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/01_original_low.wav",
+      "group": "original_low",
+      "sentence": 1,
+      "audio_duration_s": 7.7,
+      "results": {
+        "doubao": {
+          "text": "朋友帮着爸爸。",
+          "elapsed_s": 7.929,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/01_commercial_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/01_commercial_high.wav",
+      "group": "commercial_high",
+      "sentence": 1,
+      "audio_duration_s": 7.7,
+      "results": {
+        "doubao": {
+          "text": "太空公社。",
+          "elapsed_s": 8.348,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/03_original_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/03_original_high.wav",
+      "group": "original_high",
+      "sentence": 3,
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "8本笔记。",
+          "elapsed_s": 8.54,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/03_commercial_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/03_commercial_low.wav",
+      "group": "commercial_low",
+      "sentence": 3,
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 7.786,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/03_original_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/03_original_low.wav",
+      "group": "original_low",
+      "sentence": 3,
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "宝贝笔记。",
+          "elapsed_s": 7.888,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/03_commercial_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/03_commercial_high.wav",
+      "group": "commercial_high",
+      "sentence": 3,
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 7.797,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/06_original_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/06_original_high.wav",
+      "group": "original_high",
+      "sentence": 6,
+      "audio_duration_s": 5.2,
+      "results": {
+        "doubao": {
+          "text": "不停下降，等待，等待一起出发。",
+          "elapsed_s": 5.489,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/06_commercial_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/06_commercial_low.wav",
+      "group": "commercial_low",
+      "sentence": 6,
+      "audio_duration_s": 5.2,
+      "results": {
+        "doubao": {
+          "text": "停下脚步，等待一起出发！",
+          "elapsed_s": 5.437,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/06_original_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/06_original_low.wav",
+      "group": "original_low",
+      "sentence": 6,
+      "audio_duration_s": 5.2,
+      "results": {
+        "doubao": {
+          "text": "不停下降，等待，等待一起出发。",
+          "elapsed_s": 6.068,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/06_commercial_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/06_commercial_high.wav",
+      "group": "commercial_high",
+      "sentence": 6,
+      "audio_duration_s": 5.2,
+      "results": {
+        "doubao": {
+          "text": "停下脚步，等待一起出发！",
+          "elapsed_s": 5.495,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/07_original_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/07_original_high.wav",
+      "group": "original_high",
+      "sentence": 7,
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "明天我们一起讨论旅行安排。",
+          "elapsed_s": 7.782,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/07_commercial_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/07_commercial_low.wav",
+      "group": "commercial_low",
+      "sentence": 7,
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "会计道德性安排。",
+          "elapsed_s": 7.777,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/07_original_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/07_original_low.wav",
+      "group": "original_low",
+      "sentence": 7,
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "明天我们一起讨论旅行安排。",
+          "elapsed_s": 7.8,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/07_commercial_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/07_commercial_high.wav",
+      "group": "commercial_high",
+      "sentence": 7,
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "会计讨论女性安排。",
+          "elapsed_s": 7.798,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/08_original_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/08_original_high.wav",
+      "group": "original_high",
+      "sentence": 8,
+      "audio_duration_s": 4.8,
+      "results": {
+        "doubao": {
+          "text": "带上水杯和地图，慢慢走过门前的小桥。",
+          "elapsed_s": 5.063,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/08_commercial_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/08_commercial_low.wav",
+      "group": "commercial_low",
+      "sentence": 8,
+      "audio_duration_s": 4.8,
+      "results": {
+        "doubao": {
+          "text": "带上水，带个地图，慢慢走，我面前的小桥。",
+          "elapsed_s": 5.042,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/08_original_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/08_original_low.wav",
+      "group": "original_low",
+      "sentence": 8,
+      "audio_duration_s": 4.8,
+      "results": {
+        "doubao": {
+          "text": "带上水杯和地图，慢慢走过门前的小桥。",
+          "elapsed_s": 5.016,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/08_commercial_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/08_commercial_high.wav",
+      "group": "commercial_high",
+      "sentence": 8,
+      "audio_duration_s": 4.8,
+      "results": {
+        "doubao": {
+          "text": "带上水，带个地图，慢慢走，我面前的小桥。",
+          "elapsed_s": 5.03,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/09_original_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/09_original_high.wav",
+      "group": "original_high",
+      "sentence": 9,
+      "audio_duration_s": 5.5,
+      "results": {
+        "doubao": {
+          "text": "怀孕的女人。",
+          "elapsed_s": 5.731,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/09_commercial_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/09_commercial_low.wav",
+      "group": "commercial_low",
+      "sentence": 9,
+      "audio_duration_s": 5.5,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 5.777,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/09_original_low.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/09_original_low.wav",
+      "group": "original_low",
+      "sentence": 9,
+      "audio_duration_s": 5.5,
+      "results": {
+        "doubao": {
+          "text": "Purple blocks.",
+          "elapsed_s": 5.656,
+          "error": null
+        }
+      }
+    },
+    "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/09_commercial_high.wav": {
+      "path": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs/09_commercial_high.wav",
+      "group": "commercial_high",
+      "sentence": 9,
+      "audio_duration_s": 5.5,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 5.778,
+          "error": null
+        }
+      }
+    }
+  },
+  "configuration": {
+    "backends": [
+      "doubao"
+    ],
+    "dataset": "/private/tmp/ring-asr-volume-cause-pq_iky6g/inputs",
+    "dataset_limit": -1,
+    "recent_empty": 0,
+    "recent_recognized": 0,
+    "max_seconds": 0.0,
+    "doubao_pace": 1.0
+  },
+  "updated_at": "2026-09-16T03:58:39+00:00"
+}

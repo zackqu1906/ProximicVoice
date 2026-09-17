@@ -1,0 +1,55 @@
+{
+  "nonempty_count_out_of_6": {
+    "original_high": 6,
+    "original_low": 6,
+    "commercial_low": 3,
+    "commercial_high": 4
+  },
+  "api_errors": 0,
+  "level_match_verification": [
+    {
+      "sentence": 1,
+      "high_level_mismatch_db": 3.1078572479970035e-05,
+      "low_level_mismatch_db": 1.1914705645210688e-05
+    },
+    {
+      "sentence": 3,
+      "high_level_mismatch_db": 6.343566006705714e-06,
+      "low_level_mismatch_db": 1.988171057121235e-06
+    },
+    {
+      "sentence": 6,
+      "high_level_mismatch_db": -8.638475630817766e-06,
+      "low_level_mismatch_db": -4.531127064666407e-06
+    },
+    {
+      "sentence": 7,
+      "high_level_mismatch_db": -4.1641151447890934e-05,
+      "low_level_mismatch_db": -4.91553999282246e-05
+    },
+    {
+      "sentence": 8,
+      "high_level_mismatch_db": 1.3935950178733947e-05,
+      "low_level_mismatch_db": 8.756682618127343e-06
+    },
+    {
+      "sentence": 9,
+      "high_level_mismatch_db": 2.709173573833823e-05,
+      "low_level_mismatch_db": -1.7812660374261213e-05
+    }
+  ],
+  "prompt_cer_auxiliary_5_chinese_sentences": {
+    "original_high": 0.4594594594594595,
+    "original_low": 0.47297297297297297,
+    "commercial_low": 0.6891891891891891,
+    "commercial_high": 0.6621621621621622
+  },
+  "prompt_reference_characters": 74,
+  "caveats": [
+    "Nonempty text is not recognition accuracy.",
+    "Screen prompts are not manually transcribed ground truth.",
+    "One cloud run per condition; results can vary.",
+    "Energy removed includes intended noise/plosive suppression; no clean reference used to quantify artifacts."
+  ],
+  "cloud_authorization": "User explicitly approved these 24 gain variants before this run."
+}

@@ -1,0 +1,129 @@
+[
+  {
+    "id": "replace_facts",
+    "phase": "edit",
+    "category": "增删替换",
+    "source": "负责人是陈宁，周三开会，预算500元。",
+    "utterance": "负责人改成李明，周三改周五，预算改成800元",
+    "expected": "负责人是李明，周五开会，预算800元。"
+  },
+  {
+    "id": "expand_fiction",
+    "phase": "edit",
+    "category": "扩写",
+    "source": "小猫推开了门。",
+    "utterance": "把这句话扩写成80到100字的小故事，可以虚构情节，要有开头和结尾",
+    "changed": true,
+    "min_chars": 80,
+    "max_chars": 100,
+    "must_include": [
+      "小猫"
+    ],
+    "review": "用户明确允许虚构，应产生连贯的小故事；不能因事实保护规则拒绝扩写。"
+  },
+  {
+    "id": "spelling_inline",
+    "phase": "edit",
+    "category": "口述纠错",
+    "source": "我们用派森处理数据。",
+    "utterance": "那个编程语言拼作 p y t h o n，首字母大写",
+    "expected": "我们用Python处理数据。"
+  },
+  {
+    "phase": "dictation",
+    "category": "听写整理",
+    "id": "dictation_fillers",
+    "utterance": "嗯那个我我今天已经把报告发出去了，然后明天再跟进一下。",
+    "must_include": [
+      "今天",
+      "报告",
+      "明天"
+    ],
+    "forbidden": [
+      "嗯",
+      "我我"
+    ],
+    "review": "整理口吃和填充词，保留今天已发报告、明天跟进。"
+  },
+  {
+    "phase": "dictation",
+    "category": "听写整理",
+    "id": "dictation_question",
+    "utterance": "你明天下午三点有时间开会吗？",
+    "must_include": [
+      "明天",
+      "三点"
+    ],
+    "review": "仍是向对方询问开会时间，不能替对方回答。"
+  },
+  {
+    "id": "expand_weekday_holdout",
+    "phase": "edit",
+    "category": "扩写",
+    "source": "书画展本周四开放，仅对校内师生免费。",
+    "utterance": "扩写为80字左右的通知，不补原文没有的信息",
+    "changed": true,
+    "min_chars": 64,
+    "max_chars": 96,
+    "must_include": [
+      "本周四",
+      "免费"
+    ],
+    "forbidden": [
+      "每周",
+      "预约",
+      "上午",
+      "下午",
+      "家长"
+    ],
+    "review": "保留仅校内师生免费，不新增周期、地点、报名条件或具体时段；事实优先于凑字数。"
+  },
+  {
+    "id": "expand_status_holdout",
+    "phase": "edit",
+    "category": "扩写",
+    "source": "图书馆今天暂停借书，阅览区正常开放。",
+    "utterance": "扩写成80字左右的通知，不虚构原因或其他安排",
+    "changed": true,
+    "min_chars": 64,
+    "max_chars": 96,
+    "must_include": [
+      "今天",
+      "阅览区"
+    ],
+    "forbidden": [
+      "维修",
+      "盘点",
+      "明天",
+      "恢复",
+      "预约"
+    ],
+    "review": "只保留今天暂停借书、阅览区正常开放，不推测原因、恢复时间或要求；事实优先于字数。"
+  },
+  {
+    "id": "dictation_nested_report",
+    "phase": "dictation",
+    "category": "听写整理",
+    "utterance": "妈妈说老师让我们明天带上画笔。",
+    "must_include": [
+      "妈妈",
+      "老师",
+      "明天",
+      "画笔"
+    ],
+    "review": "保留妈妈转述老师要求的双层关系，不直接让听者带画笔。"
+  },
+  {
+    "id": "dictation_named_report",
+    "phase": "dictation",
+    "category": "听写整理",
+    "utterance": "李明提醒我别忘了给客户回电话。",
+    "must_include": [
+      "李明",
+      "我",
+      "客户",
+      "电话"
+    ],
+    "review": "保留李明提醒我的转述关系，不变成直接提醒客户或听者的指令。"
+  }
+]

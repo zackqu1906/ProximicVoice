@@ -1,0 +1,492 @@
+{
+  "method": "Assistant semantic review of all complete outputs; not a second model judge; automatic assertions retained separately.",
+  "reports": {
+    "broad_results.json": {
+      "results": [
+        {
+          "id": "insert_start",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "insert_middle",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "insert_end",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "delete_sentence",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "delete_phrase",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "clear_all",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "replace_facts",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "replace_first",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "replace_preserve_layout",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "replace_all",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "numbered_list",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "bullet_list",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "reorder_sentences",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "markdown_table",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "paragraph_split",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "translate_day",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "保留周五当天和不能保证，末尾cannot guarantee略生硬，不算意义错误。",
+          "automatic_passed": true
+        },
+        {
+          "id": "translate_negation",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "translate_scope",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "translate_preserve_code",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "expand_no_invention",
+          "trial": 1,
+          "verdict": "fail",
+          "reason": "新增梳理当前进展等会议议程，违反不编造具体安排。",
+          "automatic_passed": true
+        },
+        {
+          "id": "expand_known_facts",
+          "trial": 1,
+          "verdict": "fail",
+          "reason": "周六开放变为每周六开放，新增周期；也补了归还原位要求。",
+          "automatic_passed": true
+        },
+        {
+          "id": "expand_fiction",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "shorten_budget",
+          "trial": 1,
+          "verdict": "warning",
+          "reason": "保留了预算未批和时间未定这两项明确重点，但省略最快可能周五；字面检查比用户指令更严格。",
+          "automatic_passed": false
+        },
+        {
+          "id": "extract_actions",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "shorten_progress",
+          "trial": 1,
+          "verdict": "fail",
+          "reason": "遗漏预计周三开始测试，保留日期并不需要突破35字上限。",
+          "automatic_passed": false
+        },
+        {
+          "id": "negative_correction",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "explained_homophone",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "spelling_inline",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "surname",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "spelling_separator",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "short_correction",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "spelling_case",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "spelling_no_match",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "already_correct",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "quoted_instruction",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "ambiguous_repeated",
+          "trial": 1,
+          "verdict": "fail",
+          "reason": "未指定哪一处，仍将两个界面都改成街面。",
+          "automatic_passed": false
+        },
+        {
+          "id": "route_delete",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_translation",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_expand",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_list",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_explained",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_spelling",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_statement",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_question",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "long_local_edit",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "最终1535字符逐字正确；片段抄错数量被拒绝，等待全文约10.19秒。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_quote",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_literal",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_self_intro",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "route_short_word",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "逐字/分类结果一致。",
+          "automatic_passed": true
+        },
+        {
+          "id": "dictation_fillers",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "dictation_question",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "dictation_quote",
+          "trial": 1,
+          "verdict": "fail",
+          "reason": "删除他说，将转述变为直接指令形式。",
+          "automatic_passed": false
+        },
+        {
+          "id": "dictation_facts",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "dictation_self_intro",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        },
+        {
+          "id": "dictation_no_answer",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "完整输出保留要求的内容、范围和含义。",
+          "automatic_passed": true
+        }
+      ],
+      "counts": {
+        "pass": 49,
+        "fail": 5,
+        "warning": 1
+      }
+    },
+    "followup_results.json": {
+      "results": [
+        {
+          "id": "expand_no_invention",
+          "trial": 1,
+          "verdict": "fail",
+          "reason": "新增与会人员需提前准备材料。",
+          "automatic_passed": true
+        },
+        {
+          "id": "expand_known_facts",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "保持周六开放、免费和现场归还；一般邀请语可接受。",
+          "automatic_passed": true
+        },
+        {
+          "id": "shorten_budget",
+          "trial": 1,
+          "verdict": "warning",
+          "reason": "保留了预算未批和时间未定这两项明确重点，但省略最快可能周五；字面检查比用户指令更严格。",
+          "automatic_passed": false
+        },
+        {
+          "id": "shorten_progress",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "保留完成开发、周三待启动及等待李明确认。",
+          "automatic_passed": true
+        },
+        {
+          "id": "dictation_quote",
+          "trial": 1,
+          "verdict": "fail",
+          "reason": "删除他说，将转述变为直接指令形式。",
+          "automatic_passed": false
+        },
+        {
+          "id": "expand_no_invention",
+          "trial": 2,
+          "verdict": "fail",
+          "reason": "新增参会准备建议，且仅51字符未达约80字范围。",
+          "automatic_passed": false
+        },
+        {
+          "id": "expand_known_facts",
+          "trial": 2,
+          "verdict": "fail",
+          "reason": "再次把周六开放改为每周六开放，并新增保持环境整洁要求。",
+          "automatic_passed": true
+        },
+        {
+          "id": "shorten_progress",
+          "trial": 2,
+          "verdict": "pass",
+          "reason": "保留完成开发、周三待启动及等待李明确认。",
+          "automatic_passed": true
+        },
+        {
+          "id": "shorten_budget",
+          "trial": 2,
+          "verdict": "warning",
+          "reason": "保留了预算未批和时间未定这两项明确重点，但省略最快可能周五；字面检查比用户指令更严格。",
+          "automatic_passed": false
+        },
+        {
+          "id": "ambiguous_repeated",
+          "trial": 1,
+          "verdict": "pass",
+          "reason": "两路均返回原文，现有流程拒绝写入。",
+          "automatic_passed": true
+        },
+        {
+          "id": "dictation_quote",
+          "trial": 2,
+          "verdict": "fail",
+          "reason": "删除他说，将转述变为直接指令形式。",
+          "automatic_passed": false
+        },
+        {
+          "id": "ambiguous_repeated",
+          "trial": 2,
+          "verdict": "fail",
+          "reason": "未指定哪一处，仍将两个界面都改成街面。",
+          "automatic_passed": false
+        }
+      ],
+      "counts": {
+        "fail": 6,
+        "pass": 4,
+        "warning": 2
+      }
+    }
+  }
+}

@@ -1,0 +1,116 @@
+{
+  "source_session": "/Users/admin/Downloads/RingPlosiveLab/data/raw/speaker001_20260915T071439_605580Z",
+  "source_sha256": {
+    "dji_raw.wav": "033f4e46b8c5b9f0cdd012cea748215e26740b30dd39ec51742d539e65dfcd42",
+    "ring_raw.wav": "dcb642324a660ec42c902c311730d135af46f82e1fdcf908447625141957c821"
+  },
+  "channels": {
+    "dji_source_channel": 0,
+    "dji_channels_identical": false
+  },
+  "source": {
+    "dji": {
+      "sample_rate": 48000,
+      "duration_s": 100.58,
+      "rms_dbfs": -45.9672942095641,
+      "peak_dbfs": -10.365726648795931,
+      "prompt_interval_rms_dbfs": -44.59743197230292
+    },
+    "ring": {
+      "sample_rate": 16000,
+      "duration_s": 108.0,
+      "rms_dbfs": -35.79060725503388,
+      "peak_dbfs": -0.34416644547652964,
+      "prompt_interval_rms_dbfs": -35.43754106221402
+    }
+  },
+  "loudness_match": {
+    "method": "match combined prompt-interval RMS; cap result at -1 dBFS peak",
+    "unconstrained_gain_db": 9.159890910088905,
+    "maximum_gain_for_minus_1_dbfs": 9.365726648795931,
+    "applied_gain_db": 9.159890910088905,
+    "output_peak_dbfs": -1.2058357387070275,
+    "output_prompt_interval_rms_dbfs": -35.437541062214024
+  },
+  "asr_preparation": {
+    "sample_rate": 16000,
+    "channels": 1,
+    "subtype": "PCM_16",
+    "dji_resampler": "scipy.signal.resample_poly up=1 down=3",
+    "ring_resampler": "none"
+  },
+  "sentences": [
+    {
+      "sentence": 1,
+      "prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。",
+      "dji_file": "01_dji.wav",
+      "ring_file": "01_ring.wav",
+      "dji_duration_s": 7.64,
+      "ring_duration_s": 7.7
+    },
+    {
+      "sentence": 2,
+      "prompt": "白色的皮球滚到了葡萄架旁。",
+      "dji_file": "02_dji.wav",
+      "ring_file": "02_ring.wav",
+      "dji_duration_s": 6.74,
+      "ring_duration_s": 6.7
+    },
+    {
+      "sentence": 3,
+      "prompt": "葡萄皮薄不怕碰，白布包着八本笔记。",
+      "dji_file": "03_dji.wav",
+      "ring_file": "03_ring.wav",
+      "dji_duration_s": 7.56,
+      "ring_duration_s": 7.6
+    },
+    {
+      "sentence": 4,
+      "prompt": "包裹放在旁边，请帮朋友搬进房间。",
+      "dji_file": "04_dji.wav",
+      "ring_file": "04_ring.wav",
+      "dji_duration_s": 10.1,
+      "ring_duration_s": 10.2
+    },
+    {
+      "sentence": 5,
+      "prompt": "他提着袋子到大厅，哥哥看过干净的天空。",
+      "dji_file": "05_dji.wav",
+      "ring_file": "05_ring.wav",
+      "dji_duration_s": 7.2,
+      "ring_duration_s": 7.3
+    },
+    {
+      "sentence": 6,
+      "prompt": "我们停下脚步，等同伴一起出发。",
+      "dji_file": "06_dji.wav",
+      "ring_file": "06_ring.wav",
+      "dji_duration_s": 5.22,
+      "ring_duration_s": 5.2
+    },
+    {
+      "sentence": 7,
+      "prompt": "明天我们一起讨论旅行安排。",
+      "dji_file": "07_dji.wav",
+      "ring_file": "07_ring.wav",
+      "dji_duration_s": 7.54,
+      "ring_duration_s": 7.6
+    },
+    {
+      "sentence": 8,
+      "prompt": "带上水杯和地图，慢慢走过门前的小桥。",
+      "dji_file": "08_dji.wav",
+      "ring_file": "08_ring.wav",
+      "dji_duration_s": 4.84,
+      "ring_duration_s": 4.8
+    },
+    {
+      "sentence": 9,
+      "prompt": "Please put the blue paper beside the purple box.",
+      "dji_file": "09_dji.wav",
+      "ring_file": "09_ring.wav",
+      "dji_duration_s": 5.56,
+      "ring_duration_s": 5.5
+    }
+  ]
+}

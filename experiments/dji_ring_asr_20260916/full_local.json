@@ -1,0 +1,57 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-16T04:04:24+00:00",
+  "cases": {
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/full_inputs/dji_loudness_matched.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/full_inputs/dji_loudness_matched.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 100.58,
+      "results": {
+        "sensevoice": {
+          "text": "沿着河流旅房厅明天我们一起讨论旅行安排上水杯和地图慢走过门前的小桥ase beside blocks。",
+          "elapsed_s": 5.749,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "啊，义务明年五月，我们沿着河流旅行，微风吹过树林，远处的云慢慢飘过。 他提着袋子来到大厅，哥哥看着干净的天空。 跑跑的脚步，等待同伴一起出发。 白色的皮球滚到了葡萄架旁边。 跟我们一起讨论旅行安排。 带上水杯和地图，慢慢走过门前的小桥。 please put the blue paper besides purple blocks.",
+          "elapsed_s": 15.912,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/full_inputs/ring_raw.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/full_inputs/ring_raw.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 108.0,
+      "results": {
+        "sensevoice": {
+          "text": "带上水杯和地慢慢走过的小 beside。",
+          "elapsed_s": 6.151,
+          "error": null
+        },
+        "funasr_nano": {
+          "text": "明天我们约好，我们约好去河边旅行。我们除了树林，远处的树林，远处的草坪，远处的草坪，远处的草坪，远处的草坪。",
+          "elapsed_s": 8.569,
+          "error": null
+        }
+      }
+    }
+  },
+  "configuration": {
+    "backends": [
+      "sensevoice",
+      "funasr_nano"
+    ],
+    "dataset": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/full_inputs",
+    "dataset_limit": -1,
+    "recent_empty": 0,
+    "recent_recognized": 0,
+    "max_seconds": 0.0,
+    "doubao_pace": 1.0
+  },
+  "updated_at": "2026-09-16T04:05:22+00:00"
+}

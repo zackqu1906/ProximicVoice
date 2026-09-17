@@ -212,6 +212,75 @@ def test_history_distinguishes_successful_edit_that_clears_text(tmp_path):
     assert undone_entry["editSummary"] == "已清空当前文本"
 
 
+@pytest.mark.parametrize("status", ["apply_failed", "abandoned", "cancelled", "cancel", "recognized"])
+@pytest.mark.parametrize("candidate,error", [
+    ("正式文本。", None),
+    ("原文。", "大模型未找到可可靠执行的修改"),
+    ("", "没有可用结果"),
+])
+def test_unapplied_history_never_presents_model_candidate_as_applied(
+    tmp_path, status, candidate, error,
+):
+    collector = ModificationDatasetCollector(tmp_path / "dataset", "user_test")
+    collector.record_audio(1, np.zeros(160, dtype=np.float32))
+    collector.record_asr_update(_update(1, "改得更正式", final=True))
+    collector.record_text_request(TextProcessingRequest(
+        request_id=10, session_id=1, mode="edit", raw_text="改得更正式",
+        target_text="原文。", settings=LLMSettings(enabled=True, model="test"),
+    ))
+    collector.record_llm_result(
+        10, replace(_result(10, 1, candidate, "fragment"), error=error),
+    )
+    collector.record_application(
+        action=status, session_id=1, request_id=10, mode="edit",
+        final_text="原文。", error=error,
+    )
+
+    entry = collector.load_entries()[0]
+    assert entry["outcome"] == status
+    assert entry["candidateText"] == ""
+    assert entry["candidateAvailable"] is False
+    assert entry["candidateEmpty"] is False  # Failure must not look like clearing text.
+    assert entry["editSummary"] == ""
+    assert entry["text"] == "改得更正式"
+    assert entry["mode"] == "edit"  # Classification is independent of success.
+    assert entry["preferenceEligible"] is bool(candidate)
+
+    record = json.loads(Path(entry["recordPath"]).read_text())
+    assert record["llm"]["requests"][0]["candidate_text"] == candidate
+    assert record["llm"]["requests"][0]["error"] == error
+    assert record["outcome"]["final_text"] == "原文。"
+    # Existing on-disk records get the corrected projection without rewriting data.
+    reloaded = ModificationDatasetCollector(tmp_path / "dataset", "user_test")
+    assert reloaded.load_entries() == [entry]
+
+
+def test_failed_desktop_write_publishes_history_immediately(tmp_path):
+    saved = []
+    collector = ModificationDatasetCollector(
+        tmp_path / "dataset", "user_test", on_saved=saved.append,
+    )
+    collector.record_audio(1, np.zeros(160, dtype=np.float32))
+    collector.record_asr_update(_update(1, "改得更正式", final=True))
+    collector.record_text_request(TextProcessingRequest(
+        request_id=10, session_id=1, mode="edit", raw_text="改得更正式",
+        target_text="原文。", settings=LLMSettings(enabled=True, model="test"),
+    ))
+    collector.record_llm_result(10, _result(10, 1, "正式文本。", "fragment"))
+    saved.clear()
+
+    # _apply_edit_result uses feedback() when the adapter cannot verify a write.
+    collector.feedback(
+        10, "apply_failed", error="写入未通过回读校验", final_text="原文。",
+    )
+
+    assert len(saved) == 1
+    assert saved[0]["outcome"] == "apply_failed"
+    assert saved[0]["candidateAvailable"] is False
+    assert saved[0]["candidateText"] == ""
+    assert saved[0]["editSummary"] == ""
+
+
 def test_final_applied_mode_is_stable_and_undo_invalidates_training_target(
     tmp_path,
 ):

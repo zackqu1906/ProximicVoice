@@ -1,0 +1,583 @@
+{
+  "at": "2026-09-17T05:54:47.406597+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "suite": "corrections",
+  "repeat": 1,
+  "prompt_hashes": {
+    "production": {
+      "fragment": "42c62fed0db277f8b0df2d693eecc4fc8944606bb89abc43dfd5b5bdcde0619c",
+      "full": "5b883ffec8a8711e4413da7bdd3f34af3f74ddd712fb2c19460ebf52a34c9571"
+    }
+  },
+  "cases": [
+    {
+      "id": "explained_homophone",
+      "utterance": "街道的街面包的面",
+      "route": "edit",
+      "source": "这个界面还不错",
+      "expected": "这个街面还不错"
+    },
+    {
+      "id": "explained_variant",
+      "utterance": "权利的权利益的利",
+      "route": "edit",
+      "source": "这是每个人的权力。",
+      "expected": "这是每个人的权利。"
+    },
+    {
+      "id": "negative_then_positive",
+      "utterance": "不是晴天的晴，是清水的清",
+      "route": "edit",
+      "source": "这里的水很晴",
+      "expected": "这里的水很清"
+    },
+    {
+      "id": "surname_components",
+      "utterance": "姓改成木子李",
+      "route": "edit",
+      "source": "请联系黎静",
+      "expected": "请联系李静"
+    },
+    {
+      "id": "spelled_english",
+      "utterance": "那个英文单词拼作 n u m p y，全小写",
+      "route": "edit",
+      "source": "我们用 numpie 处理数组",
+      "expected": "我们用 numpy 处理数组"
+    },
+    {
+      "id": "spelled_case",
+      "utterance": "拼写是 P Y T H O N，首字母大写",
+      "route": "edit",
+      "source": "请安装 pythom",
+      "expected": "请安装 Python"
+    },
+    {
+      "id": "spelled_separator",
+      "utterance": "变量名拼写是全小写 a p i 下划线 k e y",
+      "route": "edit",
+      "source": "请填写变量 api_kay。",
+      "expected": "请填写变量 api_key。"
+    },
+    {
+      "id": "spelled_preserve_case",
+      "utterance": "拼写改为 j a v a",
+      "route": "edit",
+      "source": "请安装 Jvaa。",
+      "expected": "请安装 Java。"
+    },
+    {
+      "id": "spelled_chinese_transcription",
+      "utterance": "那个编程语言拼作 p y t h o n，首字母大写",
+      "route": "edit",
+      "source": "我们用派森处理数据。",
+      "expected": "我们用Python处理数据。"
+    },
+    {
+      "id": "ambiguous_repeated_target",
+      "utterance": "街道的街面包的面",
+      "route": "edit",
+      "source": "第一个界面不错，第二个界面也不错",
+      "expected": "第一个界面不错，第二个界面也不错"
+    },
+    {
+      "id": "explicit_last_target",
+      "utterance": "最后一个界面改成街道的街面包的面",
+      "route": "edit",
+      "source": "第一个界面不错，第二个界面也不错",
+      "expected": "第一个界面不错，第二个街面也不错"
+    },
+    {
+      "id": "already_correct",
+      "utterance": "街道的街面包的面",
+      "route": "edit",
+      "source": "这个街面还不错",
+      "expected": "这个街面还不错"
+    },
+    {
+      "id": "no_corresponding_target",
+      "utterance": "那个英文词拼作 P Y T H O N",
+      "route": "edit",
+      "source": "明天下午去公园散步",
+      "expected": "明天下午去公园散步"
+    },
+    {
+      "id": "legacy_short_correction",
+      "utterance": "识别",
+      "source": "事情效果还不错",
+      "expected": "识别效果还不错"
+    },
+    {
+      "id": "legacy_keep_adjacent_word",
+      "utterance": "新模型",
+      "source": "我们用心模型处理文本",
+      "expected": "我们用新模型处理文本"
+    },
+    {
+      "id": "explicit_all",
+      "utterance": "把所有三点改成四点",
+      "route": "edit",
+      "source": "上午三点开会，下午三点培训",
+      "expected": "上午四点开会，下午四点培训"
+    }
+  ],
+  "results": [
+    {
+      "case": "explained_variant",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这是每个人的权利。",
+      "raw_returns": [
+        "{\"original_text\": \"权力\", \"modified_text\": \"权利\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.78
+    },
+    {
+      "case": "explained_homophone",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"original_text\": \"界面\", \"modified_text\": \"街面\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.01
+    },
+    {
+      "case": "explained_homophone",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"这个街面还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.722
+    },
+    {
+      "case": "negative_then_positive",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这里的水很清",
+      "raw_returns": [
+        "{\"modified_text\": \"这里的水很清\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.668
+    },
+    {
+      "case": "negative_then_positive",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这里的水很清",
+      "raw_returns": [
+        "{\"original_text\": \"晴\", \"modified_text\": \"清\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.387
+    },
+    {
+      "case": "explained_variant",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这是每个人的权利。",
+      "raw_returns": [
+        "{\"modified_text\": \"这是每个人的权利。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.678
+    },
+    {
+      "case": "spelled_english",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我们用 numpy 处理数组",
+      "raw_returns": [
+        "{\"original_text\": \"numpie\", \"modified_text\": \"numpy\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.809
+    },
+    {
+      "case": "surname_components",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "请联系李静",
+      "raw_returns": [
+        "{\"modified_text\": \"请联系李静\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.899
+    },
+    {
+      "case": "surname_components",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "请联系李静",
+      "raw_returns": [
+        "{\"original_text\": \"黎静\", \"modified_text\": \"李静\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.066
+    },
+    {
+      "case": "spelled_case",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "请安装 Python",
+      "raw_returns": [
+        "{\"original_text\": \"pythom\", \"modified_text\": \"Python\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.216
+    },
+    {
+      "case": "spelled_english",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我们用 numpy 处理数组",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用 numpy 处理数组\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.363
+    },
+    {
+      "case": "spelled_case",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "请安装 Python",
+      "raw_returns": [
+        "{\"modified_text\": \"请安装 Python\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 3.228
+    },
+    {
+      "case": "spelled_separator",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "请填写变量 api_key。",
+      "raw_returns": [
+        "{\"original_text\": \"请填写变量 api_kay。\", \"modified_text\": \"请填写变量 api_key。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.932
+    },
+    {
+      "case": "spelled_separator",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "请填写变量 api_key。",
+      "raw_returns": [
+        "{\"modified_text\": \"请填写变量 api_key。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.058
+    },
+    {
+      "case": "spelled_preserve_case",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "请安装 Java。",
+      "raw_returns": [
+        "{\"original_text\": \"Jvaa\", \"modified_text\": \"Java\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.907
+    },
+    {
+      "case": "spelled_chinese_transcription",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我们用Python处理数据。",
+      "raw_returns": [
+        "{\"original_text\": \"派森\", \"modified_text\": \"Python\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.109
+    },
+    {
+      "case": "spelled_preserve_case",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "请安装 Java。",
+      "raw_returns": [
+        "{\"modified_text\": \"请安装 Java。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.724
+    },
+    {
+      "case": "spelled_chinese_transcription",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我们用Python处理数据。",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用Python处理数据。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.221
+    },
+    {
+      "case": "ambiguous_repeated_target",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "第一个街面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"original_text\": \"界面\", \"modified_text\": \"街面\"}"
+      ],
+      "failures": [
+        "exact_text"
+      ],
+      "checks_passed": false,
+      "review_required": false,
+      "elapsed_s": 2.425
+    },
+    {
+      "case": "explicit_last_target",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"modified_text\": \"第一个界面不错，第二个街面也不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.873
+    },
+    {
+      "case": "explicit_last_target",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个街面也不错",
+      "raw_returns": [
+        "{\"original_text\": \"第二个界面\", \"modified_text\": \"第二个街面\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 3.579
+    },
+    {
+      "case": "already_correct",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"original_text\": \"这个街面还不错\", \"modified_text\": \"这个街面还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 4.727
+    },
+    {
+      "case": "no_corresponding_target",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"original_text\": \"明天下午去公园散步\", \"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.229
+    },
+    {
+      "case": "already_correct",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "这个街面还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"这个街面还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 7.862
+    },
+    {
+      "case": "ambiguous_repeated_target",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "第一个界面不错，第二个界面也不错",
+      "raw_returns": [
+        "{\"modified_text\": \"第一个界面不错，第二个界面也不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 14.712
+    },
+    {
+      "case": "legacy_short_correction",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "识别效果还不错",
+      "raw_returns": [
+        "{\"original_text\": \"事情\", \"modified_text\": \"识别\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.742
+    },
+    {
+      "case": "no_corresponding_target",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "明天下午去公园散步",
+      "raw_returns": [
+        "{\"modified_text\": \"明天下午去公园散步\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 3.637
+    },
+    {
+      "case": "legacy_short_correction",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "识别效果还不错",
+      "raw_returns": [
+        "{\"modified_text\": \"识别效果还不错\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.685
+    },
+    {
+      "case": "legacy_keep_adjacent_word",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "我们用新模型处理文本",
+      "raw_returns": [
+        "{\"original_text\": \"心模型\", \"modified_text\": \"新模型\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.14
+    },
+    {
+      "case": "legacy_keep_adjacent_word",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "我们用新模型处理文本",
+      "raw_returns": [
+        "{\"modified_text\": \"我们用新模型处理文本\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 2.473
+    },
+    {
+      "case": "explicit_all",
+      "variant": "production",
+      "branch": "fragment",
+      "trial": 1,
+      "final_text": "上午四点开会，下午四点培训",
+      "raw_returns": [
+        "{\"original_text\": \"三点\", \"modified_text\": \"四点\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.959
+    },
+    {
+      "case": "explicit_all",
+      "variant": "production",
+      "branch": "full",
+      "trial": 1,
+      "final_text": "上午四点开会，下午四点培训",
+      "raw_returns": [
+        "{\"modified_text\": \"上午四点开会，下午四点培训\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": false,
+      "elapsed_s": 1.992
+    }
+  ],
+  "summary": {
+    "production": {
+      "passed": 31,
+      "total": 32,
+      "median_s": 2.225
+    }
+  }
+}

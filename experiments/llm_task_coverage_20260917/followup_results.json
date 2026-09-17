@@ -1,0 +1,579 @@
+{
+  "at": "2026-09-17T06:10:09.335039+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "provider": "volcengine",
+  "repeat": 2,
+  "cases": [
+    {
+      "id": "expand_no_invention",
+      "phase": "edit",
+      "category": "扩写",
+      "source": "周五开会讨论下季度的计划。",
+      "utterance": "扩写到大约80个字，别编造具体安排",
+      "changed": true,
+      "min_chars": 64,
+      "max_chars": 96,
+      "must_include": [
+        "周五"
+      ],
+      "any_groups": [
+        [
+          "下季度",
+          "下个季度",
+          "下一季度"
+        ]
+      ],
+      "review": "只展开原主题，不编造地点、人员、准备要求、资源安排或已决定的步骤；字数按非空白字符含标点计64～96。"
+    },
+    {
+      "id": "expand_known_facts",
+      "phase": "edit",
+      "category": "扩写",
+      "source": "社区图书角周六开放，居民可免费阅读，书籍需在现场归还。",
+      "utterance": "扩写成100字左右的通知，只使用已有信息，不补时间段、地址或联系方式",
+      "changed": true,
+      "min_chars": 80,
+      "max_chars": 120,
+      "must_include": [
+        "周六",
+        "免费",
+        "归还"
+      ],
+      "forbidden": [
+        "上午",
+        "下午",
+        "电话",
+        "预约",
+        "押金"
+      ],
+      "review": "通知保留周六开放、居民免费阅读、现场归还，不新增服务或要求。"
+    },
+    {
+      "id": "shorten_progress",
+      "phase": "edit",
+      "category": "缩写与摘要",
+      "source": "今天完成了接口开发，测试还没有开始，预计周三开始测试，但具体安排要等李明确认。",
+      "utterance": "压缩到35个字以内，保留进度和不确定性",
+      "changed": true,
+      "max_chars": 35,
+      "must_include": [
+        "李明",
+        "周三"
+      ],
+      "review": "已完成开发、尚未开始测试、预计周三且需李明确认。"
+    },
+    {
+      "id": "shorten_budget",
+      "phase": "edit",
+      "category": "缩写与摘要",
+      "source": "项目预算暂时估计是6000元，目前还没有得到审批，最快可能在周五得到答复。",
+      "utterance": "缩成25字以内，保留预算未批和答复时间不确定这两个重点",
+      "changed": true,
+      "max_chars": 25,
+      "must_include": [
+        "周五"
+      ],
+      "any_groups": [
+        [
+          "未",
+          "尚未"
+        ],
+        [
+          "可能",
+          "预计",
+          "最快"
+        ]
+      ],
+      "review": "未批准，不把周五答复写成确定承诺；预算金额可省略，若出现必须是6000元。"
+    },
+    {
+      "id": "ambiguous_repeated",
+      "phase": "edit",
+      "category": "歧义与边界",
+      "source": "第一个界面不错，第二个界面也不错。",
+      "utterance": "街道的街，面包的面",
+      "expected": "第一个界面不错，第二个界面也不错。"
+    },
+    {
+      "phase": "dictation",
+      "category": "听写整理",
+      "id": "dictation_quote",
+      "utterance": "他说把第二段删掉就可以了。",
+      "must_include": [
+        "他说",
+        "第二段"
+      ],
+      "review": "保留转述内容，不执行删除命令。"
+    }
+  ],
+  "results": [
+    {
+      "id": "expand_no_invention",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"modified_text\": \"周五将召开会议，讨论下一季度的工作计划。与会人员需提前准备相关材料，围绕目标与重点方向进行交流，形成初步共识，为后续推进奠定基础。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"计划在周五召开会议，就下一季度的工作方向与重点任务展开讨论。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "计划在周五召开会议，就下一季度的工作方向与重点任务展开讨论。",
+          "latency_s": 1.9255915409994486,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"周五将召开会议，讨论下一季度的工作计划。与会人员需提前准备相关材料，围绕目标与重点方向进行交流，形成初步共识，为后续推进奠定基础。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "周五将召开会议，讨论下一季度的工作计划。与会人员需提前准备相关材料，围绕目标与重点方向进行交流，形成初步共识，为后续推进奠定基础。",
+          "latency_s": 1.865894542001115,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "status": "candidate",
+      "actual": "周五将召开会议，讨论下一季度的工作计划。与会人员需提前准备相关材料，围绕目标与重点方向进行交流，形成初步共识，为后续推进奠定基础。",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 1.926
+    },
+    {
+      "id": "expand_known_facts",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"社区图书角周六开放，居民可免费阅读，书籍需在现场归还。\", \"modified_text\": \"通知：社区图书角将于周六开放，届时欢迎各位居民前来免费阅读。图书角提供各类书籍供大家阅览，为方便其他居民借阅，所有书籍需在现场归还，不可带出图书角。周六来社区图书角享受阅读时光吧！\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"社区图书角周六开放，居民可免费阅读，书籍需在现场归还。\", \"modified_text\": \"通知：社区图书角将于周六开放，届时欢迎各位居民前来免费阅读。图书角提供各类书籍供大家阅览，为方便其他居民借阅，所有书籍需在现场归还，不可带出图书角。周六来社区图书角享受阅读时光吧！\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "通知：社区图书角将于周六开放，届时欢迎各位居民前来免费阅读。图书角提供各类书籍供大家阅览，为方便其他居民借阅，所有书籍需在现场归还，不可带出图书角。周六来社区图书角享受阅读时光吧！",
+          "latency_s": 2.385800707999806,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"通知：社区图书角将于每周六对外开放，欢迎广大居民前来免费阅读各类书籍。为方便更多读者借阅使用，所有书籍均需在现场阅读完毕后归还原位，请勿携带离开。希望大家共同爱护图书，营造良好的阅读环境。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "通知：社区图书角将于每周六对外开放，欢迎广大居民前来免费阅读各类书籍。为方便更多读者借阅使用，所有书籍均需在现场阅读完毕后归还原位，请勿携带离开。希望大家共同爱护图书，营造良好的阅读环境。",
+          "latency_s": 2.48762570800136,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "通知：社区图书角将于周六开放，届时欢迎各位居民前来免费阅读。图书角提供各类书籍供大家阅览，为方便其他居民借阅，所有书籍需在现场归还，不可带出图书角。周六来社区图书角享受阅读时光吧！",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 2.489
+    },
+    {
+      "id": "shorten_budget",
+      "phase": "edit",
+      "category": "缩写与摘要",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"modified_text\": \"预算暂估6000元未批，答复时间未定。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"项目预算暂时估计是6000元，目前还没有得到审批，最快可能在周五得到答复。\", \"modified_text\": \"项目预算6000元未审批，最快可能周五有答复。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "项目预算6000元未审批，最快可能周五有答复。",
+          "latency_s": 3.077973249999559,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"预算暂估6000元未批，答复时间未定。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "预算暂估6000元未批，答复时间未定。",
+          "latency_s": 1.8199136250004813,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "status": "candidate",
+      "actual": "预算暂估6000元未批，答复时间未定。",
+      "failures": [
+        "missing:周五",
+        "missing_any:可能/预计/最快"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 3.078
+    },
+    {
+      "id": "shorten_progress",
+      "phase": "edit",
+      "category": "缩写与摘要",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"今天完成了接口开发，测试还没有开始，预计周三开始测试，但具体安排要等李明确认。\", \"modified_text\": \"接口开发已完成，测试待周三启动，时间待李明确认。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"今天完成了接口开发，测试还没有开始，预计周三开始测试，但具体安排要等李明确认。\", \"modified_text\": \"接口开发已完成，测试待周三启动，时间待李明确认。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "接口开发已完成，测试待周三启动，时间待李明确认。",
+          "latency_s": 1.9427741670006071,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"接口开发已完成，测试未开始，预计周三启动，待李明确认。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "接口开发已完成，测试未开始，预计周三启动，待李明确认。",
+          "latency_s": 3.7340752500003873,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "接口开发已完成，测试待周三启动，时间待李明确认。",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 3.735
+    },
+    {
+      "id": "dictation_quote",
+      "phase": "dictation",
+      "category": "听写整理",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "把第二段删掉就可以了。"
+      ],
+      "status": "returned",
+      "actual": "把第二段删掉就可以了。",
+      "failures": [
+        "missing:他说"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 0.841
+    },
+    {
+      "id": "expand_no_invention",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 2,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"周五计划召开会议，就下季度的整体目标和重点工作进行讨论，参会人员可提前准备相关思路，以便会上充分交流。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"周五计划召开会议，就下季度的整体目标和重点工作进行讨论，参会人员可提前准备相关思路，以便会上充分交流。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "周五计划召开会议，就下季度的整体目标和重点工作进行讨论，参会人员可提前准备相关思路，以便会上充分交流。",
+          "latency_s": 2.131912625000041,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"周五将开会，讨论下一季度的计划安排。会议主要围绕下季度的目标、重点任务和资源配置等方面进行探讨，以便提前做好准备工作，确保各项工作顺利推进。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "周五将开会，讨论下一季度的计划安排。会议主要围绕下季度的目标、重点任务和资源配置等方面进行探讨，以便提前做好准备工作，确保各项工作顺利推进。",
+          "latency_s": 2.206549083999562,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "周五计划召开会议，就下季度的整体目标和重点工作进行讨论，参会人员可提前准备相关思路，以便会上充分交流。",
+      "failures": [
+        "too_short:51<64"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 2.208
+    },
+    {
+      "id": "expand_known_facts",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 2,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"社区图书角周六开放，居民可免费阅读，书籍需在现场归还。\", \"modified_text\": \"通知\\n\\n各位居民：\\n\\n本社区图书角将于每周六开放，欢迎广大居民前来免费阅读各类书籍。为方便更多读者使用，所借阅的书籍请在现场归还，暂不外借。请大家在阅读时爱护图书，保持环境整洁，共同营造良好的阅读氛围。期待您的到来！\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"社区图书角周六开放，居民可免费阅读，书籍需在现场归还。\", \"modified_text\": \"通知\\n\\n各位居民：\\n\\n本社区图书角将于每周六开放，欢迎广大居民前来免费阅读各类书籍。为方便更多读者使用，所借阅的书籍请在现场归还，暂不外借。请大家在阅读时爱护图书，保持环境整洁，共同营造良好的阅读氛围。期待您的到来！\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "通知\n\n各位居民：\n\n本社区图书角将于每周六开放，欢迎广大居民前来免费阅读各类书籍。为方便更多读者使用，所借阅的书籍请在现场归还，暂不外借。请大家在阅读时爱护图书，保持环境整洁，共同营造良好的阅读氛围。期待您的到来！",
+          "latency_s": 2.422301582999353,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"通知：社区图书角将于周六开放，欢迎居民前来免费阅读。图书角提供多种书籍供大家现场阅读，阅读完毕后请将书籍归还原位，以便其他居民继续使用。请大家共同维护阅读环境，遵守图书角管理规定，感谢您的配合与支持。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "通知：社区图书角将于周六开放，欢迎居民前来免费阅读。图书角提供多种书籍供大家现场阅读，阅读完毕后请将书籍归还原位，以便其他居民继续使用。请大家共同维护阅读环境，遵守图书角管理规定，感谢您的配合与支持。",
+          "latency_s": 2.582345458000418,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "通知\n\n各位居民：\n\n本社区图书角将于每周六开放，欢迎广大居民前来免费阅读各类书籍。为方便更多读者使用，所借阅的书籍请在现场归还，暂不外借。请大家在阅读时爱护图书，保持环境整洁，共同营造良好的阅读氛围。期待您的到来！",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 2.583
+    },
+    {
+      "id": "shorten_progress",
+      "phase": "edit",
+      "category": "缩写与摘要",
+      "trial": 2,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"今天完成了接口开发，测试还没有开始，预计周三开始测试，但具体安排要等李明确认。\", \"modified_text\": \"接口开发已完成，测试待周三启动，具体等李明确认。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"今天完成了接口开发，测试还没有开始，预计周三开始测试，但具体安排要等李明确认。\", \"modified_text\": \"接口开发已完成，测试待周三启动，具体等李明确认。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "接口开发已完成，测试待周三启动，具体等李明确认。",
+          "latency_s": 1.9314014170013252,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"接口开发已完成，测试待李明确认后安排。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "接口开发已完成，测试待李明确认后安排。",
+          "latency_s": 2.164255084000615,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "接口开发已完成，测试待周三启动，具体等李明确认。",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 2.165
+    },
+    {
+      "id": "shorten_budget",
+      "phase": "edit",
+      "category": "缩写与摘要",
+      "trial": 2,
+      "review_required": true,
+      "raw_returns": [
+        "{\"modified_text\": \"预算未批，答复时间未定。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"项目预算暂时估计是6000元，目前还没有得到审批，最快可能在周五得到答复。\", \"modified_text\": \"项目预算暂估6000元，尚未审批，最快周五可能答复。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "项目预算暂估6000元，尚未审批，最快周五可能答复。",
+          "latency_s": 1.7277149999990797,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"预算未批，答复时间未定。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "预算未批，答复时间未定。",
+          "latency_s": 1.509999666001022,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "status": "candidate",
+      "actual": "预算未批，答复时间未定。",
+      "failures": [
+        "missing:周五",
+        "missing_any:可能/预计/最快"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 1.728
+    },
+    {
+      "id": "ambiguous_repeated",
+      "phase": "edit",
+      "category": "歧义与边界",
+      "trial": 1,
+      "review_required": false,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"第一个界面不错，第二个界面也不错。\", \"modified_text\": \"第一个界面不错，第二个界面也不错。\"}"
+          ],
+          "validation": "invalid",
+          "candidate_text": "",
+          "latency_s": 10.086377542000264,
+          "error": "大模型未找到可可靠执行的修改",
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"第一个界面不错，第二个界面也不错。\"}"
+          ],
+          "validation": "invalid",
+          "candidate_text": "",
+          "latency_s": 5.092553832999329,
+          "error": "大模型未找到可可靠执行的修改",
+          "won": false
+        }
+      ],
+      "status": "unchanged_declined",
+      "raw_returns": [
+        "{\"original_text\": \"第一个界面不错，第二个界面也不错。\", \"modified_text\": \"第一个界面不错，第二个界面也不错。\"}",
+        "{\"modified_text\": \"第一个界面不错，第二个界面也不错。\"}"
+      ],
+      "actual": "第一个界面不错，第二个界面也不错。",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 10.087
+    },
+    {
+      "id": "dictation_quote",
+      "phase": "dictation",
+      "category": "听写整理",
+      "trial": 2,
+      "review_required": true,
+      "raw_returns": [
+        "把第二段删掉就可以了。"
+      ],
+      "status": "returned",
+      "actual": "把第二段删掉就可以了。",
+      "failures": [
+        "missing:他说"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 0.957
+    },
+    {
+      "id": "ambiguous_repeated",
+      "phase": "edit",
+      "category": "歧义与边界",
+      "trial": 2,
+      "review_required": false,
+      "raw_returns": [
+        "{\"modified_text\": \"第一个街面不错，第二个街面也不错。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"第一个界面不错，第二个界面也不错。\", \"modified_text\": \"第一个界面不错，第二个界面也不错。\"}"
+          ],
+          "validation": "invalid",
+          "candidate_text": "",
+          "latency_s": 17.18882712499908,
+          "error": "大模型未找到可可靠执行的修改",
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"第一个街面不错，第二个街面也不错。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "第一个街面不错，第二个街面也不错。",
+          "latency_s": 2.1072605419994943,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "status": "candidate",
+      "actual": "第一个街面不错，第二个街面也不错。",
+      "failures": [
+        "exact_text"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 17.189
+    }
+  ],
+  "prompt_sha256": {
+    "EDIT_FRAGMENT_PROMPT": "42c62fed0db277f8b0df2d693eecc4fc8944606bb89abc43dfd5b5bdcde0619c",
+    "EDIT_FULL_TEXT_PROMPT": "5b883ffec8a8711e4413da7bdd3f34af3f74ddd712fb2c19460ebf52a34c9571",
+    "DICTATION_PROMPT": "76b9fd35e169d0015bf9e45cdeaaabda1eb1f690aa8a3827b826604c2e884e3d",
+    "INPUT_MODE_ROUTER_PROMPT": "68153d23d3a64f2418519d7081462574e48d23336549a2ef5beffbb46c755f95"
+  },
+  "summary": {
+    "扩写": {
+      "passed": 3,
+      "total": 4
+    },
+    "缩写与摘要": {
+      "passed": 2,
+      "total": 4
+    },
+    "歧义与边界": {
+      "passed": 1,
+      "total": 2
+    },
+    "听写整理": {
+      "passed": 0,
+      "total": 2
+    }
+  }
+}

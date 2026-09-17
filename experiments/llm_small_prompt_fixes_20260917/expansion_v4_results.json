@@ -1,0 +1,230 @@
+{
+  "at": "2026-09-17T06:23:56.858370+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "provider": "volcengine",
+  "repeat": 2,
+  "cases": [
+    {
+      "id": "expand_no_invention",
+      "phase": "edit",
+      "category": "扩写",
+      "source": "周五开会讨论下季度的计划。",
+      "utterance": "扩写到大约80个字，别编造具体安排",
+      "changed": true,
+      "min_chars": 64,
+      "max_chars": 96,
+      "must_include": [
+        "周五"
+      ],
+      "any_groups": [
+        [
+          "下季度",
+          "下个季度",
+          "下一季度"
+        ]
+      ],
+      "review": "只展开原主题，不编造地点、人员、准备要求、资源安排或已决定的步骤；字数按非空白字符含标点计64～96。"
+    },
+    {
+      "id": "expand_known_facts",
+      "phase": "edit",
+      "category": "扩写",
+      "source": "社区图书角周六开放，居民可免费阅读，书籍需在现场归还。",
+      "utterance": "扩写成100字左右的通知，只使用已有信息，不补时间段、地址或联系方式",
+      "changed": true,
+      "min_chars": 80,
+      "max_chars": 120,
+      "must_include": [
+        "周六",
+        "免费",
+        "归还"
+      ],
+      "forbidden": [
+        "上午",
+        "下午",
+        "电话",
+        "预约",
+        "押金"
+      ],
+      "review": "通知保留周六开放、居民免费阅读、现场归还，不新增服务或要求。"
+    }
+  ],
+  "results": [
+    {
+      "id": "expand_no_invention",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"modified_text\": \"计划在周五召开会议，集中讨论下一季度的工作规划与安排。各方将围绕重点任务和目标进行交流，明确后续推进方向。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"本周五将组织会议，重点围绕下一季度的各项工作计划进行集中讨论，梳理关键目标和方向，确保后续安排更加有序和高效。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "本周五将组织会议，重点围绕下一季度的各项工作计划进行集中讨论，梳理关键目标和方向，确保后续安排更加有序和高效。",
+          "latency_s": 3.585881540999253,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"计划在周五召开会议，集中讨论下一季度的工作规划与安排。各方将围绕重点任务和目标进行交流，明确后续推进方向。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "计划在周五召开会议，集中讨论下一季度的工作规划与安排。各方将围绕重点任务和目标进行交流，明确后续推进方向。",
+          "latency_s": 1.8239411670001573,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "status": "candidate",
+      "actual": "计划在周五召开会议，集中讨论下一季度的工作规划与安排。各方将围绕重点任务和目标进行交流，明确后续推进方向。",
+      "failures": [
+        "too_short:53<64"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 3.587
+    },
+    {
+      "id": "expand_known_facts",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 1,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"社区图书角周六开放，居民可免费阅读，书籍需在现场归还。\", \"modified_text\": \"社区图书角将于周六开放，届时居民可前来免费阅读各类书籍。为方便更多读者使用，所有书籍均需在现场归还，暂不外借。图书角旨在为社区居民提供便捷的阅读空间，欢迎广大居民周六前来享受阅读时光。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"社区图书角周六开放，居民可免费阅读，书籍需在现场归还。\", \"modified_text\": \"社区图书角将于周六开放，届时居民可前来免费阅读各类书籍。为方便更多读者使用，所有书籍均需在现场归还，暂不外借。图书角旨在为社区居民提供便捷的阅读空间，欢迎广大居民周六前来享受阅读时光。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "社区图书角将于周六开放，届时居民可前来免费阅读各类书籍。为方便更多读者使用，所有书籍均需在现场归还，暂不外借。图书角旨在为社区居民提供便捷的阅读空间，欢迎广大居民周六前来享受阅读时光。",
+          "latency_s": 2.1615744170012476,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"社区图书角将于每周六对外开放，免费供居民阅读。现场提供各类书籍，居民可自由取阅，享受安静的阅读环境。所有书籍均需在现场归还，不可带离，以便更多居民共享阅读资源。欢迎广大居民前来体验。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "社区图书角将于每周六对外开放，免费供居民阅读。现场提供各类书籍，居民可自由取阅，享受安静的阅读环境。所有书籍均需在现场归还，不可带离，以便更多居民共享阅读资源。欢迎广大居民前来体验。",
+          "latency_s": 5.85405745800017,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "社区图书角将于周六开放，届时居民可前来免费阅读各类书籍。为方便更多读者使用，所有书籍均需在现场归还，暂不外借。图书角旨在为社区居民提供便捷的阅读空间，欢迎广大居民周六前来享受阅读时光。",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 5.855
+    },
+    {
+      "id": "expand_no_invention",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 2,
+      "review_required": true,
+      "raw_returns": [
+        "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"计划在周五安排一次会议，用于讨论下个季度的相关工作规划。会议将聚焦于目标的梳理与方向的明确，为后续执行做好前期准备。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"周五开会讨论下季度的计划。\", \"modified_text\": \"计划在周五安排一次会议，用于讨论下个季度的相关工作规划。会议将聚焦于目标的梳理与方向的明确，为后续执行做好前期准备。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "计划在周五安排一次会议，用于讨论下个季度的相关工作规划。会议将聚焦于目标的梳理与方向的明确，为后续执行做好前期准备。",
+          "latency_s": 2.5771822500009876,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"计划在周五组织一次会议，大家共同讨论下个季度的各项工作安排。届时需要梳理目前的进展，并明确后续的方向和重点，以便更好地推进工作。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "计划在周五组织一次会议，大家共同讨论下个季度的各项工作安排。届时需要梳理目前的进展，并明确后续的方向和重点，以便更好地推进工作。",
+          "latency_s": 2.6142445000004955,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "status": "candidate",
+      "actual": "计划在周五安排一次会议，用于讨论下个季度的相关工作规划。会议将聚焦于目标的梳理与方向的明确，为后续执行做好前期准备。",
+      "failures": [
+        "too_short:58<64"
+      ],
+      "checks_passed": false,
+      "elapsed_s": 2.616
+    },
+    {
+      "id": "expand_known_facts",
+      "phase": "edit",
+      "category": "扩写",
+      "trial": 2,
+      "review_required": true,
+      "raw_returns": [
+        "{\"modified_text\": \"通知：社区图书角于周六开放，欢迎各位居民前来免费阅读。图书角提供多种书籍供大家阅览，无需任何费用。为方便管理，所借书籍需在现场归还，暂不外借。请各位居民遵守规定，共同维护良好的阅读环境。欢迎广大居民周六光临社区图书角，享受阅读的乐趣。\"}"
+      ],
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"社区图书角周六开放，居民可免费阅读，书籍需在现场归还。\", \"modified_text\": \"社区图书角于周六开放，面向全体居民提供免费阅读服务。开放期间，居民可自由取阅图书，享受安静的阅读环境。请注意，所有书籍需在现场阅读和归还，不可带离图书角。图书角旨在促进社区阅读氛围，欢迎广大居民踊跃前来，在书香中度过充实的一天。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "社区图书角于周六开放，面向全体居民提供免费阅读服务。开放期间，居民可自由取阅图书，享受安静的阅读环境。请注意，所有书籍需在现场阅读和归还，不可带离图书角。图书角旨在促进社区阅读氛围，欢迎广大居民踊跃前来，在书香中度过充实的一天。",
+          "latency_s": 3.031453749999855,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"通知：社区图书角于周六开放，欢迎各位居民前来免费阅读。图书角提供多种书籍供大家阅览，无需任何费用。为方便管理，所借书籍需在现场归还，暂不外借。请各位居民遵守规定，共同维护良好的阅读环境。欢迎广大居民周六光临社区图书角，享受阅读的乐趣。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "通知：社区图书角于周六开放，欢迎各位居民前来免费阅读。图书角提供多种书籍供大家阅览，无需任何费用。为方便管理，所借书籍需在现场归还，暂不外借。请各位居民遵守规定，共同维护良好的阅读环境。欢迎广大居民周六光临社区图书角，享受阅读的乐趣。",
+          "latency_s": 2.7687914999987697,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "status": "candidate",
+      "actual": "通知：社区图书角于周六开放，欢迎各位居民前来免费阅读。图书角提供多种书籍供大家阅览，无需任何费用。为方便管理，所借书籍需在现场归还，暂不外借。请各位居民遵守规定，共同维护良好的阅读环境。欢迎广大居民周六光临社区图书角，享受阅读的乐趣。",
+      "failures": [],
+      "checks_passed": true,
+      "elapsed_s": 3.032
+    }
+  ],
+  "prompt_sha256": {
+    "EDIT_FRAGMENT_PROMPT": "a1bf384cc66cae92c61fb99d188269181ca7b3474041e48ae41f39ae587f7f0a",
+    "EDIT_FULL_TEXT_PROMPT": "91c4da309738db38dab393b427d864f5a4c8c321c573064d38600030a00974b5",
+    "DICTATION_PROMPT": "e1dca8edfca7784914c2642b148dcb3e45556c6814660d9dea3189ee634a029d",
+    "INPUT_MODE_ROUTER_PROMPT": "68153d23d3a64f2418519d7081462574e48d23336549a2ef5beffbb46c755f95"
+  },
+  "summary": {
+    "扩写": {
+      "passed": 2,
+      "total": 4
+    }
+  }
+}

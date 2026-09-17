@@ -1,0 +1,7 @@
+{
+  "source_and_test_copy_hashes_unchanged": true,
+  "all_18_clips_exact_pcm_slices": true,
+  "all_54_sentence_outputs_match_unmodified_tool_results": true,
+  "completed_transcriptions_without_execution_errors": 60,
+  "main_test_programs_unchanged": true
+}

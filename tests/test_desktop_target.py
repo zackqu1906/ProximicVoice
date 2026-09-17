@@ -898,15 +898,22 @@ def test_macos_activate_has_no_delay_when_target_is_already_frontmost(
     adapter._activate(target)
 
 
-def test_macos_target_uses_last_pointer_when_editor_hides_ax_caret(monkeypatch) -> None:
+@pytest.mark.parametrize("bounds, caret", [
+    ((100, 200, 500, 100), (0, 0, 0, 0)),
+    ((0, 0, 0, 0), (0, 0, 0, 0)),
+    ((100, 200, 500, 100), (10, 900, 2, 18)),
+])
+def test_macos_missing_or_stale_caret_does_not_use_mouse_position(
+    monkeypatch, bounds, caret
+) -> None:
     monkeypatch.setattr(sys, "platform", "darwin")
 
     class AccessibilityText:
         def focused_bounds(self, _process_id):
-            return 100, 200, 500, 100
+            return bounds
 
         def focused_caret_bounds(self, _process_id):
-            return 0, 0, 0, 0
+            return caret
 
     adapter = MacOSDesktopTextTarget(
         object(),
@@ -914,11 +921,41 @@ def test_macos_target_uses_last_pointer_when_editor_hides_ax_caret(monkeypatch) 
         accessibility_text=AccessibilityText(),
     )
     monkeypatch.setattr(adapter, "_frontmost_application", lambda: (4321, "编辑器"))
-    monkeypatch.setattr(adapter, "_pointer_position", lambda: (320, 245))
-
     target = adapter.capture_reference()
 
-    assert (target.caret_x, target.caret_y, target.caret_height) == (320, 245, 18)
+    assert (target.caret_x, target.caret_y, target.caret_height) == (0, 0, 0)
+    assert (target.screen_x, target.screen_y, target.screen_width, target.screen_height) == bounds
+
+
+def test_macos_empty_ax_rectangle_falls_back_instead_of_creating_fake_caret():
+    bridge = object.__new__(_MacOSAccessibilityTextBridge)
+
+    class Services:
+        @staticmethod
+        def AXUIElementCopyAttributeValue(_element, _attribute, output):
+            output._obj.value = 10
+            return 0
+
+        @staticmethod
+        def AXValueGetValue(_value, _type, output):
+            # A successful API call can still contain a zero-size rectangle.
+            return True
+
+        @staticmethod
+        def AXValueCreate(_type, _value):
+            return 11
+
+        @staticmethod
+        def AXUIElementCopyParameterizedAttributeValue(_element, _attr, _arg, output):
+            output._obj.value = 12
+            return 0
+
+    bridge._application_services = Services()
+    bridge._cf_string = lambda value: value
+    bridge._release = lambda *_args: None
+    assert bridge._text_marker_caret_bounds(1) == (0, 0, 0, 0)
+    bridge._text_marker_caret_bounds = lambda _element: (200, 300, 2, 18)
+    assert bridge._element_caret_bounds(1) == (200, 300, 2, 18)
 
 
 def test_macos_caret_search_walks_from_web_child_to_editable_parent() -> None:

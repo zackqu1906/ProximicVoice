@@ -459,17 +459,19 @@ def _build_session_controller(
             on_session_end=session_end_observer,
         )
 
-    if detector is None:  # pragma: no cover - CLI invariant
+    start_on_gesture = bool(getattr(args, "asr_start_on_gesture", False))
+    if detector is None and not start_on_gesture:  # pragma: no cover - CLI invariant
         raise AssertionError("ProxiMic detector is required unless disabled")
     return ProximitySessionController(
         sink,
-        pre_roll_s=args.asr_pre_roll,
+        pre_roll_s=0.0 if start_on_gesture else args.asr_pre_roll,
         end_rejects=args.asr_end_rejects,
         stage1_inactivity_s=args.asr_stage1_inactivity,
-        stage2_delay_s=detector.config.stage2_delay_s,
+        stage2_delay_s=0.0 if start_on_gesture else detector.config.stage2_delay_s,
         min_utterance_s=args.asr_min_duration,
         max_utterance_s=args.asr_max_duration,
         end_on_tap=getattr(args, "asr_end_on_tap", False),
+        start_on_gesture=start_on_gesture,
         on_state=on_state,
         on_session_end=session_end_observer,
         manual_active=push_to_talk.is_active if push_to_talk is not None else None,

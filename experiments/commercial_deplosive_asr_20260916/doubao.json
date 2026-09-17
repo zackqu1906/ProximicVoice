@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-16T03:39:04+00:00",
+  "cases": {
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/inputs/01_original.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/inputs/01_original.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 98.0,
+      "results": {
+        "doubao": {
+          "text": "2。义乌明天5月会变成河流旅行。远处，远处的雪慢慢飘过。他的报社朋友帮着爸爸病。白色的啤酒换到了葡萄架旁边。皮肤。8本笔记。怎么变？请帮帮我把进房间。家庭哥哥看过感情的天空。天下家谱，当代去厨房。明天黄梅戏讨论旅行安排。带上水杯和地图，慢慢走过门前的小桥。Purple blocks。",
+          "elapsed_s": 98.22,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/inputs/02_commercial.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/inputs/02_commercial.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 108.0,
+      "results": {
+        "doubao": {
+          "text": "明天5月我们要去河里，河里乡。白色的皮球放到了姥姥家旁边。怎么变？在房间？天生的孩子，他的家庭。安排。带上水，带个地图，慢慢走，我面前的小桥。",
+          "elapsed_s": 108.173,
+          "error": null
+        }
+      }
+    }
+  },
+  "configuration": {
+    "backends": [
+      "doubao"
+    ],
+    "dataset": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916/inputs",
+    "dataset_limit": -1,
+    "recent_empty": 0,
+    "recent_recognized": 0,
+    "max_seconds": 0.0,
+    "doubao_pace": 1.0
+  },
+  "updated_at": "2026-09-16T03:42:31+00:00"
+}

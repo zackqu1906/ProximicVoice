@@ -1,0 +1,615 @@
+{
+  "scope": {
+    "ring_input": "unprocessed ring_raw.wav; no commercial processing",
+    "dji_input": "+9.1598909101 dB linear gain; no denoise or tone processing",
+    "asr_format": "16 kHz mono PCM16"
+  },
+  "preparation": {
+    "source_session": "/Users/admin/Downloads/RingPlosiveLab/data/raw/speaker001_20260915T071439_605580Z",
+    "source_sha256": {
+      "dji_raw.wav": "033f4e46b8c5b9f0cdd012cea748215e26740b30dd39ec51742d539e65dfcd42",
+      "ring_raw.wav": "dcb642324a660ec42c902c311730d135af46f82e1fdcf908447625141957c821"
+    },
+    "channels": {
+      "dji_source_channel": 0,
+      "dji_channels_identical": false
+    },
+    "source": {
+      "dji": {
+        "sample_rate": 48000,
+        "duration_s": 100.58,
+        "rms_dbfs": -45.9672942095641,
+        "peak_dbfs": -10.365726648795931,
+        "prompt_interval_rms_dbfs": -44.59743197230292
+      },
+      "ring": {
+        "sample_rate": 16000,
+        "duration_s": 108.0,
+        "rms_dbfs": -35.79060725503388,
+        "peak_dbfs": -0.34416644547652964,
+        "prompt_interval_rms_dbfs": -35.43754106221402
+      }
+    },
+    "loudness_match": {
+      "method": "match combined prompt-interval RMS; cap result at -1 dBFS peak",
+      "unconstrained_gain_db": 9.159890910088905,
+      "maximum_gain_for_minus_1_dbfs": 9.365726648795931,
+      "applied_gain_db": 9.159890910088905,
+      "output_peak_dbfs": -1.2058357387070275,
+      "output_prompt_interval_rms_dbfs": -35.437541062214024
+    },
+    "asr_preparation": {
+      "sample_rate": 16000,
+      "channels": 1,
+      "subtype": "PCM_16",
+      "dji_resampler": "scipy.signal.resample_poly up=1 down=3",
+      "ring_resampler": "none"
+    },
+    "sentences": [
+      {
+        "sentence": 1,
+        "prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。",
+        "dji_file": "01_dji.wav",
+        "ring_file": "01_ring.wav",
+        "dji_duration_s": 7.64,
+        "ring_duration_s": 7.7
+      },
+      {
+        "sentence": 2,
+        "prompt": "白色的皮球滚到了葡萄架旁。",
+        "dji_file": "02_dji.wav",
+        "ring_file": "02_ring.wav",
+        "dji_duration_s": 6.74,
+        "ring_duration_s": 6.7
+      },
+      {
+        "sentence": 3,
+        "prompt": "葡萄皮薄不怕碰，白布包着八本笔记。",
+        "dji_file": "03_dji.wav",
+        "ring_file": "03_ring.wav",
+        "dji_duration_s": 7.56,
+        "ring_duration_s": 7.6
+      },
+      {
+        "sentence": 4,
+        "prompt": "包裹放在旁边，请帮朋友搬进房间。",
+        "dji_file": "04_dji.wav",
+        "ring_file": "04_ring.wav",
+        "dji_duration_s": 10.1,
+        "ring_duration_s": 10.2
+      },
+      {
+        "sentence": 5,
+        "prompt": "他提着袋子到大厅，哥哥看过干净的天空。",
+        "dji_file": "05_dji.wav",
+        "ring_file": "05_ring.wav",
+        "dji_duration_s": 7.2,
+        "ring_duration_s": 7.3
+      },
+      {
+        "sentence": 6,
+        "prompt": "我们停下脚步，等同伴一起出发。",
+        "dji_file": "06_dji.wav",
+        "ring_file": "06_ring.wav",
+        "dji_duration_s": 5.22,
+        "ring_duration_s": 5.2
+      },
+      {
+        "sentence": 7,
+        "prompt": "明天我们一起讨论旅行安排。",
+        "dji_file": "07_dji.wav",
+        "ring_file": "07_ring.wav",
+        "dji_duration_s": 7.54,
+        "ring_duration_s": 7.6
+      },
+      {
+        "sentence": 8,
+        "prompt": "带上水杯和地图，慢慢走过门前的小桥。",
+        "dji_file": "08_dji.wav",
+        "ring_file": "08_ring.wav",
+        "dji_duration_s": 4.84,
+        "ring_duration_s": 4.8
+      },
+      {
+        "sentence": 9,
+        "prompt": "Please put the blue paper beside the purple box.",
+        "dji_file": "09_dji.wav",
+        "ring_file": "09_ring.wav",
+        "dji_duration_s": 5.56,
+        "ring_duration_s": 5.5
+      }
+    ]
+  },
+  "summary": {
+    "doubao": {
+      "dji": {
+        "prompt_cer": 0.15384615384615385,
+        "sentences_cer_le_25pct": 7,
+        "exact_prompt_matches": 3,
+        "sentence_count": 9
+      },
+      "ring": {
+        "prompt_cer": 0.9935897435897436,
+        "sentences_cer_le_25pct": 0,
+        "exact_prompt_matches": 0,
+        "sentence_count": 9
+      }
+    },
+    "sensevoice": {
+      "dji": {
+        "prompt_cer": 0.20512820512820512,
+        "sentences_cer_le_25pct": 5,
+        "exact_prompt_matches": 2,
+        "sentence_count": 9
+      },
+      "ring": {
+        "prompt_cer": 1.0128205128205128,
+        "sentences_cer_le_25pct": 0,
+        "exact_prompt_matches": 0,
+        "sentence_count": 9
+      }
+    },
+    "funasr_nano": {
+      "dji": {
+        "prompt_cer": 0.17307692307692307,
+        "sentences_cer_le_25pct": 7,
+        "exact_prompt_matches": 2,
+        "sentence_count": 9
+      },
+      "ring": {
+        "prompt_cer": 4.205128205128205,
+        "sentences_cer_le_25pct": 0,
+        "exact_prompt_matches": 0,
+        "sentence_count": 9
+      }
+    }
+  },
+  "full_file_results": {
+    "doubao": {
+      "dji": "义乌明天5月会变成河流旅行，微风吹过树林，远处的云慢慢飘过。爸爸抱上宝宝跑步，胖胖的朋友捧着宝宝饼。白色的皮球滚到了葡萄架旁边。葡萄皮薄不怕胖！百宝库抱着8本笔记！包裹放在旁边，请帮帮我搬进房间。他提着袋子来到大厅，哥哥看过干净的天空。我们停下脚步，等待同伴一起出发。明天我们一起讨论旅行安排。带上水杯和地图，慢慢走过门前的小桥。please note the blue paper besides purple blocks。",
+      "ring": "明天5月我们要去河里，河里乡。白色的皮球放到了姥姥家旁边。怎么变？在房间？天生的孩子，他的家庭。安排。带上水，带个地图，慢慢走，我面前的小桥。"
+    },
+    "sensevoice": {
+      "dji": "沿着河流旅房厅明天我们一起讨论旅行安排上水杯和地图慢走过门前的小桥ase beside blocks。",
+      "ring": "带上水杯和地慢慢走过的小 beside。"
+    },
+    "funasr_nano": {
+      "dji": "啊，义务明年五月，我们沿着河流旅行，微风吹过树林，远处的云慢慢飘过。 他提着袋子来到大厅，哥哥看着干净的天空。 跑跑的脚步，等待同伴一起出发。 白色的皮球滚到了葡萄架旁边。 跟我们一起讨论旅行安排。 带上水杯和地图，慢慢走过门前的小桥。 please put the blue paper besides purple blocks.",
+      "ring": "明天我们约好，我们约好去河边旅行。我们除了树林，远处的树林，远处的草坪，远处的草坪，远处的草坪，远处的草坪。"
+    }
+  },
+  "sentence_results": [
+    {
+      "sentence": 1,
+      "prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "爸爸抱上宝宝跑步，胖胖的朋友捧着宝宝饼。",
+      "prompt_cer": 0.2222222222222222
+    },
+    {
+      "sentence": 1,
+      "prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 1,
+      "prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "爸爸宝社帮宝跑步，胖胖的朋友帮着抱抱病。",
+      "prompt_cer": 0.3888888888888889
+    },
+    {
+      "sentence": 1,
+      "prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 1,
+      "prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "爸爸抱着宝宝跑步，胖胖的朋友帮着抱抱饼。",
+      "prompt_cer": 0.2222222222222222
+    },
+    {
+      "sentence": 1,
+      "prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 2,
+      "prompt": "白色的皮球滚到了葡萄架旁。",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "白色的皮球滚到了葡萄架旁边。",
+      "prompt_cer": 0.08333333333333333
+    },
+    {
+      "sentence": 2,
+      "prompt": "白色的皮球滚到了葡萄架旁。",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "太空",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 2,
+      "prompt": "白色的皮球滚到了葡萄架旁。",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "白色的貔球混到了葡萄家旁边。",
+      "prompt_cer": 0.3333333333333333
+    },
+    {
+      "sentence": 2,
+      "prompt": "白色的皮球滚到了葡萄架旁。",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "儿的不是偷老。",
+      "prompt_cer": 0.9166666666666666
+    },
+    {
+      "sentence": 2,
+      "prompt": "白色的皮球滚到了葡萄架旁。",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "白色的皮球滚到了葡萄架旁边",
+      "prompt_cer": 0.08333333333333333
+    },
+    {
+      "sentence": 2,
+      "prompt": "白色的皮球滚到了葡萄架旁。",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "他和孟山偷偷跑出来。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 3,
+      "prompt": "葡萄皮薄不怕碰，白布包着八本笔记。",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "葡萄皮薄不怕胖！百宝库抱着8本笔记！",
+      "prompt_cer": 0.4
+    },
+    {
+      "sentence": 3,
+      "prompt": "葡萄皮薄不怕碰，白布包着八本笔记。",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "白色的啤酒。",
+      "prompt_cer": 0.9333333333333333
+    },
+    {
+      "sentence": 3,
+      "prompt": "葡萄皮薄不怕碰，白布包着八本笔记。",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "不打皮部不怕包，白包布包着八本笔迹。",
+      "prompt_cer": 0.4
+    },
+    {
+      "sentence": 3,
+      "prompt": "葡萄皮薄不怕碰，白布包着八本笔记。",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "宝宝的朋友躺着旁病，白色的皮球红到了。",
+      "prompt_cer": 1.0666666666666667
+    },
+    {
+      "sentence": 3,
+      "prompt": "葡萄皮薄不怕碰，白布包着八本笔记。",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "不打屁股不怕胖外包布包着八本笔记",
+      "prompt_cer": 0.4666666666666667
+    },
+    {
+      "sentence": 3,
+      "prompt": "葡萄皮薄不怕碰，白布包着八本笔记。",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "好多的朋友都这么问。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 4,
+      "prompt": "包裹放在旁边，请帮朋友搬进房间。",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "包裹放在旁边，请帮朋友搬进房间。",
+      "prompt_cer": 0.0
+    },
+    {
+      "sentence": 4,
+      "prompt": "包裹放在旁边，请帮朋友搬进房间。",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "宝本笔记。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 4,
+      "prompt": "包裹放在旁边，请帮朋友搬进房间。",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "包括放在旁边，请帮朋友搬进房间。",
+      "prompt_cer": 0.07142857142857142
+    },
+    {
+      "sentence": 4,
+      "prompt": "包裹放在旁边，请帮朋友搬进房间。",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "皮不，外毛某疹疤分脾气。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 4,
+      "prompt": "包裹放在旁边，请帮朋友搬进房间。",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "包裹放在旁边，亲朋好友搬进房间。",
+      "prompt_cer": 0.21428571428571427
+    },
+    {
+      "sentence": 4,
+      "prompt": "包裹放在旁边，请帮朋友搬进房间。",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "八B八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八八",
+      "prompt_cer": 36.57142857142857
+    },
+    {
+      "sentence": 5,
+      "prompt": "他提着袋子到大厅，哥哥看过干净的天空。",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "他提着袋子来到大厅，哥哥看过干净的天空。",
+      "prompt_cer": 0.058823529411764705
+    },
+    {
+      "sentence": 5,
+      "prompt": "他提着袋子到大厅，哥哥看过干净的天空。",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "怎么变成？",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 5,
+      "prompt": "他提着袋子到大厅，哥哥看过干净的天空。",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "他提着袋子来到大厅，哥哥看过干净的天空。",
+      "prompt_cer": 0.058823529411764705
+    },
+    {
+      "sentence": 5,
+      "prompt": "他提着袋子到大厅，哥哥看过干净的天空。",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "保进房间。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 5,
+      "prompt": "他提着袋子到大厅，哥哥看过干净的天空。",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "他提着袋子来到大厅，哥哥看过干净的天空。",
+      "prompt_cer": 0.058823529411764705
+    },
+    {
+      "sentence": 5,
+      "prompt": "他提着袋子到大厅，哥哥看过干净的天空。",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "好，那我们先保存OK，前方坡路，快进，往前。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 6,
+      "prompt": "我们停下脚步，等同伴一起出发。",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "我们停下脚步，等待同伴一起出发。",
+      "prompt_cer": 0.07692307692307693
+    },
+    {
+      "sentence": 6,
+      "prompt": "我们停下脚步，等同伴一起出发。",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 6,
+      "prompt": "我们停下脚步，等同伴一起出发。",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "我们停下脚步，打带同伴一起出发。",
+      "prompt_cer": 0.15384615384615385
+    },
+    {
+      "sentence": 6,
+      "prompt": "我们停下脚步，等同伴一起出发。",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 6,
+      "prompt": "我们停下脚步，等同伴一起出发。",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "我们停下脚步，等待同伴一起出发。",
+      "prompt_cer": 0.07692307692307693
+    },
+    {
+      "sentence": 6,
+      "prompt": "我们停下脚步，等同伴一起出发。",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 7,
+      "prompt": "明天我们一起讨论旅行安排。",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "明天我们一起讨论旅行安排。",
+      "prompt_cer": 0.0
+    },
+    {
+      "sentence": 7,
+      "prompt": "明天我们一起讨论旅行安排。",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "停下脚步，等待一起出发！",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 7,
+      "prompt": "明天我们一起讨论旅行安排。",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "明天我们一起讨论旅行安排。",
+      "prompt_cer": 0.0
+    },
+    {
+      "sentence": 7,
+      "prompt": "明天我们一起讨论旅行安排。",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "我们停下交步，大家同伴一起装发。",
+      "prompt_cer": 1.1666666666666667
+    },
+    {
+      "sentence": 7,
+      "prompt": "明天我们一起讨论旅行安排。",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "明天我们一起讨论旅行安排",
+      "prompt_cer": 0.0
+    },
+    {
+      "sentence": 7,
+      "prompt": "明天我们一起讨论旅行安排。",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "我们停下脚步，等待同伴一起出发。",
+      "prompt_cer": 1.1666666666666667
+    },
+    {
+      "sentence": 8,
+      "prompt": "带上水杯和地图，慢慢走过门前的小桥。",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "带上水杯和地图，慢慢走过门前的小桥。",
+      "prompt_cer": 0.0
+    },
+    {
+      "sentence": 8,
+      "prompt": "带上水杯和地图，慢慢走过门前的小桥。",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 8,
+      "prompt": "带上水杯和地图，慢慢走过门前的小桥。",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "带上水杯和地图，慢慢走过门前的小桥。",
+      "prompt_cer": 0.0
+    },
+    {
+      "sentence": 8,
+      "prompt": "带上水杯和地图，慢慢走过门前的小桥。",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 8,
+      "prompt": "带上水杯和地图，慢慢走过门前的小桥。",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "带上水杯和地图慢慢走过门前的小桥",
+      "prompt_cer": 0.0
+    },
+    {
+      "sentence": 8,
+      "prompt": "带上水杯和地图，慢慢走过门前的小桥。",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 9,
+      "prompt": "Please put the blue paper beside the purple box.",
+      "device": "dji",
+      "backend": "doubao",
+      "text": "Please make the blue paper besides purple blocks.",
+      "prompt_cer": 0.28205128205128205
+    },
+    {
+      "sentence": 9,
+      "prompt": "Please put the blue paper beside the purple box.",
+      "device": "ring",
+      "backend": "doubao",
+      "text": "关系到女性安全。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 9,
+      "prompt": "Please put the blue paper beside the purple box.",
+      "device": "dji",
+      "backend": "sensevoice",
+      "text": "Please move the blue paper beside purple blocks.",
+      "prompt_cer": 0.28205128205128205
+    },
+    {
+      "sentence": 9,
+      "prompt": "Please put the blue paper beside the purple box.",
+      "device": "ring",
+      "backend": "sensevoice",
+      "text": "明天我们一起统些安排。",
+      "prompt_cer": 1.0
+    },
+    {
+      "sentence": 9,
+      "prompt": "Please put the blue paper beside the purple box.",
+      "device": "dji",
+      "backend": "funasr_nano",
+      "text": "Please note the blue paper besides purple blocks.",
+      "prompt_cer": 0.2564102564102564
+    },
+    {
+      "sentence": 9,
+      "prompt": "Please put the blue paper beside the purple box.",
+      "device": "ring",
+      "backend": "funasr_nano",
+      "text": "明天我会写到日历上安排。",
+      "prompt_cer": 1.0
+    }
+  ]
+}

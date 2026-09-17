@@ -1,0 +1,74 @@
+[
+  {
+    "sentence": 1,
+    "original_start_s": 23.2,
+    "original_end_s": 30.9,
+    "commercial_start_s": 33.2,
+    "commercial_end_s": 40.9,
+    "reading_prompt": "爸爸抱着宝宝跑步，胖胖的朋友捧着泡泡瓶。"
+  },
+  {
+    "sentence": 2,
+    "original_start_s": 30.9,
+    "original_end_s": 37.6,
+    "commercial_start_s": 40.9,
+    "commercial_end_s": 47.6,
+    "reading_prompt": "白色的皮球滚到了葡萄架旁。"
+  },
+  {
+    "sentence": 3,
+    "original_start_s": 37.7,
+    "original_end_s": 45.3,
+    "commercial_start_s": 47.7,
+    "commercial_end_s": 55.3,
+    "reading_prompt": "葡萄皮薄不怕碰，白布包着八本笔记。"
+  },
+  {
+    "sentence": 4,
+    "original_start_s": 48.6,
+    "original_end_s": 58.8,
+    "commercial_start_s": 58.6,
+    "commercial_end_s": 68.8,
+    "reading_prompt": "包裹放在旁边，请帮朋友搬进房间。"
+  },
+  {
+    "sentence": 5,
+    "original_start_s": 58.8,
+    "original_end_s": 66.1,
+    "commercial_start_s": 68.8,
+    "commercial_end_s": 76.1,
+    "reading_prompt": "他提着袋子到大厅，哥哥看过干净的天空。"
+  },
+  {
+    "sentence": 6,
+    "original_start_s": 66.1,
+    "original_end_s": 71.3,
+    "commercial_start_s": 76.1,
+    "commercial_end_s": 81.3,
+    "reading_prompt": "我们停下脚步，等同伴一起出发。"
+  },
+  {
+    "sentence": 7,
+    "original_start_s": 77.3,
+    "original_end_s": 84.9,
+    "commercial_start_s": 87.3,
+    "commercial_end_s": 94.9,
+    "reading_prompt": "明天我们一起讨论旅行安排。"
+  },
+  {
+    "sentence": 8,
+    "original_start_s": 84.9,
+    "original_end_s": 89.7,
+    "commercial_start_s": 94.9,
+    "commercial_end_s": 99.7,
+    "reading_prompt": "带上水杯和地图，慢慢走过门前的小桥。"
+  },
+  {
+    "sentence": 9,
+    "original_start_s": 89.8,
+    "original_end_s": 95.3,
+    "commercial_start_s": 99.8,
+    "commercial_end_s": 105.3,
+    "reading_prompt": "Please put the blue paper beside the purple box."
+  }
+]

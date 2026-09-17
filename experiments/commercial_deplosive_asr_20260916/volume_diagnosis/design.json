@@ -1,0 +1,188 @@
+{
+  "source_report": "/Users/admin/Downloads/ProximicVoice-main/experiments/commercial_deplosive_asr_20260916",
+  "selected_sentences": [
+    1,
+    3,
+    6,
+    7,
+    8,
+    9
+  ],
+  "labels": {
+    "original_high": "原音／高电平",
+    "commercial_low": "商业版／低电平",
+    "original_low": "原音／低电平",
+    "commercial_high": "商业版／高电平"
+  },
+  "purpose": "2x2 crossover: waveform processing vs fixed speech-band level; no extra filtering or clipping in ASR inputs.",
+  "speech_level_band_hz": [
+    500,
+    4000
+  ],
+  "mask": "Input-only 40ms energy gate max(-60dBFS, 0.03 * original 80th percentile power). Used only to measure scalar gain.",
+  "cloud": "User explicitly approved the 24 gain variants on 2026-09-16 before execution.",
+  "records": [
+    {
+      "sentence": 1,
+      "gain_match_db": 3.424957866655513,
+      "common_headroom_db": -1.9738024741994997,
+      "metrics": {
+        "original_high": {
+          "speech_band_rms_dbfs": -26.109144793295542,
+          "peak": 0.7967276259841325,
+          "sha256": "7752caf533062526decec7b0089258e6012696096ead8e1e072ac77d7090c73e"
+        },
+        "commercial_low": {
+          "speech_band_rms_dbfs": -29.53410265995105,
+          "peak": 0.6404359640021378,
+          "sha256": "2339c9d4bec2994a46f2ddda3a2221399845be3dd6c805860745c04a1bb7cee0"
+        },
+        "original_low": {
+          "speech_band_rms_dbfs": -29.534102659951053,
+          "peak": 0.537108447572929,
+          "sha256": "4088480029ed0a90cdf18b9435eb4525d52d5f1a36abd3be7f83fa26a094486b"
+        },
+        "commercial_high": {
+          "speech_band_rms_dbfs": -26.109144793295535,
+          "peak": 0.9499999999999998,
+          "sha256": "ad9127b10941982623f76b29151a791a49ec652d4b537df943fcea932a5f0ca5"
+        }
+      }
+    },
+    {
+      "sentence": 3,
+      "gain_match_db": 3.702377819383629,
+      "common_headroom_db": -0.44552789422304506,
+      "metrics": {
+        "original_high": {
+          "speech_band_rms_dbfs": -26.821992498677236,
+          "peak": 0.95,
+          "sha256": "4674f508a8d624c6c3a8d6db8c614dae34de1b61fc8d530712397b882632434d"
+        },
+        "commercial_low": {
+          "speech_band_rms_dbfs": -30.524370318060868,
+          "peak": 0.6104782104492187,
+          "sha256": "6d6d33510aae477e278ea1d287764e3e8123e0196a0130a439ef34b062641429"
+        },
+        "original_low": {
+          "speech_band_rms_dbfs": -30.52437031806086,
+          "peak": 0.620304189420037,
+          "sha256": "b6fc0ea4e0607aaec4b2a6ad546a55bdce0d10079744d9d2363aa558c2d2bbac"
+        },
+        "commercial_high": {
+          "speech_band_rms_dbfs": -26.82199249867724,
+          "peak": 0.9349514477227617,
+          "sha256": "cf45427a8aa852fd344548fc00eb66dc78eefafc0f879b67a7c63718dcee3ab1"
+        }
+      }
+    },
+    {
+      "sentence": 6,
+      "gain_match_db": 3.022464361512272,
+      "common_headroom_db": -0.44552789422304506,
+      "metrics": {
+        "original_high": {
+          "speech_band_rms_dbfs": -25.95281511315516,
+          "peak": 0.95,
+          "sha256": "2c41bfedd4f11240727a04bccc37fa4108fc2263f8862dc8158be5c4c3227235"
+        },
+        "commercial_low": {
+          "speech_band_rms_dbfs": -28.975279474667435,
+          "peak": 0.5834869384765625,
+          "sha256": "212e11baa1760d969e81605185a4cd9ae1db81fe32abad84d5c08142f5bb4a7d"
+        },
+        "original_low": {
+          "speech_band_rms_dbfs": -28.975279474667435,
+          "peak": 0.6708113268885847,
+          "sha256": "52d7b0487f572180f41e3a823f520ab0f31313bb59c2ed478e9e89eb628f9636"
+        },
+        "commercial_high": {
+          "speech_band_rms_dbfs": -25.952815113155165,
+          "peak": 0.8263315918110612,
+          "sha256": "cd42dfbe9da8c19c94c8e310790296aee00ead70db6619fc6b429def86ca117f"
+        }
+      }
+    },
+    {
+      "sentence": 7,
+      "gain_match_db": 3.3496784399587067,
+      "common_headroom_db": 0.0,
+      "metrics": {
+        "original_high": {
+          "speech_band_rms_dbfs": -32.941955019103766,
+          "peak": 0.80584716796875,
+          "sha256": "35a28e02b8841e9960dc8740e65b667d6bf3111f446a367f19859459acbc3230"
+        },
+        "commercial_low": {
+          "speech_band_rms_dbfs": -36.29163345906247,
+          "peak": 0.30572509765625,
+          "sha256": "b2ea63dd2614da4d6fad908b5ba4d090c887cfe706014e59f6b950aa79cf9327"
+        },
+        "original_low": {
+          "speech_band_rms_dbfs": -36.29163345906247,
+          "peak": 0.5479851151880295,
+          "sha256": "4233febaf595528fdd1b50f753170a493e01e5476b7f67cff6e21329565a1b83"
+        },
+        "commercial_high": {
+          "speech_band_rms_dbfs": -32.94195501910376,
+          "peak": 0.4495883141620055,
+          "sha256": "ba2a7eaf087e59168bc2a8e4e89bb535a0aca2e104e8233004bbc6a4c1a8c240"
+        }
+      }
+    },
+    {
+      "sentence": 8,
+      "gain_match_db": 1.6622985916264374,
+      "common_headroom_db": 0.0,
+      "metrics": {
+        "original_high": {
+          "speech_band_rms_dbfs": -32.040430166563546,
+          "peak": 0.871368408203125,
+          "sha256": "c6b7af1e4dd04e6ca162c74dea396d9c6aa24d83aa3407687ee8d3d74377adc7"
+        },
+        "commercial_low": {
+          "speech_band_rms_dbfs": -33.702728758189984,
+          "peak": 0.651580810546875,
+          "sha256": "933e1d908681654dda48690f498a0b935bc9808c6fe27dda4f4629b2977906bc"
+        },
+        "original_low": {
+          "speech_band_rms_dbfs": -33.702728758189984,
+          "peak": 0.7195929184658163,
+          "sha256": "409b591b308a14b7ceeb906bf4dad6c88c9fb4bb2f23d08c2add44764b179063"
+        },
+        "commercial_high": {
+          "speech_band_rms_dbfs": -32.04043016656355,
+          "peak": 0.789011285592444,
+          "sha256": "3eda8a6dfc885e15bfac7e737dfaaec9af4df1d36b84e21de55993addd8b7089"
+        }
+      }
+    },
+    {
+      "sentence": 9,
+      "gain_match_db": 5.33584803946742,
+      "common_headroom_db": -0.8186283911249952,
+      "metrics": {
+        "original_high": {
+          "speech_band_rms_dbfs": -29.64025173822129,
+          "peak": 0.9100569704822434,
+          "sha256": "8b3aa6998b0614f78d2cb68bc7527b84b85c875b41d7877973db3722d2d0624b"
+        },
+        "commercial_low": {
+          "speech_band_rms_dbfs": -34.9760997776887,
+          "peak": 0.513962228263684,
+          "sha256": "b34c7c9fe534e8d872682c8fe7ff28b19caa118c75ec6516737499cdda44d49c"
+        },
+        "original_low": {
+          "speech_band_rms_dbfs": -34.97609977768872,
+          "peak": 0.4923525351536331,
+          "sha256": "0c0da957d4cf7587dee22ff6eb6d3d3eef1af5225c6155040a97e93f2b2fc890"
+        },
+        "commercial_high": {
+          "speech_band_rms_dbfs": -29.640251738221288,
+          "peak": 0.95,
+          "sha256": "d411ae624d79b9a80c2283e504e4557ca7db41718463719e55f15c47e19920d5"
+        }
+      }
+    }
+  ]
+}

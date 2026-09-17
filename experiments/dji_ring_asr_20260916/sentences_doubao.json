@@ -1,0 +1,270 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-09-16T04:08:20+00:00",
+  "cases": {
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/01_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/01_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.64,
+      "results": {
+        "doubao": {
+          "text": "爸爸抱上宝宝跑步，胖胖的朋友捧着宝宝饼。",
+          "elapsed_s": 7.919,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/01_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/01_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.7,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 7.875,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/02_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/02_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 6.74,
+      "results": {
+        "doubao": {
+          "text": "白色的皮球滚到了葡萄架旁边。",
+          "elapsed_s": 7.01,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/02_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/02_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 6.7,
+      "results": {
+        "doubao": {
+          "text": "太空",
+          "elapsed_s": 6.848,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/03_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/03_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.56,
+      "results": {
+        "doubao": {
+          "text": "葡萄皮薄不怕胖！百宝库抱着8本笔记！",
+          "elapsed_s": 7.802,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/03_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/03_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "白色的啤酒。",
+          "elapsed_s": 7.807,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/04_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/04_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 10.1,
+      "results": {
+        "doubao": {
+          "text": "包裹放在旁边，请帮朋友搬进房间。",
+          "elapsed_s": 10.313,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/04_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/04_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 10.2,
+      "results": {
+        "doubao": {
+          "text": "宝本笔记。",
+          "elapsed_s": 10.397,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/05_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/05_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.2,
+      "results": {
+        "doubao": {
+          "text": "他提着袋子来到大厅，哥哥看过干净的天空。",
+          "elapsed_s": 7.411,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/05_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/05_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.3,
+      "results": {
+        "doubao": {
+          "text": "怎么变成？",
+          "elapsed_s": 7.572,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/06_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/06_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 5.22,
+      "results": {
+        "doubao": {
+          "text": "我们停下脚步，等待同伴一起出发。",
+          "elapsed_s": 5.577,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/06_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/06_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 5.2,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 5.398,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/07_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/07_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.54,
+      "results": {
+        "doubao": {
+          "text": "明天我们一起讨论旅行安排。",
+          "elapsed_s": 7.726,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/07_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/07_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 7.6,
+      "results": {
+        "doubao": {
+          "text": "停下脚步，等待一起出发！",
+          "elapsed_s": 7.785,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/08_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/08_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 4.84,
+      "results": {
+        "doubao": {
+          "text": "带上水杯和地图，慢慢走过门前的小桥。",
+          "elapsed_s": 5.081,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/08_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/08_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 4.8,
+      "results": {
+        "doubao": {
+          "text": "",
+          "elapsed_s": 4.947,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/09_dji.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/09_dji.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 5.56,
+      "results": {
+        "doubao": {
+          "text": "Please make the blue paper besides purple blocks.",
+          "elapsed_s": 5.721,
+          "error": null
+        }
+      }
+    },
+    "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/09_ring.wav": {
+      "path": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs/09_ring.wav",
+      "group": "plus24db-near",
+      "interaction_id": "",
+      "prior_doubao_text": "",
+      "audio_duration_s": 5.5,
+      "results": {
+        "doubao": {
+          "text": "关系到女性安全。",
+          "elapsed_s": 5.66,
+          "error": null
+        }
+      }
+    }
+  },
+  "configuration": {
+    "backends": [
+      "doubao"
+    ],
+    "dataset": "/Users/admin/Downloads/ProximicVoice-main/experiments/dji_ring_asr_20260916/sentence_inputs",
+    "dataset_limit": -1,
+    "recent_empty": 0,
+    "recent_recognized": 0,
+    "max_seconds": 0.0,
+    "doubao_pace": 1.0
+  },
+  "updated_at": "2026-09-16T04:10:29+00:00"
+}

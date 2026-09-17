@@ -13,9 +13,9 @@ def test_bundled_proximity_model_versions_are_complete_and_hashed():
         (assets / "proximity_model_versions.json").read_text(encoding="utf-8")
     )
 
-    assert registry["active_version"] == "v2"
-    assert registry["active_model"] == "ringo-near-v2.model"
-    assert set(registry["versions"]) == {"v1", "v2"}
+    assert registry["active_version"] == "v3"
+    assert registry["active_model"] == "ringo-near-v3.model"
+    assert set(registry["versions"]) == {"v1", "v2", "v3"}
     for version, entry in registry["versions"].items():
         model_path = assets / entry["model"]
         sidecar_path = model_path.with_name(model_path.name + ".json")
@@ -36,20 +36,27 @@ def test_bundled_model_migration_updates_only_the_old_default(tmp_path):
     pytest.importorskip("PySide6")
     from proximic_ring.ui.controller import _migrated_bundled_near_model_path
 
-    default_model = tmp_path / "ringo-near-v2.model"
+    default_model = tmp_path / "ringo-near-v3.model"
     default_model.write_bytes(b"model")
-    old_default = tmp_path / "old-install" / "ringo-near-v1.model"
+    v1_default = tmp_path / "old-install" / "ringo-near-v1.model"
+    v2_default = tmp_path / "old-install" / "ringo-near-v2.model"
     custom_model = tmp_path / "my-custom.model"
 
     assert _migrated_bundled_near_model_path("", 0, default_model) == str(
         default_model
     )
     assert _migrated_bundled_near_model_path(
-        str(old_default), 0, default_model
+        str(v1_default), 0, default_model
+    ) == str(default_model)
+    assert _migrated_bundled_near_model_path(
+        str(v2_default), 2, default_model
     ) == str(default_model)
     assert _migrated_bundled_near_model_path(
         str(custom_model), 0, default_model
     ) == str(custom_model)
     assert _migrated_bundled_near_model_path(
-        str(old_default), 2, default_model
-    ) == str(old_default)
+        str(v1_default), 2, default_model
+    ) == str(v1_default)
+    assert _migrated_bundled_near_model_path(
+        str(v2_default), 3, default_model
+    ) == str(v2_default)

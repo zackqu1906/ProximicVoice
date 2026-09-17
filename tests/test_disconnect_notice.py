@@ -93,6 +93,17 @@ def test_explicit_disconnect_or_quit_remains_quiet(controller, quitting):
     assert controller._disconnect_requested_by_user
     assert not controller.ringDisconnectNoticeVisible
     assert not controller.connected
+
+
+def test_microphone_failure_notice_identifies_audio_device_and_stops_everything(controller):
+    controller._audio_source = "microphone"
+    controller._disconnect_event.set()
+    controller._apply_runtime_status("[AUDIO_INPUT_ERROR] DJI unplugged")
+    controller._apply_runtime_stopping(controller._disconnect_event)
+    assert controller.ringDisconnectNoticeVisible
+    assert controller.ringDisconnectNoticeTitle == "麦克风连接中断"
+    assert controller.ringDisconnectNoticeDevice == "电脑麦克风（DJI）"
+    assert not controller.recognitionEnabled and not controller.connected
     assert not controller.recognitionEnabled
 
 

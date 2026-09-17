@@ -46,6 +46,7 @@ class ProximitySessionController:
         min_utterance_s: float = 0.40,
         max_utterance_s: float = 15.0,
         end_on_tap: bool = False,
+        start_on_gesture: bool = False,
         on_state: Callable[[str], None] | None = None,
         on_session_end: Callable[[], None] | None = None,
         manual_active: Callable[[], bool] | None = None,
@@ -74,7 +75,8 @@ class ProximitySessionController:
         self.stage2_delay_samples = int(round(stage2_delay_s * self.sample_rate))
         self.min_utterance_samples = int(round(min_utterance_s * self.sample_rate))
         self.max_utterance_samples = int(round(max_utterance_s * self.sample_rate))
-        self.end_on_tap = bool(end_on_tap)
+        self.start_on_gesture = bool(start_on_gesture)
+        self.end_on_tap = bool(end_on_tap or start_on_gesture)
         self.on_state = on_state
         self.on_session_end = on_session_end
         self.manual_active = manual_active
@@ -105,6 +107,22 @@ class ProximitySessionController:
         self._tap_lock = threading.Lock()
         self._accept_tap = False
         self._tap_requested_ns: int | None = None
+        self._gesture_start_requested = False
+
+    def request_gesture_toggle(self) -> str | None:
+        """Queue one transition; never mutate a session on the gesture thread."""
+        with self._tap_lock:
+            if not self.start_on_gesture:
+                return None
+            if self._accept_tap:
+                if self._tap_requested_ns is not None:
+                    return None
+                self._tap_requested_ns = time.monotonic_ns()
+                return "end"
+            if self._active or self._gesture_start_requested:
+                return None
+            self._gesture_start_requested = True
+            return "start"
 
     def request_tap_end(self) -> bool:
         """Bind one tap to the currently open session; idle/repeated taps are inert."""
@@ -117,12 +135,14 @@ class ProximitySessionController:
     def _open_tap_endpoint(self) -> None:
         with self._tap_lock:
             self._tap_requested_ns = None
+            self._gesture_start_requested = False
             self._accept_tap = self.end_on_tap
 
     def _clear_tap_endpoint(self) -> None:
         with self._tap_lock:
             self._accept_tap = False
             self._tap_requested_ns = None
+            self._gesture_start_requested = False
 
     @property
     def active(self) -> bool:
@@ -157,6 +177,26 @@ class ProximitySessionController:
         # an absolute sample clock matching Stage1Event/Stage2Event.sample_index.
         self._stream_samples += x.size
         self._append_history(x)
+
+        if self.start_on_gesture and not self._active:
+            with self._tap_lock:
+                start_requested = self._gesture_start_requested
+                self._gesture_start_requested = False
+            if start_requested:
+                self._begin_manual(x, reason="gesture")
+                return
+
+        if self.start_on_gesture:
+            # No model events or keyboard hold may start this mode.
+            if self._active:
+                self._append_active(x)
+                with self._tap_lock:
+                    tap_requested_ns = self._tap_requested_ns
+                if tap_requested_ns is not None:
+                    self._finish(reason="gesture-tap", tap_requested_ns=tap_requested_ns)
+                else:
+                    self._flush_pending_sink_audio()
+            return
 
         if self._active:
             self._append_active(x)
@@ -373,7 +413,7 @@ class ProximitySessionController:
         self.sink.start(initial)
         self._sink_samples = int(initial.size)
 
-    def _begin_manual(self, current_block: np.ndarray) -> None:
+    def _begin_manual(self, current_block: np.ndarray, *, reason: str = "manual") -> None:
         self._active = True
         # Automatic activation needs history to compensate for the detector's
         # Stage2 delay.  A key press is immediate, so including that same
@@ -397,7 +437,7 @@ class ProximitySessionController:
         self._first_reject_cutoff_sample = None
         self._open_tap_endpoint()
         self._log(
-            f"[ASR] START manual t={self._stream_samples / self.sample_rate:.3f}s "
+            f"[ASR] START {reason} t={self._stream_samples / self.sample_rate:.3f}s "
             f"(lead-in={self._utterance_samples / self.sample_rate:.2f}s)"
         )
         self.sink.start(block)

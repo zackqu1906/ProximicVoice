@@ -13,6 +13,23 @@ import pytest
 def _isolate_app_data(tmp_path, monkeypatch):
     """UI tests must never create synthetic Interactions in the real dataset."""
     monkeypatch.setenv("PROXIMIC_DATA_HOME", str(tmp_path / "app-data"))
+    pytest.importorskip("PySide6")
+    from PySide6 import QtCore
+    import proximic_ring.ui.controller as controller_module
+
+    settings_class = QtCore.QSettings
+
+    class IsolatedSettings(settings_class):
+        def __init__(self, *args, **kwargs):
+            if args[:2] == ("ProxiMic", "ProxiMic Voice"):
+                # The organization/application overload still uses NativeFormat
+                # on macOS despite setDefaultFormat(). Use an explicit file.
+                super().__init__(str(tmp_path / "settings.ini"), settings_class.IniFormat)
+            else:
+                super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(QtCore, "QSettings", IsolatedSettings)
+    monkeypatch.setattr(controller_module, "QSettings", IsolatedSettings)
 
 
 def test_edit_result_summary_is_short_and_user_facing():
@@ -675,6 +692,40 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert history_outcome_detail.property("text") == "结果由目标应用处理，未回读确认"
     assert history_candidate.property("visible") is False
 
+    history_mode = history_item.findChild(QQuickItem, "voiceHistoryModeLabel")
+    # Even stale candidate fields cannot make a failed/cancelled row look applied.
+    for outcome, label in (
+        ("apply_failed", "修改未完成"),
+        ("abandoned", "修改未完成"),
+        ("cancelled", "已取消"),
+        ("cancel", "已取消"),
+        ("recognized", "编辑指令"),
+    ):
+        updated_history_entry.update(
+            outcome=outcome, candidateText="未写入的模型答案",
+            candidateAvailable=True, editSummary="已将原文改为候选",
+        )
+        controller._voice_history_entries = [dict(updated_history_entry)]
+        controller.voiceHistoryChanged.emit()
+        QTest.qWait(50)
+        assert history_primary.property("text") == "编辑指令：测试语音记录"
+        assert history_mode.property("text") == label
+        assert history_candidate.property("visible") is False
+        assert history_summary.property("visible") is False
+        assert history_status.property("visible") is False
+
+    updated_history_entry.update(
+        outcome="applied", candidateText="重试成功的新文本",
+        candidateAvailable=True, editSummary="已将原文改为新文本",
+    )
+    controller._voice_history_entries = [dict(updated_history_entry)]
+    controller.voiceHistoryChanged.emit()
+    QTest.qWait(50)
+    assert history_mode.property("text") == "编辑指令"
+    assert history_candidate.property("visible") is True
+    assert history_candidate.property("text") == "修改结果：重试成功的新文本"
+    assert history_summary.property("visible") is True
+
     assert battery_pill.property("visible") is False
     controller._connected = True
     controller.connectedChanged.emit()
@@ -1074,7 +1125,8 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
         controller.appliedOverlayStyle = style
         app.processEvents()
         assert action_overlay.property("userPositioned") is False
-        assert action_overlay.y() + action_overlay.height() == action_overlay.screen().geometry().height() - 120
+        area = action_overlay.screen().availableGeometry()
+        assert action_overlay.y() + action_overlay.height() == area.y() + area.height() - 120
     window.close()
     controller._close_voice_history()
 
@@ -1086,6 +1138,69 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert restarted._applied_action_hide_timer.interval() == 7000
     assert restarted.modeCorrectionShortcut == "F7"
     restarted._close_voice_history()
+
+
+@pytest.mark.parametrize("origin", [(1440, 100), (-1920, 80), (0, -900)])
+def test_applied_popup_uses_monitor_origin_and_safe_fallback(tmp_path, origin):
+    from PySide6.QtCore import QCoreApplication, QObject, Property, QUrl
+    from PySide6.QtQml import QQmlApplicationEngine
+    from PySide6.QtWidgets import QApplication
+    from proximic_ring.desktop_target import DesktopTargetRef
+    from proximic_ring.ui.controller import AppController, _AppliedInteraction
+
+    existing = QCoreApplication.instance()
+    if existing is not None and not isinstance(existing, QApplication):
+        pytest.skip("QML window test needs QApplication")
+    app = existing or QApplication(["popup-position", "-platform", "offscreen"])
+    left, top = origin
+    area = dict(x=left, y=top, width=1280, height=720)
+
+    class Controller(AppController):
+        @Property("QVariantMap", notify=AppController.interactionChanged)
+        def appliedPopupScreenGeometry(self):
+            return area
+
+    controller = Controller()
+    controller._text_processing_worker.close(wait=True)
+    controller._accessibility_timer.stop()
+    controller._desktop_target = SimpleNamespace(is_foreground=lambda _target: True)
+    controller.appliedOverlayStyle = "compact"
+    engine = QQmlApplicationEngine()
+    engine.rootContext().setContextProperty("appController", controller)
+    engine.load(QUrl.fromLocalFile(str(Path(__file__).parents[1] / "src/proximic_ring/ui/qml/Main.qml")))
+    window = engine.rootObjects()[0]
+    overlay = window.findChild(QObject, "appliedActionOverlay")
+    window.hide()
+
+    try:
+        for session, geometry in enumerate([
+            dict(screen_x=left+300, screen_y=top+450, screen_width=450, screen_height=100,
+                 caret_x=left+500, caret_y=top+480, caret_width=2, caret_height=20),
+            dict(screen_x=left+300, screen_y=top+450, screen_width=450, screen_height=100),
+            {},
+            dict(caret_x=9999, caret_y=9999, caret_width=2, caret_height=20),
+        ], start=1):
+            controller._hide_applied_action_overlay()
+            target = DesktopTargetRef(session, session, process_id=session, **geometry)
+            controller._show_applied_interaction(
+                _AppliedInteraction("dictation", target, session, 0, "测试", "测试"),
+                message="定位测试",
+            )
+            app.processEvents()
+            assert overlay.isVisible()
+            assert overlay.x() >= left + 8
+            assert overlay.y() >= top + 8
+            assert overlay.x() + overlay.width() <= left + 1280 - 8
+            assert overlay.y() + overlay.height() <= top + 720 - 8
+            if session == 1:
+                assert overlay.x() == target.caret_x + target.caret_width + 8
+                assert overlay.y() + overlay.height() == target.screen_y - 40
+            elif session >= 3:
+                assert abs(overlay.x() + overlay.width()/2 - (left+640)) <= 1
+                assert overlay.y() + overlay.height() == top + 720 - 120
+    finally:
+        window.close()
+        controller._close_voice_history()
 
 
 def _legacy_qml_customer_window_loads(tmp_path):
@@ -1372,6 +1487,7 @@ def _legacy_qml_customer_window_loads(tmp_path):
             "text": "测试语音记录",
             "recognized": True,
             "mode": "dictation",
+            "outcome": "applied",
             "candidateText": "测试语音记录",
             "audioPath": str(tmp_path / "voice.wav"),
             "recordPath": str(tmp_path / "record.json"),

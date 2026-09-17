@@ -1,0 +1,418 @@
+{
+  "at": "2026-09-17T05:52:45.327783+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "suite": "screen",
+  "repeat": 3,
+  "prompt_hashes": {
+    "production": {
+      "fragment": "85734014a4869d55d567cd16300929023c114c11b7ea815dfe2a523447caca9d",
+      "full": "becb49505262923026e2141a0e142aed2b446ba5397199762ae33ec401bda2b3"
+    }
+  },
+  "cases": [
+    {
+      "id": "reported_polish",
+      "suite": "screen",
+      "source": "我准备开车去。根本就没有这种开法。",
+      "utterance": "润色一下这段话。",
+      "changed": true,
+      "must_include": [
+        "开车"
+      ],
+      "forbidden": [
+        "公司",
+        "机场",
+        "因为",
+        "交通规则",
+        "危险"
+      ],
+      "review": "保留准备开车及否定这种开法的两层意思，不添加目的地、原因或解释。"
+    },
+    {
+      "id": "natural_polish",
+      "suite": "screen",
+      "source": "这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。",
+      "utterance": "润色一下",
+      "changed": true,
+      "must_include": [
+        "今天",
+        "明天"
+      ],
+      "forbidden": [
+        "保证",
+        "领导"
+      ],
+      "review": "表达更简洁流畅，保留今天完成、明天检查，不新增承诺。"
+    },
+    {
+      "id": "scoped_polish",
+      "suite": "screen",
+      "source": "编号A-17，预算300元。然后这个方案的话我感觉还算可以吧。日期待定。",
+      "utterance": "只润色第二句，其他不动",
+      "changed": true,
+      "starts_with": "编号A-17，预算300元。",
+      "ends_with": "日期待定。",
+      "review": "只改善中间句，保留对方案较温和的评价。"
+    }
+  ],
+  "results": [
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 1,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我准备开车去。根本没有这种开法。",
+          "latency_s": 1.4510837079997145,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我准备开车去。根本没有这种开法。",
+          "latency_s": 1.2437772499997664,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "我准备开车去。根本没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.452
+    },
+    {
+      "case": "natural_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 1,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。\", \"modified_text\": \"我们今天已经做完了，明天再去检查一下。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我们今天已经做完了，明天再去检查一下。",
+          "latency_s": 1.6021871659995668,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"这个事情我们今天已经做完了，明天再去检查一下。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "这个事情我们今天已经做完了，明天再去检查一下。",
+          "latency_s": 1.244321874999514,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "这个事情我们今天已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"modified_text\": \"这个事情我们今天已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.603
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 1,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"然后这个方案的话我感觉还算可以吧。\", \"modified_text\": \"这个方案我感觉还算可以。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "编号A-17，预算300元。这个方案我感觉还算可以。日期待定。",
+          "latency_s": 2.0373624580006435,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"编号A-17，预算300元。这个方案我感觉还算可以。日期待定。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "编号A-17，预算300元。这个方案我感觉还算可以。日期待定。",
+          "latency_s": 1.6643871249998483,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "编号A-17，预算300元。这个方案我感觉还算可以。日期待定。",
+      "raw_returns": [
+        "{\"modified_text\": \"编号A-17，预算300元。这个方案我感觉还算可以。日期待定。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.039
+    },
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 2,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我打算开车去。根本没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我打算开车去。根本没有这种开法。",
+          "latency_s": 2.0434540000005654,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我准备开车去。根本没有这种开法。",
+          "latency_s": 1.6514255000001867,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "我准备开车去。根本没有这种开法。",
+      "raw_returns": [
+        "{\"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.044
+    },
+    {
+      "case": "natural_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 2,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。\", \"modified_text\": \"这件事我们今天已经做完了，明天再去检查一下。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "这件事我们今天已经做完了，明天再去检查一下。",
+          "latency_s": 2.0051469580012053,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"这件事我们今天已经做完了，明天再去检查一下。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "这件事我们今天已经做完了，明天再去检查一下。",
+          "latency_s": 1.8710038749995874,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "这件事我们今天已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"modified_text\": \"这件事我们今天已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.005
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 2,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"然后这个方案的话我感觉还算可以吧。\", \"modified_text\": \"这个方案我感觉还算可以。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "编号A-17，预算300元。这个方案我感觉还算可以。日期待定。",
+          "latency_s": 2.8174331249992974,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"编号A-17，预算300元。这个方案我觉得还算可行。日期待定。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "编号A-17，预算300元。这个方案我觉得还算可行。日期待定。",
+          "latency_s": 2.5967293749999953,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "编号A-17，预算300元。这个方案我觉得还算可行。日期待定。",
+      "raw_returns": [
+        "{\"modified_text\": \"编号A-17，预算300元。这个方案我觉得还算可行。日期待定。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.818
+    },
+    {
+      "case": "natural_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 3,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。\", \"modified_text\": \"这件事我们今天已经做完了，明天再去检查一下。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "这件事我们今天已经做完了，明天再去检查一下。",
+          "latency_s": 1.7091227500004607,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"这件事我们今天已经做完了，明天再去检查一下。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "这件事我们今天已经做完了，明天再去检查一下。",
+          "latency_s": 1.7594346669993683,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "final_text": "这件事我们今天已经做完了，明天再去检查一下。",
+      "raw_returns": [
+        "{\"original_text\": \"这个事情就是我们今天已经做完了，然后明天的话就是再去检查一下。\", \"modified_text\": \"这件事我们今天已经做完了，明天再去检查一下。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 1.76
+    },
+    {
+      "case": "reported_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 3,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我打算开车去。根本没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我打算开车去。根本没有这种开法。",
+          "latency_s": 1.5973181669996848,
+          "error": null,
+          "won": true
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"我准备开车去。根本没有这种开法。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "我准备开车去。根本没有这种开法。",
+          "latency_s": 2.01656337500026,
+          "error": null,
+          "won": false
+        }
+      ],
+      "winner": "fragment",
+      "final_text": "我打算开车去。根本没有这种开法。",
+      "raw_returns": [
+        "{\"original_text\": \"我准备开车去。根本就没有这种开法。\", \"modified_text\": \"我打算开车去。根本没有这种开法。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.017
+    },
+    {
+      "case": "scoped_polish",
+      "variant": "production",
+      "branch": "race",
+      "trial": 3,
+      "branch_traces": [
+        {
+          "branch": "fragment",
+          "raw_returns": [
+            "{\"original_text\": \"然后这个方案的话我感觉还算可以吧。\", \"modified_text\": \"这个方案我感觉还可以。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "编号A-17，预算300元。这个方案我感觉还可以。日期待定。",
+          "latency_s": 2.0768520000001445,
+          "error": null,
+          "won": false
+        },
+        {
+          "branch": "full",
+          "raw_returns": [
+            "{\"modified_text\": \"编号A-17，预算300元。这个方案我感觉还可以。日期待定。\"}"
+          ],
+          "validation": "valid",
+          "candidate_text": "编号A-17，预算300元。这个方案我感觉还可以。日期待定。",
+          "latency_s": 1.9090918340007192,
+          "error": null,
+          "won": true
+        }
+      ],
+      "winner": "full",
+      "final_text": "编号A-17，预算300元。这个方案我感觉还可以。日期待定。",
+      "raw_returns": [
+        "{\"modified_text\": \"编号A-17，预算300元。这个方案我感觉还可以。日期待定。\"}"
+      ],
+      "failures": [],
+      "checks_passed": true,
+      "review_required": true,
+      "elapsed_s": 2.077
+    }
+  ],
+  "summary": {
+    "production": {
+      "passed": 9,
+      "total": 9,
+      "median_s": 2.017
+    }
+  }
+}

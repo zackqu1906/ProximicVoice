@@ -24,7 +24,7 @@ from typing import Callable
 import numpy as np
 
 from .asr import ASRBackendCache
-from .audio import RingAudioSource
+from .audio import MicrophoneSource, RingAudioSource
 from .cli import _build_detector, _build_session_controller
 from .events import Stage2Event
 from .gesture_settings import BoundGestureEvent, GestureBindings
@@ -423,6 +423,9 @@ class RuntimeSettings:
     # decoded 16 kHz PCM16 to the detector, regardless of transport codec.
     encoding: str = "opus"
     data_dir: Path = Path("data")
+    audio_source: str = "ring"
+    microphone_device: str = ""  # Empty means explicitly auto-detect DJI only.
+    speech_control_mode: str = "proximity"
 
     detector_model: Path | None = None
     stage1_threshold: float = 0.005
@@ -458,6 +461,10 @@ class RuntimeSettings:
     imu_sample_rate_hz: int = IMU_SAMPLE_RATE_HZ
 
     def to_namespace(self) -> Namespace:
+        if self.audio_source not in {"ring", "microphone"}:
+            raise ValueError("未知音频来源")
+        if self.speech_control_mode not in {"proximity", "gesture"}:
+            raise ValueError("未知语音启停方式")
         backend = self.asr_backend.strip().lower().replace("-", "_")
         model_entry = f"{backend}={self.asr_model}" if self.asr_model else None
         hotwords = normalize_funasr_nano_hotwords(self.funasr_nano_hotwords)
@@ -509,13 +516,14 @@ class RuntimeSettings:
             asr_stage1_inactivity=self.asr_stage1_inactivity_s,
             asr_min_duration=self.asr_min_duration_s,
             asr_max_duration=self.asr_max_duration_s,
-            asr_end_on_tap=self.asr_end_on_tap,
+            asr_end_on_tap=self.asr_end_on_tap or self.speech_control_mode == "gesture",
+            asr_start_on_gesture=self.speech_control_mode == "gesture",
             disable_proximic_detector=False,
             direct_asr_session_duration=5.0,
             asr_partial_min_interval=0.0,
             desktop_output=self.desktop_output,
             desktop_output_backend=backend if self.desktop_output else None,
-            push_to_talk=self.push_to_talk,
+            push_to_talk=self.push_to_talk and self.speech_control_mode != "gesture",
         )
 
 
@@ -557,6 +565,8 @@ class RecognitionRuntime:
         gesture_bindings_provider: Callable[[], GestureBindings] | None = None,
     ) -> None:
         args = self.settings.to_namespace()
+        gesture_control = self.settings.speech_control_mode == "gesture"
+        end_on_gesture = bool(args.asr_end_on_tap)
         selected_backend = self.settings.asr_backend.strip().lower().replace(
             "-", "_"
         )
@@ -569,7 +579,7 @@ class RecognitionRuntime:
         # dataset metadata; the supplied gesture model requires exactly 200 Hz.
         imu_hz = (
             GESTURE_SAMPLE_RATE_HZ
-            if on_gesture is not None or self.settings.asr_end_on_tap
+            if on_gesture is not None or end_on_gesture
             else self.settings.imu_sample_rate_hz
         )
         imu_buffer = (
@@ -587,7 +597,13 @@ class RecognitionRuntime:
             imu_observer=imu_buffer.append if imu_buffer is not None else None,
             battery_observer=on_battery,
             imu_hz=imu_hz,
+            **({"audio_enabled": False} if self.settings.audio_source == "microphone" else {}),
         )
+        microphone = (
+            MicrophoneSource(selection=self.settings.microphone_device)
+            if self.settings.audio_source == "microphone" else None
+        )
+        audio_source = microphone if microphone is not None else source
         gesture_worker = None
         gestures_enabled = threading.Event()
         gesture_error_reported = False
@@ -642,10 +658,16 @@ class RecognitionRuntime:
                         on_stopping()
             with source_close_lock:
                 if not source_disconnected.is_set():
-                    source.close()
-                    source_disconnected.set()
-                    if connection_attempted.is_set():
-                        on_disconnected()
+                    try:
+                        if microphone is not None:
+                            microphone.close()
+                    finally:
+                        try:
+                            source.close()
+                        finally:
+                            source_disconnected.set()
+                            if connection_attempted.is_set():
+                                on_disconnected()
 
         def stop_source_when_requested() -> None:
             while not watcher_done.wait(0.1):
@@ -655,6 +677,10 @@ class RecognitionRuntime:
                 if source.error is not None:
                     on_state(f"设备连接已中断：{source.error}")
                     disconnect_event.set()
+                    close_source_and_report()
+                    return
+                if microphone is not None and microphone.error is not None:
+                    on_state(f"[AUDIO_INPUT_ERROR] {microphone.error}")
                     close_source_and_report()
                     return
 
@@ -683,8 +709,11 @@ class RecognitionRuntime:
 
             if disconnect_event.is_set():
                 return
-            on_state("正在加载 ProxiMic 检测模型…")
-            detector = _build_detector(args)
+            if gesture_control:
+                on_state("纯手势启停：已跳过近点检测模型")
+            else:
+                on_state("正在加载 ProxiMic 检测模型…")
+                detector = _build_detector(args)
             if source.error is not None:
                 raise RuntimeError(str(source.error)) from source.error
             if disconnect_event.is_set():
@@ -716,7 +745,7 @@ class RecognitionRuntime:
             if disconnect_event.is_set():
                 return
 
-            if on_gesture is not None or self.settings.asr_end_on_tap:
+            if on_gesture is not None or end_on_gesture:
                 on_state("正在加载电脑端手势模型…")
                 try:
                     from ring_python_sdk.gestures import GestureRecognizer, GestureWorker
@@ -732,24 +761,31 @@ class RecognitionRuntime:
                             gestures_enabled.is_set()
                             and not disconnect_event.is_set()
                             and source.error is None
+                            and (microphone is None or microphone.error is None)
                         )
                         is_confirm_endpoint = (
-                            self.settings.asr_end_on_tap
+                            end_on_gesture
                             and bool(name) and name in bindings.confirm
                         )
                         confirm_requested = False
+                        requested_action = "end"
                         if accepted and is_confirm_endpoint:
                             # Do this before logging or queuing any GUI work.
                             # The audio producer owns END and closes the normal
                             # interaction gate before submitting final ASR.
-                            confirm_requested = (
+                            can_request = (
                                 recognition_event.is_set()
                                 and not (
                                     cancel_utterance_event is not None
                                     and cancel_utterance_event.is_set()
                                 )
-                                and controller.request_tap_end()
                             )
+                            if can_request:
+                                if gesture_control:
+                                    requested_action = controller.request_gesture_toggle()
+                                    confirm_requested = requested_action is not None
+                                else:
+                                    confirm_requested = controller.request_tap_end()
                         # Record model output before application state gating.
                         on_state("[GESTURE_RECOGNIZED] " + json.dumps({
                             "name": getattr(event, "name", ""),
@@ -758,13 +794,14 @@ class RecognitionRuntime:
                             "forwarded": accepted,
                             "reason": (
                                 "runtime_stopped" if not accepted else
-                                "confirm_end_requested" if confirm_requested else
+                                f"confirm_{requested_action}_requested" if confirm_requested else
                                 "no_active_utterance_or_duplicate" if is_confirm_endpoint else
                                 "ui_dispatch"
                             ),
                         }, ensure_ascii=False))
                         if confirm_requested:
-                            on_state(f"[手势] {name} → 结束本句")
+                            action_label = "开始本句" if requested_action == "start" else "结束本句"
+                            on_state(f"[手势] {name} → {action_label}")
                         if accepted and not is_confirm_endpoint and on_gesture is not None:
                             on_gesture(
                                 BoundGestureEvent(event, bindings)
@@ -797,9 +834,11 @@ class RecognitionRuntime:
                 except Exception as exc:
                     gestures_enabled.clear()
                     gesture_error_reported = True
+                    if gesture_control:
+                        raise RuntimeError(f"纯手势模式无法启动：手势模型不可用：{exc}") from exc
                     on_state(
                         f"电脑端手势不可用，确认手势无法结束语音，请用 Esc 取消本句并重连：{exc}"
-                        if self.settings.asr_end_on_tap else
+                        if end_on_gesture else
                         f"电脑端手势不可用，按键和语音继续工作：{exc}"
                     )
             if disconnect_event.is_set():
@@ -807,12 +846,32 @@ class RecognitionRuntime:
 
             on_state("模型加载完成，正在启动并确认实时音频…")
             source.start_stream(buffer_audio=True)
+            if disconnect_event.is_set():
+                return
+            if microphone is not None:
+                try:
+                    microphone.open()
+                    if microphone.read(320) is None or disconnect_event.is_set():
+                        return
+                except Exception as exc:
+                    on_state(f"[AUDIO_INPUT_ERROR] {exc}")
+                    raise
+                on_state(f"音频来源：{microphone.device_name}（电脑麦克风）；Ring 仅提供手势")
+            else:
+                on_state("音频来源：Ring 麦克风")
             next_gesture_status_at = time.monotonic() + GESTURE_STATUS_INTERVAL_S
             recognition_was_enabled = False
             on_started()
             while not disconnect_event.is_set():
-                block = source.read(320)
+                try:
+                    block = audio_source.read(320)
+                except Exception as exc:
+                    if microphone is not None:
+                        on_state(f"[AUDIO_INPUT_ERROR] {exc}")
+                    raise
                 if block is None:
+                    break
+                if disconnect_event.is_set():
                     break
                 if gesture_worker is not None and not gesture_error_reported:
                     gesture_error = gesture_worker.error or getattr(
@@ -823,9 +882,11 @@ class RecognitionRuntime:
                     if gesture_error is not None:
                         gesture_error_reported = True
                         gestures_enabled.clear()
+                        if gesture_control:
+                            raise RuntimeError(f"纯手势模式已停止：{gesture_error}") from gesture_error
                         on_state(
                             f"电脑端手势已停止，确认手势无法结束语音，请用 Esc 取消本句并重连：{gesture_error}"
-                            if self.settings.asr_end_on_tap else
+                            if end_on_gesture else
                             f"电脑端手势已停止，按键和语音继续工作：{gesture_error}"
                         )
                 if gesture_worker is not None and time.monotonic() >= next_gesture_status_at:
@@ -840,7 +901,7 @@ class RecognitionRuntime:
                     on_state("[GESTURE_STATUS] " + json.dumps(stats, ensure_ascii=False))
                     next_gesture_status_at = time.monotonic() + GESTURE_STATUS_INTERVAL_S
                 block_end_monotonic_ns = int(
-                    getattr(source, "last_read_end_monotonic_ns", 0)
+                    getattr(audio_source, "last_read_end_monotonic_ns", 0)
                     or time.monotonic_ns()
                 )
 
@@ -852,7 +913,8 @@ class RecognitionRuntime:
                     discard_current = getattr(controller, "discard_current", None)
                     if callable(discard_current):
                         discard_current()
-                    detector.reset()
+                    if detector is not None:
+                        detector.reset()
                     # Keep the user's recognition on/off choice unchanged.
                     # The next block begins with clean detector/session clocks.
                     recognition_was_enabled = recognition_event.is_set()
@@ -864,17 +926,22 @@ class RecognitionRuntime:
                         # Finish the current utterance once, then discard
                         # detector/ASR history captured before the pause.
                         controller.reset()
-                        detector.reset()
+                        if detector is not None:
+                            detector.reset()
                     recognition_was_enabled = False
                     continue
 
                 if not recognition_was_enabled:
                     # Detector and controller sample clocks must restart
                     # together because DetectionEvent uses sample indexes.
-                    detector.reset()
-                    controller.reset()
+                    if detector is not None:
+                        detector.reset()
+                    # A gesture can be queued between enable and this first
+                    # audio block. Gesture sessions have no pre-roll to reset.
+                    if not gesture_control:
+                        controller.reset()
                 recognition_was_enabled = True
-                if stage1_threshold_provider is not None:
+                if detector is not None and stage1_threshold_provider is not None:
                     try:
                         live_threshold = float(stage1_threshold_provider())
                         if (
@@ -887,7 +954,7 @@ class RecognitionRuntime:
                             )
                     except (TypeError, ValueError):
                         pass
-                # ProxiMic always evaluates the untouched Ring waveform.  Gain
+                # ProxiMic evaluates the selected source's untouched waveform. Gain
                 # is applied only after detection, so both ASR and the raw
                 # utterance observer/history receive the same enhanced audio.
                 was_active = bool(getattr(controller, "active", False))
@@ -895,7 +962,7 @@ class RecognitionRuntime:
                 # skip Stage2 inference entirely, keeping audio and gestures
                 # free from reject inference and its CPU/GIL scheduling cost.
                 events = (
-                    [] if self.settings.asr_end_on_tap and was_active
+                    [] if gesture_control or (end_on_gesture and was_active)
                     else detector.feed(block)
                 )
                 for event in events:
@@ -914,11 +981,12 @@ class RecognitionRuntime:
                     events,
                     block_end_monotonic_ns=block_end_monotonic_ns,
                 )
-                if self.settings.asr_end_on_tap and was_active and not controller.active:
+                if end_on_gesture and was_active and not controller.active:
                     # Reset even if a very fast final/application already
                     # reopened recognition before this loop saw the pause.
                     controller.reset()
-                    detector.reset()
+                    if detector is not None:
+                        detector.reset()
                     recognition_was_enabled = False
                 set_continuation_mode = getattr(
                     detector, "set_continuation_mode", None
