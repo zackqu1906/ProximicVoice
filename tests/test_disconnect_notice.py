@@ -9,7 +9,6 @@ from test_interaction_controls import _controller, _close
 @pytest.fixture
 def controller(tmp_path, monkeypatch):
     value = _controller(tmp_path, monkeypatch)
-    value._accessibility_timer.stop()
     value._device_name = "Ringo2CC7"
     value._runtime_active = value._runtime_had_connection = value._connected = True
     value._recognition_enabled = True

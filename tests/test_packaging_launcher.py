@@ -50,6 +50,18 @@ def test_packaged_qml_runtime_check_requires_every_imported_module(tmp_path) -> 
         launcher._verify_bundled_qml_runtime(tmp_path)
 
 
+def test_frozen_installer_command_does_not_start_ui_or_require_python(monkeypatch) -> None:
+    from proximic_ring import input_method_install
+    launcher = _load_launcher()
+    monkeypatch.setattr(launcher.sys, "argv", ["/Applications/Proximic Voice.app/Contents/MacOS/ProximicVoice", "--input-method", "install"])
+    monkeypatch.setattr(launcher.multiprocessing, "freeze_support", lambda: None)
+    monkeypatch.setattr(launcher, "run", lambda: pytest.fail("installer must not start a second ASR host"))
+    calls = []
+    monkeypatch.setattr(input_method_install, "main", lambda args: calls.append(args) or 0)
+    assert launcher._entrypoint() == 0
+    assert calls == [["install"]]
+
+
 def test_open_startup_log_rotates_oversized_previous_run(
     monkeypatch, tmp_path
 ) -> None:
@@ -92,7 +104,7 @@ def test_package_self_check_configures_headless_ui(monkeypatch, tmp_path) -> Non
     monkeypatch.setitem(sys.modules, "proximic_ring.runtime_paths", runtime_paths)
 
     opus_codec = types.ModuleType("ring_python_sdk.audio.opus_codec")
-    opus_codec.OrderedOpusDecoder = lambda **_kwargs: object()
+    opus_codec.OpusBlockDecoder = lambda: types.SimpleNamespace(decode_block=lambda block: bytes(3200))
     monkeypatch.setitem(sys.modules, "ring_python_sdk.audio.opus_codec", opus_codec)
 
     ui_main = types.ModuleType("proximic_ring.ui.main")

@@ -108,26 +108,62 @@ class ProximitySessionController:
         self._accept_tap = False
         self._tap_requested_ns: int | None = None
         self._gesture_start_requested = False
+        self._gesture_preparation = None
 
-    def request_gesture_toggle(self) -> str | None:
+    def request_gesture_toggle(self, prepare_start=None) -> str | None:
         """Queue one transition; never mutate a session on the gesture thread."""
+        token = None
+        cancel_preparation = False
         with self._tap_lock:
             if not self.start_on_gesture:
                 return None
-            if self._accept_tap:
+            if self._gesture_preparation is not None:
+                self._gesture_preparation = None
+                cancel_preparation = True
+            elif self._accept_tap:
                 if self._tap_requested_ns is not None:
                     return None
                 self._tap_requested_ns = time.monotonic_ns()
                 return "end"
-            if self._active or self._gesture_start_requested:
+            elif self._active or self._gesture_start_requested:
                 return None
-            self._gesture_start_requested = True
-            return "start"
+            elif prepare_start is None:
+                self._gesture_start_requested = True
+                return "start"
+            else:
+                token = object()
+                self._gesture_preparation = token
+        # GUI/native activation is asynchronous. Never hold the audio/gesture
+        # lock across it, and never start an ASR session before its ACK.
+        if cancel_preparation:
+            if prepare_start is not None:
+                prepare_start(None)
+            return "cancel_start"
+        def complete(accepted):
+            with self._tap_lock:
+                if self._gesture_preparation is not token:
+                    return
+                self._gesture_preparation = None
+                self._gesture_start_requested = bool(accepted)
+        try:
+            prepare_start(complete)
+        except Exception:
+            complete(False)
+            raise
+        return "start"
 
     def request_tap_end(self) -> bool:
         """Bind one tap to the currently open session; idle/repeated taps are inert."""
         with self._tap_lock:
             if not self._accept_tap or self._tap_requested_ns is not None:
+                return False
+            self._tap_requested_ns = time.monotonic_ns()
+            return True
+
+    def request_user_end(self) -> bool:
+        """End the active sentence for an explicit UI conversion command."""
+        with self._tap_lock:
+            if not self._active or self._tap_requested_ns is not None:
                 return False
             self._tap_requested_ns = time.monotonic_ns()
             return True
@@ -140,6 +176,7 @@ class ProximitySessionController:
 
     def _clear_tap_endpoint(self) -> None:
         with self._tap_lock:
+            self._gesture_preparation = None
             self._accept_tap = False
             self._tap_requested_ns = None
             self._gesture_start_requested = False
@@ -334,6 +371,12 @@ class ProximitySessionController:
         self._consecutive_rejects = 0
         self._first_reject_cutoff_sample = None
         self._manual_was_active = False
+
+    def cancel_pending(self) -> None:
+        """Cancel backend work even if the user already ended the audio sentence."""
+        cancel = getattr(self.sink, "cancel_pending", None)
+        if callable(cancel):
+            cancel()
 
     def reset(self) -> None:
         """Flush/discard the current utterance and restart the detector-aligned clock.
@@ -675,6 +718,11 @@ class DirectASRSessionController:
         self._active = False
         self._session_start_monotonic_ns = None
         self._last_block_end_monotonic_ns = None
+
+    def cancel_pending(self) -> None:
+        cancel = getattr(self.sink, "cancel_pending", None)
+        if callable(cancel):
+            cancel()
 
     def close(self) -> None:
         self.flush()

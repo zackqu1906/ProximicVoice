@@ -23,14 +23,15 @@ FRAGMENT_EDIT_TOOL = {
                     "type": "string",
                     "description": (
                         "从待修改文本逐字复制并完整覆盖修改位置。"
-                        "需要替换全部重复项时可以是重复片段；只修改一处时"
-                        "加入上下文，使该片段唯一。"
+                        "需要替换全部重复项时可以是重复片段；只修改重复项中的一处时"
+                        "选取完整原文，避免把其他重复项一起替换。"
                     ),
                 },
                 "modified_text": {
                     "type": "string",
                     "description": (
-                        "用于替换 original_text 的完整新片段，不是整篇文本；"
+                        "用于替换 original_text 的完整新内容；"
+                        "original_text 选取全文时，这里返回修改后的全文；"
                         "删除该片段时返回空字符串。"
                     ),
                 },

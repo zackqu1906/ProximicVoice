@@ -1,0 +1,20 @@
+{"case": "delete_repeated", "variant": "after", "branch": "full", "result": "好的。我们明天见。", "characters": 9, "failures": [], "elapsed_s": 1.121}
+{"case": "delete_repeated", "variant": "after", "branch": "fragment", "result": "好的。我们明天见。", "characters": 9, "failures": [], "elapsed_s": 1.377}
+{"case": "spelling", "variant": "after", "branch": "fragment", "result": "请安装 numby，然后运行程序。", "characters": 16, "failures": ["exact_text"], "elapsed_s": 1.391}
+{"case": "spelling", "variant": "after", "branch": "full", "result": "请安装 numpy，然后运行程序。", "characters": 16, "failures": [], "elapsed_s": 1.431}
+{"case": "missing_target", "variant": "after", "branch": "fragment", "result": "明天去买菜。", "characters": 6, "failures": [], "elapsed_s": 2.037}
+{"case": "missing_target", "variant": "after", "branch": "full", "result": "明天去买菜。", "characters": 6, "failures": [], "elapsed_s": 1.941}
+{"case": "ambiguous", "variant": "after", "branch": "fragment", "result": "上午三点开会，下午三点培训。", "characters": 14, "failures": [], "elapsed_s": 2.022}
+{"case": "ambiguous", "variant": "after", "branch": "full", "result": "上午三点开会，下午三点培训。", "characters": 14, "failures": [], "elapsed_s": 2.118}
+{"case": "holdout_spelling", "variant": "after", "branch": "fragment", "result": "我们使用 matplotlib 画图。", "characters": 17, "failures": [], "elapsed_s": 1.63}
+{"case": "holdout_spelling", "variant": "after", "branch": "full", "result": "我们使用 matplotlib 画图。", "characters": 17, "failures": [], "elapsed_s": 1.734}
+{"case": "holdout_name", "variant": "after", "branch": "fragment", "result": "请联系陈晴。", "characters": 6, "failures": [], "elapsed_s": 1.64}
+{"case": "holdout_name", "variant": "after", "branch": "full", "result": "请联系陈晴。", "characters": 6, "failures": [], "elapsed_s": 2.391}
+{"case": "holdout_delete", "variant": "after", "branch": "full", "result": "谢谢。材料已收到。", "characters": 9, "failures": [], "elapsed_s": 1.784}
+{"case": "holdout_delete", "variant": "after", "branch": "fragment", "result": "谢谢。材料已收到。", "characters": 9, "failures": [], "elapsed_s": 2.049}
+{"case": "holdout_replace_first", "variant": "after", "branch": "fragment", "result": "先说早上好，再说你好。", "characters": 11, "failures": [], "elapsed_s": 1.786}
+{"case": "holdout_missing", "variant": "after", "branch": "full", "result": "这束花很好看。", "characters": 7, "failures": [], "elapsed_s": 1.625}
+{"case": "holdout_replace_first", "variant": "after", "branch": "full", "result": "先说早上好，再说你好。", "characters": 11, "failures": [], "elapsed_s": 2.523}
+{"case": "holdout_missing", "variant": "after", "branch": "fragment", "result": "这束花很好看。", "characters": 7, "failures": [], "elapsed_s": 1.63}
+{"case": "holdout_ambiguous", "variant": "after", "branch": "fragment", "result": "小王周一来，小李周一来。", "characters": 12, "failures": [], "elapsed_s": 3.796}
+{"case": "holdout_ambiguous", "variant": "after", "branch": "full", "result": "小王周一来，小李周一来。", "characters": 12, "failures": [], "elapsed_s": 3.145}

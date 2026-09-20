@@ -89,13 +89,13 @@ def test_macos_desktop_output_migrates_old_forced_off_setting(tmp_path, monkeypa
     settings.sync()
     monkeypatch.setattr(sys, "platform", "darwin")
 
-    controller = AppController()
+    controller = AppController(inline_input_enabled=False)
     assert controller.desktopOutputEnabled is True
     assert controller._settings.value("input/macosDesktopOutputMigrated") is True
     controller.desktopOutputEnabled = False
     controller._text_processing_worker.close(wait=True)
 
-    restarted = AppController()
+    restarted = AppController(inline_input_enabled=False)
     assert restarted.desktopOutputEnabled is False
     restarted._text_processing_worker.close(wait=True)
 
@@ -113,9 +113,8 @@ def test_macos_edit_does_not_report_success_without_verified_replacement(
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     monkeypatch.setattr(sys, "platform", "darwin")
-    controller = AppController()
+    controller = AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
-    controller._accessibility_timer.stop()
     target = DesktopTargetRef(0, 0, "测试编辑器", process_id=4321)
 
     class TargetThatIgnoresReplacement:
@@ -164,9 +163,8 @@ def test_macos_edit_accepts_equivalent_line_endings_and_unicode(
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     monkeypatch.setattr(sys, "platform", "darwin")
-    controller = AppController()
+    controller = AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
-    controller._accessibility_timer.stop()
     target = DesktopTargetRef(0, 0, "测试编辑器", process_id=4321)
 
     class NormalizingTarget:
@@ -208,10 +206,9 @@ def test_applied_dictation_and_edit_stay_visible_until_undo(
     _app = QCoreApplication.instance() or QCoreApplication(["applied-undo"])
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
-    controller = AppController()
+    controller = AppController(inline_input_enabled=False)
     request.addfinalizer(controller._close_voice_history)
     controller._text_processing_worker.close(wait=True)
-    controller._accessibility_timer.stop()
     monkeypatch.setattr(controller, "_copy_text_to_clipboard", lambda _text: None)
     target = DesktopTargetRef(10, 20, "测试编辑器", process_id=30)
 
@@ -370,7 +367,7 @@ def test_auto_routing_dispatches_to_dictation_and_edit_with_timing_log(
     _app = QCoreApplication.instance() or QCoreApplication(["routing-test"])
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
-    controller = AppController()
+    controller = AppController(inline_input_enabled=False)
     controller._llm_enabled = True
     controller._input_routing_mode = "manual"
     controller._text_processing_worker.close(wait=True)
@@ -475,7 +472,7 @@ def test_device_scan_keeps_one_snapshot_until_manual_rescan(tmp_path, monkeypatc
     _app = QCoreApplication.instance() or QCoreApplication(["device-scan-test"])
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
-    controller = AppController()
+    controller = AppController(inline_input_enabled=False)
     scans = []
     monkeypatch.setattr(controller, "_scan_devices_once", lambda: scans.append(True))
 
@@ -537,10 +534,10 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     QSettings("ProxiMic", "ProxiMic Voice").remove(
         "input/modeCorrectionShortcut"
     )
-    controller = AppController()
+    controller = AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
-    controller._accessibility_timer.stop()
     assert controller.smartAssociationEnabled is False
+    controller.speechControlMode = "proximity"  # This test exercises the proximity sensitivity controls.
 
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("appController", controller)
@@ -777,7 +774,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert settings_back_button is not None
     assert settings_back_button.property("text") == "返回"
     assert settings_apply_button is not None
-    assert settings_apply_button.property("text") == "应用"
+    assert settings_apply_button.property("text") == "完成"
     assert applied_overlay_style_combo is not None
     assert applied_overlay_duration_slider is not None
     assert mode_correction_shortcut_combo is not None
@@ -826,12 +823,14 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     assert gesture_selectors[("confirm", 0)].property("currentText") == "轻点（tap）"
     assert gesture_selectors[("confirm", 1)].property("currentText") == "未设置"
     assert gesture_selectors[("undo", 0)].property("currentText") == "左滑"
-    assert gesture_selectors[("undo", 1)].property("currentText") == "下滑"
+    assert gesture_selectors[("undo", 1)].property("currentText") == "未设置"
     assert gesture_selectors[("switch_mode", 0)].property("currentText") == "右滑"
-    assert gesture_selectors[("switch_mode", 1)].property("currentText") == "上滑"
+    assert gesture_selectors[("switch_mode", 1)].property("currentText") == "未设置"
     from PySide6.QtCore import Q_ARG
 
     # Exercise the actual QML activation handler and rejected-selection reset.
+    QMetaObject.invokeMethod(window.findChild(QObject, "settingsCategory2"), "click")
+    app.processEvents()
     confirm_combo = gesture_selectors[("confirm", 0)]
     confirm_combo.setProperty("currentIndex", 0)
     assert QMetaObject.invokeMethod(confirm_combo, "activated", Q_ARG(int, 0))
@@ -883,6 +882,8 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     controller.connectedChanged.emit()
     app.processEvents()
     QMetaObject.invokeMethod(settings_dialog, "goBack")
+    assert settings_dialog.property("currentPage") == 0
+    QMetaObject.invokeMethod(settings_dialog, "goBack")
     QTest.qWait(400)
     assert settings_dialog.property("visible") is False
     QMetaObject.invokeMethod(settings_button, "click")
@@ -910,9 +911,9 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     processing_switch = window.findChild(QObject, "processingSwitchModeButton")
     assert processing_switch is not None
     for button in (cancel_button, undo_button):
-        assert button.property("inputHint") == "Esc · 左滑/下滑"
+        assert button.property("inputHint") == "Esc · 左滑"
     for button in (processing_switch, switch_button):
-        assert button.property("inputHint") == "F7 · 右滑/上滑"
+        assert button.property("inputHint") == "F7 · 右滑"
     status_text = window.findChild(QObject, "statusOverlayText")
     asr_text = window.findChild(QObject, "asrOverlayText")
     assert status_text is not None
@@ -931,7 +932,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     for button in (cancel_button, undo_button):
         assert button.property("inputHint") == "Esc · 轻点"
     for button in (processing_switch, switch_button):
-        assert button.property("inputHint") == "F7 · 左滑/上滑"
+        assert button.property("inputHint") == "F7 · 左滑"
     assert controller.setGestureBinding("undo", 0, "")
     app.processEvents()
     for button in (cancel_button, undo_button):
@@ -939,7 +940,7 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     controller.resetGestureBindings()
     app.processEvents()
     for button in (cancel_button, undo_button):
-        assert button.property("inputHint") == "Esc · 左滑/下滑"
+        assert button.property("inputHint") == "Esc · 左滑"
 
     controller._apply_runtime_update("正在形成的识别文本", False, "", 41)
     app.processEvents()
@@ -1131,9 +1132,8 @@ def test_qml_overlay_redesign_loads_and_separates_status_from_actions(tmp_path):
     controller._close_voice_history()
 
     controller._settings.sync()
-    restarted = AppController()
+    restarted = AppController(inline_input_enabled=False)
     restarted._text_processing_worker.close(wait=True)
-    restarted._accessibility_timer.stop()
     assert restarted.appliedOverlayDurationSeconds == 7
     assert restarted._applied_action_hide_timer.interval() == 7000
     assert restarted.modeCorrectionShortcut == "F7"
@@ -1160,9 +1160,8 @@ def test_applied_popup_uses_monitor_origin_and_safe_fallback(tmp_path, origin):
         def appliedPopupScreenGeometry(self):
             return area
 
-    controller = Controller()
+    controller = Controller(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
-    controller._accessibility_timer.stop()
     controller._desktop_target = SimpleNamespace(is_foreground=lambda _target: True)
     controller.appliedOverlayStyle = "compact"
     engine = QQmlApplicationEngine()
@@ -1225,7 +1224,7 @@ def _legacy_qml_customer_window_loads(tmp_path):
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     QSettings("ProxiMic", "ProxiMic Voice").remove("asr/gainDb")
-    controller = AppController()
+    controller = AppController(inline_input_enabled=False)
     controller.smartAssociationEnabled = False
     controller._llm_enabled = True
     controller._input_routing_mode = "manual"
@@ -1563,8 +1562,13 @@ def _legacy_qml_customer_window_loads(tmp_path):
         r"\[\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}\] 最新日志",
         controller.logText,
     )
+    # Hidden logs no longer re-layout their entire history on each event.
+    previous_log_cursor = log_area.property("cursorPosition")
+    QMetaObject.invokeMethod(runtime_log_dialog, "open")
+    QTest.qWait(250)
     assert log_area.property("text") == controller.logText
-    assert log_area.property("cursorPosition") == len(log_area.property("text"))
+    assert log_area.property("cursorPosition") == previous_log_cursor
+    QMetaObject.invokeMethod(runtime_log_dialog, "close")
     assert controller.inputMode == "dictation"
     assert input_routing_mode_combo is not None
     assert auto_mode_badge is not None

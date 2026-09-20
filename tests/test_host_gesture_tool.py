@@ -226,7 +226,30 @@ def test_missing_weights_report_failure_and_close_files(tmp_path, monkeypatch):
     assert summary["received_samples"] == 0
 
 
-@pytest.mark.parametrize("args", [["--stable-window", "0"], ["--positive-ratio", "nan"],
+def test_density_records_sparse_ids_and_keeps_event_probabilities_absent(tmp_path):
+    from proximic_ring.host_gestures import GestureRecognizer as DensityRecognizer
+    from test_host_density_gestures import ScriptedDensityModel
+
+    recorder = tool.HostRecorder(tmp_path / "density", source="test")
+    recognizer = DensityRecognizer(model=ScriptedDensityModel(),
+                                   on_prediction=recorder.on_prediction,
+                                   on_gesture=recorder.on_gesture)
+    for index in range(320):
+        recognizer.feed([index] * 6, timestamp_ms=index * 5)
+    recorder.finish(worker=GestureWorker(recognizer), metadata={}, reason="test", imu_stats={})
+    with (recorder.output_dir / "results.csv").open(encoding="utf-8-sig") as source:
+        rows = list(csv.DictReader(source))
+    assert len(rows) == 18
+    predictions = [row for row in rows if row["kind"] == "prediction"]
+    assert any(float(row["p12"]) > .8 for row in predictions)
+    assert any(float(row["p13"]) > .8 for row in predictions)
+    assert "p10" not in rows[0] and "p11" not in rows[0]
+    events = [row for row in rows if row["kind"] == "gesture"]
+    assert [row["class_id"] for row in events] == ["6", "12", "5", "13"]
+    assert all(row["p5"] == row["p12"] == "" for row in events)
+
+
+@pytest.mark.parametrize("args", [["--packet-timestamp-tolerance-ms", "-1"], ["--packet-timestamp-tolerance-ms", "nan"],
                                     ["--duration", "-1"], ["--torch-threads", "0"]])
 def test_invalid_configuration_rejected(args):
     with pytest.raises(SystemExit) as error:

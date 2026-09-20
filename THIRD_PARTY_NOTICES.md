@@ -39,6 +39,15 @@ Proximic Voice connects to third-party projects without committing their downloa
 - The host gesture module and bundled `gestures/assets/swipe.pt` were supplied in
   `ring-python-sdk-feat-ringo-gestures-sdk`. Their ai-ring source revision and
   original license status are recorded in `src/ring_python_sdk/gestures/NOTICE.md`.
+- The active host gesture path uses the density subset of MythLink/ring-python-sdk,
+  branch `ringo`, commit `d7353047ad92006143c772e765c3f17a72c6290b`.
+  Its original CPU checkpoint, inference, stream and decoder are vendored under
+  `src/ring_python_sdk/ringo/gestures`; `VENDORED.json` records file checksums.
+  ai-ring source: `streaming`, commit `a621886ba1d74eadd96b362aee82c190792484eb`.
+  The package initializer exports only the density subset. Application wiring in
+  `proximic_ring/host_gestures.py` preserves saved tap names, worker diagnostics,
+  missing-sample resets and bounded packet timestamp jitter handling. See the
+  vendored `NOTICE.md` and `UPSTREAM.md` for original authorship and mappings.
 - License: no standalone license file was found in the supplied snapshot. Redistribution permission
   must be confirmed with the SDK/device provider before this repository is made public.
 

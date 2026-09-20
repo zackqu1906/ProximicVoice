@@ -24,15 +24,18 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from ring_python_sdk import RingSession  # noqa: E402
 from ring_python_sdk.ble import scan_all_devices  # noqa: E402
 from ring_python_sdk.core.constants import IMU_ENCODE_RAW, INFO_COMP_IMU  # noqa: E402
-from ring_python_sdk.gestures import (  # noqa: E402
-    GESTURE_NAMES, GestureClassifier, GestureRecognizer, GestureWorker, ImuGestureAdapter,
+from ring_python_sdk.gestures import GestureWorker  # noqa: E402
+from proximic_ring.host_gestures import (  # noqa: E402
+    GESTURE_IDS, GESTURE_NAMES, GestureClassifier, GestureRecognizer, MODEL_PATH,
+    MODEL_NAME, SDK_REVISION,
 )
+from proximic_ring.gesture_settings import GESTURE_LABELS  # noqa: E402
 from ring_python_sdk.imu.frame import apply_chip_to_host_physical  # noqa: E402
 from ring_python_sdk.imu.processor import ImuSample  # noqa: E402
 
 
-LABELS = ("无手势", "上滑", "下滑", "左滑", "右滑", "点击/捏合", "响指")
-MODEL_PATH = PROJECT_ROOT / "src/ring_python_sdk/gestures/assets/swipe.pt"
+LABELS = {identifier: GESTURE_LABELS.get(name, "无手势")
+          for identifier, name in zip(GESTURE_IDS, GESTURE_NAMES)}
 SAMPLE_FIELDS = [
     "sample_index", "packet_seq", "uptime_ms", "received_at_utc", "elapsed_s",
     "ax_ms2", "ay_ms2", "az_ms2", "gx_dps", "gy_dps", "gz_dps",
@@ -41,7 +44,7 @@ SAMPLE_FIELDS = [
 RESULT_FIELDS = [
     "source", "kind", "processed_at_utc", "elapsed_s", "device_timestamp_ms",
     "class_id", "name", "name_zh", "confidence", "gesture_index",
-    "gesture_interval_device_ms", *(f"p{i}" for i in range(7)),
+    "gesture_interval_device_ms", *(f"p{i}" for i in GESTURE_IDS),
 ]
 
 
@@ -124,7 +127,10 @@ class HostRecorder:
                        elapsed_s=now - self.started, device_timestamp_ms=device_ms,
                        class_id=result.class_id, name=result.name,
                        name_zh=LABELS[result.class_id], confidence=result.confidence)
-            row.update({f"p{i}": value for i, value in enumerate(result.probabilities)})
+            # Density IDs are sparse (0–9, 12, 13); event-level pooled vectors
+            # are unavailable and intentionally remain blank in the CSV.
+            class_ids = getattr(result, "class_ids", range(len(result.probabilities)))
+            row.update({f"p{i}": value for i, value in zip(class_ids, result.probabilities)})
             if kind == "gesture":
                 self.gesture_count += 1
                 self.gesture_counts[result.name] += 1
@@ -194,7 +200,7 @@ class HostRecorder:
         (self.output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         print(f"\n测试结束：{reason} | IMU={self.received_samples} 分类={self.prediction_count} 手势={self.gesture_count}")
         for name, count in self.gesture_counts.items():
-            print(f"  {LABELS[GESTURE_NAMES.index(name)]} ({name}): {count}")
+            print(f"  {GESTURE_LABELS.get(name, name)} ({name}): {count}")
         print(f"记录目录：{self.output_dir}", flush=True)
 
 
@@ -207,11 +213,9 @@ def create_recognizer(args, recorder: HostRecorder) -> GestureRecognizer:
     classifier = GestureClassifier()
     classifier.predict(np.zeros((60, 6), dtype=np.float32))
     return GestureRecognizer(
-        classifier=classifier,
-        adapter=ImuGestureAdapter(mount_angle_deg=args.mount_angle, mount_radius_m=args.mount_radius),
+        model=classifier.model,
         on_prediction=recorder.on_prediction, on_gesture=recorder.on_gesture,
-        step_frames=args.step_frames, stable_window_seconds=args.stable_window,
-        positive_ratio=args.positive_ratio, reset_delay_frames=args.cooldown_frames,
+        packet_timestamp_tolerance_ms=args.packet_timestamp_tolerance_ms,
     )
 
 
@@ -283,11 +287,10 @@ async def run(args) -> int:
     source = "replay" if args.replay else "synthetic_host" if args.demo else "live_host"
     output_dir = (args.output_dir or PROJECT_ROOT / "data/host_gestures" / datetime.now().strftime("%Y%m%d_%H%M%S_%f")).expanduser().resolve()
     print("电脑端手势识别：Ring IMU → 200Hz 六轴 → 电脑模型 → 分类/触发")
-    print("有效手势：上、下、左、右、点击/捏合、响指；empty 为无手势。")
+    print("有效手势：四方向滑动、轻点、弹指、握拳、食指/中指捏合、顺/逆时针画圈；empty 为无手势。")
     print(f"模式：{source} | 模型：{MODEL_PATH}\n记录目录：{output_dir}", flush=True)
     print(
-        f"判定参数：每 {args.step_frames} 帧推理，稳定窗 {args.stable_window:g}s，"
-        f"同类投票比例 {args.positive_ratio:g}，冷却 {args.cooldown_frames} 帧。",
+        "判定参数：200Hz，60 帧窗口，每 20 帧推理，使用 SDK 原版密度证据解码。",
         flush=True,
     )
     if args.dry_run:
@@ -299,8 +302,9 @@ async def run(args) -> int:
     session = None
     imu = None
     worker = None
-    metadata = {"sample_hz": 200, "source": source,
-                "settings": {key: getattr(args, key) for key in ("mount_angle", "mount_radius", "step_frames", "stable_window", "positive_ratio", "cooldown_frames", "torch_threads")}}
+    metadata = {"sample_hz": 200, "source": source, "model": MODEL_NAME,
+                "backend": "pytorch-cpu", "sdk_revision": SDK_REVISION,
+                "settings": {key: getattr(args, key) for key in ("packet_timestamp_tolerance_ms", "torch_threads")}}
     reason = "completed"
     try:
         metadata["model_sha256"] = hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest()
@@ -410,12 +414,8 @@ def parser():
     p.add_argument("--status-interval", type=float, default=5.0)
     p.add_argument("--output-dir", type=Path, help="新建记录目录；不会覆盖已有目录")
     p.add_argument("--show-predictions", action="store_true", help="同时打印每次分类，含 empty")
-    p.add_argument("--mount-angle", type=float, default=135.0)
-    p.add_argument("--mount-radius", type=float, default=0.01, help="安装杆臂长度，单位米")
-    p.add_argument("--step-frames", type=int, default=5)
-    p.add_argument("--stable-window", type=float, default=0.10)
-    p.add_argument("--positive-ratio", type=float, default=1.0, help="稳定窗同类投票比例，不是置信度阈值")
-    p.add_argument("--cooldown-frames", type=int, default=10)
+    p.add_argument("--packet-timestamp-tolerance-ms", type=float, default=50.0,
+                   help="连续包的时间戳抖动容限（毫秒）；0 禁用修正")
     p.add_argument("--torch-threads", type=int, default=1)
     mode = p.add_mutually_exclusive_group()
     mode.add_argument("--scan", action="store_true")
@@ -433,16 +433,14 @@ def main(argv=None):
             pass
     p = parser()
     args = p.parse_args(argv)
-    for key in ("timeout", "imu_timeout", "status_interval", "stable_window"):
+    for key in ("timeout", "imu_timeout", "status_interval"):
         if not math.isfinite(getattr(args, key)) or getattr(args, key) <= 0:
             p.error(f"--{key.replace('_', '-')} 必须为有限正数")
-    for key in ("duration", "mount_radius"):
+    for key in ("duration", "packet_timestamp_tolerance_ms"):
         if not math.isfinite(getattr(args, key)) or getattr(args, key) < 0:
             p.error(f"--{key.replace('_', '-')} 必须为有限非负数")
-    if not math.isfinite(args.mount_angle) or not 0 < args.positive_ratio <= 1:
-        p.error("安装角度必须为有限数，投票比例必须在 (0,1] 内")
-    if args.step_frames <= 0 or args.torch_threads <= 0 or args.cooldown_frames < 0:
-        p.error("推理步长/线程数必须为正数，冷却帧数不能为负")
+    if args.torch_threads <= 0:
+        p.error("线程数必须为正数")
     try:
         return asyncio.run(run(args))
     except KeyboardInterrupt:

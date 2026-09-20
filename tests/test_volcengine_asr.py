@@ -3,13 +3,17 @@ from __future__ import annotations
 import gzip
 import json
 import struct
+import threading
+import queue
 import time
 
 import numpy as np
+import pytest
 
 from proximic_ring.asr.backends.volcengine import (
     DEFAULT_RESOURCE_ID,
     VolcengineStreamingASR,
+    VolcengineASRCancelled,
     _dialog_context_data,
     _pcm16,
 )
@@ -284,3 +288,296 @@ def test_api_key_is_required(monkeypatch):
         assert "MISSING_VOLC_KEY" in str(exc)
     else:
         raise AssertionError("expected missing API key error")
+
+
+class ControlledWebSocket(FakeWebSocket):
+    """Socket whose responses arrive only when the test explicitly releases them."""
+
+    def __init__(self):
+        super().__init__()
+        self.incoming: queue.Queue[bytes] = queue.Queue()
+        self.receiving = threading.Event()
+        self.final_sent = threading.Event()
+        self.closed_event = threading.Event()
+
+    def send(self, data: bytes):
+        super().send(data)
+        if data[1] == 0x23:
+            self.final_sent.set()
+
+    def recv(self):
+        self.receiving.set()
+        try:
+            return self.incoming.get(timeout=0.01)
+        except queue.Empty:
+            raise TimeoutError() from None
+
+    def close(self):
+        self.closed = True
+        self.closed_event.set()
+
+
+def _invoke_in_thread(operation):
+    values = []
+    errors = []
+
+    def run():
+        try:
+            values.append(operation())
+        except BaseException as exc:
+            errors.append(exc)
+
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    return thread, values, errors
+
+
+def test_cancel_before_start_never_opens_connection():
+    called = []
+    backend = VolcengineStreamingASR(
+        api_key="test", ws_factory=lambda *a, **k: called.append(True)
+    )
+    cancelled = threading.Event()
+    cancelled.set()
+    backend.set_cancel_event(cancelled)
+
+    with pytest.raises(VolcengineASRCancelled):
+        backend.start()
+
+    assert called == []
+
+
+def test_cancel_interrupts_connect_and_late_socket_cannot_replace_next_session():
+    entered = threading.Event()
+    release = threading.Event()
+    first_socket = ControlledWebSocket()
+    next_socket = FakeWebSocket()
+    factory_calls = 0
+
+    def factory(*_args, **_kwargs):
+        nonlocal factory_calls
+        factory_calls += 1
+        if factory_calls == 1:
+            entered.set()
+            release.wait(2)
+            return first_socket
+        return next_socket
+
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=factory, timeout_s=15)
+    cancelled = threading.Event()
+    backend.set_cancel_event(cancelled)
+    thread, _, errors = _invoke_in_thread(backend.start)
+    try:
+        assert entered.wait(0.5)
+        started = time.monotonic()
+        cancelled.set()
+        thread.join(timeout=0.4)
+        assert not thread.is_alive(), "cancel waited for the 15-second connection"
+        assert time.monotonic() - started < 0.4
+        assert len(errors) == 1 and isinstance(errors[0], VolcengineASRCancelled)
+
+        backend.set_cancel_event(threading.Event())
+        backend.start()
+        release.set()
+        assert first_socket.closed_event.wait(0.5)
+        assert first_socket.sent == []
+        assert backend._ws is next_socket
+        assert backend.finish(np.empty(0, dtype=np.float32)) == "你好世界"
+    finally:
+        release.set()
+        backend.abort()
+
+
+def test_connect_timeout_is_bounded_even_if_factory_ignores_its_timeout():
+    release = threading.Event()
+    late_socket = ControlledWebSocket()
+
+    def factory(*_args, **_kwargs):
+        release.wait(2)
+        return late_socket
+
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=factory, timeout_s=0.05)
+    started = time.monotonic()
+    try:
+        with pytest.raises(RuntimeError, match="connection timed out"):
+            backend.start()
+        assert time.monotonic() - started < 0.4
+        release.set()
+        assert late_socket.closed_event.wait(0.5)
+        assert backend._ws is None
+    finally:
+        release.set()
+        backend.abort()
+
+
+def test_abort_interrupts_connect_without_needing_the_producer_event():
+    entered = threading.Event()
+    release = threading.Event()
+    late_socket = ControlledWebSocket()
+
+    def factory(*_args, **_kwargs):
+        entered.set()
+        release.wait(2)
+        return late_socket
+
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=factory)
+    thread, _, errors = _invoke_in_thread(backend.start)
+    try:
+        assert entered.wait(0.5)
+        backend.abort()
+        thread.join(timeout=0.4)
+        assert not thread.is_alive()
+        assert len(errors) == 1 and isinstance(errors[0], VolcengineASRCancelled)
+        release.set()
+        assert late_socket.closed_event.wait(0.5)
+    finally:
+        release.set()
+        backend.abort()
+
+
+def test_cancel_interrupts_waiting_final_and_does_not_wait_eight_seconds():
+    socket = ControlledWebSocket()
+    cancelled = threading.Event()
+    backend = VolcengineStreamingASR(
+        api_key="test", ws_factory=lambda *a, **k: socket, final_timeout_s=8
+    )
+    backend.set_cancel_event(cancelled)
+    backend.start()
+    thread, _, errors = _invoke_in_thread(lambda: backend.finish(np.empty(0, dtype=np.float32)))
+    assert socket.final_sent.wait(0.5)
+
+    started = time.monotonic()
+    cancelled.set()
+    thread.join(timeout=0.4)
+
+    assert not thread.is_alive()
+    assert time.monotonic() - started < 0.4
+    assert len(errors) == 1 and isinstance(errors[0], VolcengineASRCancelled)
+    assert socket.closed
+    assert backend._ws is None
+
+
+def test_late_receiver_result_and_error_cannot_pollute_new_session():
+    release = threading.Event()
+
+    class LateReceiver(ControlledWebSocket):
+        def recv(self):
+            self.receiving.set()
+            release.wait(2)
+            return _response("旧句迟到结果", final=True)
+
+    previous = LateReceiver()
+    current = ControlledWebSocket()
+    sockets = iter([previous, current])
+    old_updates = []
+    new_updates = []
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=lambda *a, **k: next(sockets))
+    backend.set_partial_callback(lambda *update: old_updates.append(update))
+    backend.start()
+    assert previous.receiving.wait(0.5)
+    backend.feed(np.ones(3201, dtype=np.float32) * 0.1)
+    backend.abort()
+    backend.set_cancel_event(threading.Event())
+    backend.set_partial_callback(lambda *update: new_updates.append(update))
+    backend.start()
+    backend.feed(np.ones(3201, dtype=np.float32) * 0.1)
+    try:
+        release.set()
+        current.incoming.put(_response("本句", final=False, sequence=2))
+        deadline = time.monotonic() + 0.5
+        while not new_updates and time.monotonic() < deadline:
+            time.sleep(0.005)
+        assert old_updates == []
+        assert new_updates and new_updates[0][0] == "本句"
+        assert backend._last_text == "本句"
+        assert not backend._final_seen
+        assert backend._receiver_error is None
+        current.incoming.put(_response("本句完成", final=True))
+        assert backend.finish(np.empty(0, dtype=np.float32)) == "本句完成"
+    finally:
+        release.set()
+        backend.abort()
+
+
+def test_receiver_callback_is_captured_for_its_own_session():
+    socket = ControlledWebSocket()
+    previous = []
+    later = []
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=lambda *a, **k: socket)
+    backend.set_partial_callback(lambda *update: previous.append(update))
+    backend.start()
+    backend.feed(np.ones(3201, dtype=np.float32) * 0.1)
+    # Preparing a callback for another session must not relabel this receiver.
+    backend.set_partial_callback(lambda *update: later.append(update))
+    socket.incoming.put(_response("本句", final=False, sequence=2))
+    deadline = time.monotonic() + 0.5
+    while not previous and time.monotonic() < deadline:
+        time.sleep(0.005)
+    backend.abort()
+    assert previous and previous[0][0] == "本句"
+    assert later == []
+
+
+def test_abort_does_not_wait_for_a_slow_custom_close_handshake():
+    release = threading.Event()
+    closing = threading.Event()
+
+    class SlowClose(ControlledWebSocket):
+        def close(self):
+            closing.set()
+            release.wait(2)
+            super().close()
+
+    socket = SlowClose()
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=lambda *a, **k: socket)
+    backend.start()
+    started = time.monotonic()
+    try:
+        backend.abort()
+        assert time.monotonic() - started < 0.2
+        assert closing.wait(0.5)
+        assert backend._ws is None
+    finally:
+        release.set()
+        assert socket.closed_event.wait(0.5)
+
+
+def test_empty_final_completes_successfully_without_inventing_text():
+    socket = FakeWebSocket()
+    socket.responses = [_response("", final=True)]
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=lambda *a, **k: socket)
+    backend.start()
+
+    assert backend.finish(np.empty(0, dtype=np.float32)) == ""
+    assert socket.closed
+
+
+def test_no_response_final_times_out_and_next_utterance_recovers():
+    silent = ControlledWebSocket()
+    next_socket = FakeWebSocket()
+    sockets = iter([silent, next_socket])
+    backend = VolcengineStreamingASR(
+        api_key="test", ws_factory=lambda *a, **k: next(sockets), final_timeout_s=0.05
+    )
+    backend.start()
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match="final response before timeout"):
+        backend.finish(np.empty(0, dtype=np.float32))
+    assert time.monotonic() - started < 0.4
+    assert silent.closed
+    backend.set_cancel_event(threading.Event())
+    backend.start()
+    assert backend.finish(np.empty(0, dtype=np.float32)) == "你好世界"
+
+
+def test_configuration_send_failure_closes_the_accepted_connection():
+    class FailedConfiguration(ControlledWebSocket):
+        def send(self, data):
+            raise ConnectionError("configuration send failed")
+
+    socket = FailedConfiguration()
+    backend = VolcengineStreamingASR(api_key="test", ws_factory=lambda *a, **k: socket)
+    with pytest.raises(ConnectionError, match="configuration send failed"):
+        backend.start()
+    assert socket.closed
+    assert backend._ws is None

@@ -16,6 +16,10 @@ datas = collect_data_files("proximic_ring")
 datas += collect_data_files(
     "ring_python_sdk.gestures", includes=["assets/*.pt", "assets/*.json", "NOTICE.md"]
 )
+datas += collect_data_files(
+    "ring_python_sdk.ringo", includes=["NOTICE.md", "gestures/*.md", "gestures/*.json",
+                                      "gestures/_upstream/swipe_density/assets/*/*.pt"]
+)
 # FunASR's package data includes assets for every model family.  The runtime
 # only reads its version file; checkpoints live in the per-user model cache.
 datas += collect_data_files("funasr", includes=["version.txt"])
@@ -42,8 +46,6 @@ elif platform.system() == "Darwin":
     candidates = ([Path(configured_opus)] if configured_opus else []) + [
         project_root / ".runtime" / "opus" / "lib" / "libopus.0.dylib",
         project_root / ".runtime" / "opus" / "libopus.0.dylib",
-        Path("/opt/homebrew/opt/opus/lib/libopus.0.dylib"),
-        Path("/opt/homebrew/opt/opus/lib/libopus.dylib"),
     ]
     opus_dylib = next((item for item in candidates if item.is_file()), None)
     if opus_dylib is None:

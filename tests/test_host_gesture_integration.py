@@ -14,11 +14,13 @@ from proximic_ring.audio.ring import RingAudioSource
 @pytest.mark.parametrize("confirm_name,slot,live", [
     ("tap", 0, False), ("snap", 1, False), ("swipe-left", 0, True),
     ("swipe-up", 1, True),
+    ("clench", 0, False), ("index-pinch", 1, True), ("middle-pinch", 0, False),
+    ("circle-clockwise", 1, False), ("circle-counterclockwise", 0, True),
 ])
 def test_tap_ends_on_audio_thread_without_gui_then_waits_for_processing(monkeypatch, confirm_name, slot, live):
     from proximic_ring.asr.controller import ProximitySessionController
     from proximic_ring.events import Stage2Event
-    import ring_python_sdk.gestures as gestures
+    import proximic_ring.host_gestures as gestures
     from proximic_ring.gesture_settings import GestureBindings, GESTURE_LABELS
 
     recognition, disconnect = threading.Event(), threading.Event()
@@ -177,7 +179,7 @@ def test_online_asr_matches_standalone_cpu_budget_without_changing_local_asr(bac
 def test_runtime_gestures_share_source_and_isolate_failures(
     monkeypatch, failure, collect_imu
 ):
-    import ring_python_sdk.gestures as gestures
+    import proximic_ring.host_gestures as gestures
 
     calls, states, received, records = [], [], [], []
     processed = threading.Event()
@@ -297,7 +299,11 @@ def test_runtime_gestures_share_source_and_isolate_failures(
         import json
         status = next(message for message in states if message.startswith("[GESTURE_STATUS]"))
         assert json.loads(status.split("] ", 1)[1])["received_samples"] == 1
-        assert any("[GESTURE_MODEL]" in message and "sha256" in message for message in states)
+        model = next(message for message in states if message.startswith("[GESTURE_MODEL]"))
+        model = json.loads(model.split("] ", 1)[1])
+        assert model["model"] == "density-pw64-dh96-swipe3-rot-0913"
+        assert model["backend"] == "pytorch-cpu" and model["source"] == "host"
+        assert model["sha256"] == "6c3a816306861d966a894b60be115ef8d9fcd3553dc3d87c4a3d576ff774c2fc"
         recognized = [message for message in states if "[GESTURE_RECOGNIZED]" in message]
         assert any('"forwarded": true' in message for message in recognized)
         assert any('"forwarded": false' in message for message in recognized)
@@ -322,7 +328,7 @@ def controller(tmp_path, monkeypatch):
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     monkeypatch.setattr(controller_module, "app_data_root", lambda: tmp_path)
-    instance = controller_module.AppController()
+    instance = controller_module.AppController(inline_input_enabled=False)
     instance._text_processing_worker.close(wait=True)
     instance._runtime_active = True
     instance._connected = True
@@ -337,7 +343,7 @@ def test_gesture_callback_queues_to_gui_and_cancel_alternates_with_keyboard(cont
     from PySide6.QtCore import QCoreApplication
 
     controller._recognition_enabled = True
-    for gesture in ("swipe-left", "keyboard", "swipe-down"):
+    for gesture in ("swipe-left", "keyboard", "swipe-left"):
         controller._apply_runtime_status("[ASR] START t=1.000s")
         assert controller.interactionState == "listening"
         if gesture == "keyboard":
@@ -388,17 +394,17 @@ def test_gesture_conversion_and_undo_use_existing_availability(controller, monke
     emit("swipe-right")
     controller.dispatchVoiceAction("switch_mode")
     emit("swipe-up")
-    assert calls == ["undo"] * 3 + ["switch_mode"] * 3
+    assert calls == ["undo"] * 2 + ["switch_mode"] * 2
     assert controller.inputMode == original_mode
 
     controller._applied_action_visible = False
     emit("swipe-left")  # Native undo remains available after popup timeout.
-    emit("swipe-up")  # Conversion key is deliberately available after timeout.
-    assert calls == ["undo"] * 3 + ["switch_mode"] * 3 + ["undo", "switch_mode"]
+    emit("swipe-right")  # Legacy Windows conversion is available after timeout.
+    assert calls == ["undo"] * 2 + ["switch_mode"] * 2 + ["undo", "switch_mode"]
     controller._applied_target_foreground = False
     for name in ("swipe-up", "swipe-right", "swipe-left", "swipe-down", "tap", "snap"):
         emit(name)
-    assert calls == ["undo"] * 3 + ["switch_mode"] * 3 + ["undo", "switch_mode"]
+    assert calls == ["undo"] * 2 + ["switch_mode"] * 2 + ["undo", "switch_mode"]
 
 
 @pytest.mark.parametrize("boundary", ["old_connection", "disconnecting", "disconnected", "finished"])
@@ -425,14 +431,14 @@ def test_stale_connection_gesture_cannot_apply(controller, monkeypatch, boundary
 def test_ignored_gesture_logs_reason_and_health_does_not_replace_ui_status(controller):
     controller._interaction_state = "idle"
     controller._gestureRecognized.emit(
-        SimpleNamespace(name="swipe-up", confidence=0.91, timestamp_ms=12345),
+        SimpleNamespace(name="swipe-right", confidence=0.91, timestamp_ms=12345),
         controller._disconnect_event,
     )
     controller._gestureRecognized.emit(SimpleNamespace(name="tap"), controller._disconnect_event)
     log = controller._diagnostic_log.path.read_text()
-    assert 'gesture="swipe-up"' in log and 'reason="no_convertible_result"' in log
+    assert 'gesture="swipe-right"' in log and 'reason="no_convertible_result"' in log
     assert 'reason="unmapped_gesture"' in log and "device_timestamp_ms=12345" in log
-    assert "[手势] 上滑 → 当前无可转换结果" in controller.logText
+    assert "[手势] 右滑 → 当前无可转换结果" in controller.logText
     assert "GESTURE_ACTION" not in controller.logText
     assert "confidence" not in controller.logText
     assert "tap" not in controller.logText

@@ -125,9 +125,15 @@ def run() -> int:
         print("[startup] runtime environment ready")
         package_self_check = "--self-check-package" in sys.argv[1:]
         if "--self-check-opus" in sys.argv[1:] or package_self_check:
-            from ring_python_sdk.audio.opus_codec import OrderedOpusDecoder
+            from ring_python_sdk.audio.opus_codec import OpusBlockDecoder
+            import struct
 
-            OrderedOpusDecoder(eager=True)
+            # Five valid 20 ms silent Opus packets exercise native decoding at
+            # the ring's 16 kHz mono rate, not merely the Python import.
+            packet = b"\xf8\xff\xfe"
+            block = struct.pack("<HB", 1600, 5) + (struct.pack("<H", len(packet)) + packet) * 5
+            if len(OpusBlockDecoder().decode_block(block)) != 3200:
+                raise RuntimeError("内置 Opus 解码自检失败")
             print("[startup] bundled Opus decoder ready")
             if not package_self_check:
                 return 0
@@ -135,12 +141,25 @@ def run() -> int:
             if is_frozen():
                 _verify_bundled_qml_runtime(resource_root())
             if sys.platform == "darwin":
-                from proximic_ring.desktop_output import MacOSUnicodeTextInjector
+                from proximic_ring.app_shortcuts import verify_native_api
+                from proximic_ring.ime_bridge import default_socket_path
 
-                macos_injector = MacOSUnicodeTextInjector()
+                verify_native_api()
+                from proximic_ring.mac_permissions import read_permission_state
+
+                permissions = read_permission_state()
+                if permissions.error:
+                    raise RuntimeError("macOS permission APIs unavailable: " + permissions.error)
+                print("[startup] macOS app gesture bridges ready")
+                if is_frozen():
+                    from proximic_ring.input_method_install import InputMethodInstaller
+
+                    InputMethodInstaller().verify_payload()
+                    print("[startup] bundled input method installer ready")
+
                 print(
-                    "[startup] macOS desktop injection bridge ready; "
-                    f"accessibility_trusted={macos_injector.is_trusted(prompt=False)}"
+                    "[startup] macOS input method transport ready; "
+                    f"socket={default_socket_path()} (input source selection is manual)"
                 )
             os.environ["PROXIMIC_STARTUP_PROBE"] = "1"
             os.environ["QT_QPA_PLATFORM"] = "offscreen"
@@ -169,6 +188,10 @@ def run() -> int:
 
 def _entrypoint() -> int:
     multiprocessing.freeze_support()
+    if len(sys.argv) >= 2 and sys.argv[1] == "--input-method":
+        from proximic_ring.input_method_install import main
+
+        return main(sys.argv[2:])
     return run()
 
 

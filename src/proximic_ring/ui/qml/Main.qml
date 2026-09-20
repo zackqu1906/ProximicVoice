@@ -20,6 +20,7 @@ ApplicationWindow {
                                            : "Microsoft YaHei UI"
     font.family: uiFontFamily
 
+
     property color panel: "#111620"
     property color panelAlt: "#151B27"
     property color border: "#232B3A"
@@ -336,6 +337,146 @@ ApplicationWindow {
     }
 
     Dialog {
+        id: inputMethodSetupDialog
+        objectName: "inputMethodSetupDialog"
+        parent: Overlay.overlay
+        popupType: Popup.Item
+        title: "语音输入法设置"
+        anchors.centerIn: parent
+        width: Math.min(560, root.width - 48)
+        modal: true
+        Material.theme: Material.Dark
+        background: Rectangle { color: root.panel; radius: 18; border.color: root.border }
+        Overlay.modal: Rectangle { color: "#99000000" }
+        standardButtons: Dialog.Close
+        closePolicy: appController.inlineInput.installing ? Popup.NoAutoClose : Popup.CloseOnEscape | Popup.CloseOnPressOutside
+        onOpened: appController.inlineInput.permissions.refresh()
+        contentItem: ScrollView {
+            id: inputMethodSetupScroll
+            objectName: "inputMethodSetupScroll"
+            clip: true
+            contentWidth: availableWidth
+            implicitHeight: Math.min(inputMethodSetupContent.implicitHeight, root.height - 200)
+            ColumnLayout {
+            id: inputMethodSetupContent
+            width: inputMethodSetupScroll.availableWidth
+            spacing: 14
+            Label {
+                Layout.fillWidth: true
+                text: "1. 安装语音输入法"
+                color: root.textMain
+                font.bold: true
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "首次使用点击安装即可。更新前请先切回拼音或 ABC。"
+                color: root.textMuted
+                wrapMode: Text.Wrap
+            }
+            RowLayout {
+                Button {
+                    objectName: "installInputMethodButton"
+                    text: appController.inlineInput.installing ? "正在安装…" : "安装／更新输入法"
+                    enabled: !appController.inlineInput.installing
+                    onClicked: appController.inlineInput.installInputMethod()
+                }
+                BusyIndicator {
+                    running: appController.inlineInput.installing
+                    visible: running
+                    Layout.preferredWidth: 28
+                    Layout.preferredHeight: 28
+                }
+            }
+            Label {
+                objectName: "inputMethodInstallationMessage"
+                Layout.fillWidth: true
+                text: appController.inlineInput.installationMessage
+                color: root.textMuted
+                wrapMode: Text.Wrap
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "2. 允许辅助功能"
+                color: root.textMain
+                font.bold: true
+            }
+            Label {
+                Layout.fillWidth: true
+                objectName: "accessibilityPermissionStatus"
+                text: appController.inlineInput.permissions.title
+                color: appController.inlineInput.permissions.warning ? "#E6B879" : root.textMain
+                font.bold: true
+                wrapMode: Text.Wrap
+            }
+            Label {
+                Layout.fillWidth: true
+                text: appController.inlineInput.permissions.detail + "\n" + appController.inlineInput.permissions.instructions
+                color: root.textMuted
+                wrapMode: Text.Wrap
+            }
+            Label {
+                objectName: "permissionApplicationPath"
+                Layout.fillWidth: true
+                text: "当前运行位置：\n" + appController.inlineInput.permissions.location
+                color: root.textMuted
+                font.pixelSize: 11
+                wrapMode: Text.WrapAnywhere
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    objectName: "openAccessibilityPermissionsButton"
+                    text: "打开辅助功能设置"
+                    onClicked: appController.inlineInput.openAccessibilitySettings()
+                }
+                Button {
+                    objectName: "refreshAccessibilityPermissionsButton"
+                    text: appController.inlineInput.permissions.checking ? "检查中…" : "重新检测"
+                    enabled: !appController.inlineInput.permissions.checking
+                    onClicked: appController.inlineInput.permissions.refresh()
+                }
+            }
+            RowLayout {
+                Layout.fillWidth: true
+                Button {
+                    visible: appController.inlineInput.permissions.canReveal
+                    text: "显示当前应用"
+                    onClicked: appController.inlineInput.permissions.revealApplication()
+                }
+                Button {
+                    objectName: "copyPermissionDiagnosticsButton"
+                    text: "复制权限诊断"
+                    onClicked: appController.inlineInput.permissions.copyDiagnostics()
+                }
+            }
+            Label {
+                Layout.fillWidth: true
+                visible: text.length > 0
+                text: appController.inlineInput.permissions.actionMessage
+                color: root.textMuted
+                wrapMode: Text.Wrap
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "3. 切入语音输入法"
+                color: root.textMain
+                font.bold: true
+            }
+            Label {
+                Layout.fillWidth: true
+                text: "连接设备并开启识别后，点入文本框再 tap，会自动切入语音输入法并开始听写。也可手动选择输入法。需要拼音时手动切回。若菜单里没有，在键盘 → 文字输入 → 编辑中添加。"
+                color: root.textMuted
+                wrapMode: Text.Wrap
+            }
+            Button {
+                text: "打开键盘设置"
+                onClicked: appController.inlineInput.openInputSettings()
+            }
+            }
+        }
+    }
+
+    Dialog {
         id: devicePicker
         objectName: "devicePicker"
         parent: Overlay.overlay
@@ -512,6 +653,19 @@ ApplicationWindow {
         title: "运行诊断日志"
         closePolicy: Popup.CloseOnEscape
         onOpened: logArea.refreshLog()
+        onClosed: logRefreshTimer.stop()
+
+        // Rebuilding a hidden TextArea still performs text layout on the UI
+        // thread. Keep telemetry off the voice path, and coalesce visible
+        // bursts so each ASR partial does not lay out the whole history.
+        Timer {
+            id: logRefreshTimer
+            interval: 150
+            onTriggered: {
+                if (runtimeLogDialog.visible)
+                    logArea.refreshLog()
+            }
+        }
 
         contentItem: ColumnLayout {
             spacing: 12
@@ -571,10 +725,12 @@ ApplicationWindow {
                         })
                     }
 
-                    Component.onCompleted: refreshLog()
                     Connections {
                         target: appController
-                        function onLogChanged() { logArea.refreshLog() }
+                        function onLogChanged() {
+                            if (runtimeLogDialog.visible && !logRefreshTimer.running)
+                                logRefreshTimer.start()
+                        }
                     }
                 }
             }
@@ -671,58 +827,37 @@ ApplicationWindow {
         }
     }
 
-    RowLayout {
+    ScrollView {
+        id: mainPageScroll
+        objectName: "mainPageScroll"
         anchors.fill: parent
         anchors.margins: 24
-        spacing: 20
+        clip: true
+        contentWidth: availableWidth
+        contentHeight: mainPageContent.height
+        ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+        ScrollBar.vertical.policy: ScrollBar.AsNeeded
 
-        ColumnLayout {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            Layout.minimumWidth: 500
+        Column {
+            id: mainPageContent
+            width: mainPageScroll.availableWidth
             spacing: 18
 
             Rectangle {
                 id: voiceInputCard
                 objectName: "voiceInputCard"
-                Layout.fillWidth: true
-                Layout.preferredHeight: 380
-                                        + (appController.macOSAccessibilityRequired ? 102 : 0)
+                width: parent.width
+                implicitHeight: voiceInputContent.implicitHeight + 44
+                height: Math.max(380, implicitHeight)
                 radius: 22
                 color: root.panel
                 border.color: root.border
 
                 ColumnLayout {
+                    id: voiceInputContent
                     anchors.fill: parent
                     anchors.margins: 22
                     spacing: 9
-
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 92
-                        visible: appController.macOSAccessibilityRequired
-                        radius: 12
-                        color: "#4A372A"
-                        border.width: 1
-                        border.color: "#D89B57"
-
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.margins: 12
-                            spacing: 12
-                            Label {
-                                Layout.fillWidth: true
-                                text: "macOS 尚未允许当前安装包跨应用输入；浮窗可显示，但听写和编辑不会注入。\n授权后会自动检测，无需重启。如这里已显示开启，请删除旧条目，再重新添加 /Applications/Proximic Voice.app。"
-                                color: "#FFE1BD"
-                                font.pixelSize: 12
-                                wrapMode: Text.Wrap
-                            }
-                            Button {
-                                text: "打开辅助功能设置"
-                                onClicked: appController.openMacOSAccessibilitySettings()
-                            }
-                        }
-                    }
 
                     RowLayout {
                         Layout.fillWidth: true
@@ -733,14 +868,73 @@ ApplicationWindow {
                                   ? (appController.inputRoutingMode === "auto"
                                      ? "自动判断听写/指令 / 右 Alt 说话"
                                      : "Alt+1 输入 / Alt+2 修改 / 右 Alt 说话")
-                                  : "macOS 输入 / 编辑"
+                                  : "macOS 语音输入法"
                             color: root.textMuted
                             font.pixelSize: 12
                         }
                     }
 
                     RowLayout {
+                        Layout.fillWidth: true
+                        visible: appController.inlineInput.enabled
+                        Label {
+                            objectName: "inputMethodConnectionStatus"
+                            Layout.fillWidth: true
+                            text: appController.inlineInput.connectionStatus
+                            color: appController.inlineInput.ready ? "#8BD4B0" : "#E6B879"
+                            font.pixelSize: 12
+                            wrapMode: Text.Wrap
+                        }
+                        Button {
+                            objectName: "inputMethodSetupButton"
+                            Layout.preferredHeight: 40
+                            text: "输入法设置"
+                            onClicked: inputMethodSetupDialog.open()
+                        }
+                    }
+
+                    Rectangle {
+                        objectName: "accessibilityPermissionWarning"
+                        Layout.fillWidth: true
+                        implicitHeight: permissionWarningContent.implicitHeight + 24
+                        visible: appController.inlineInput.permissions.warning
+                        color: "#2B231A"
+                        radius: 10
+                        border.color: "#78582F"
+                        RowLayout {
+                            id: permissionWarningContent
+                            anchors.fill: parent
+                            anchors.margins: 12
+                            spacing: 12
+                            ColumnLayout {
+                                Layout.fillWidth: true
+                                spacing: 4
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: appController.inlineInput.permissions.title
+                                    color: "#E6B879"
+                                    font.bold: true
+                                    wrapMode: Text.Wrap
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "编辑、撤销或发送可能受限；授权后会自动检测，生效后即可继续使用。"
+                                    color: root.textMuted
+                                    font.pixelSize: 12
+                                    wrapMode: Text.Wrap
+                                }
+                            }
+                            Button {
+                                objectName: "permissionWarningSettingsButton"
+                                text: "检查权限"
+                                onClicked: inputMethodSetupDialog.open()
+                            }
+                        }
+                    }
+
+                    RowLayout {
                         Layout.alignment: Qt.AlignHCenter
+                        visible: !appController.inlineInput.enabled && appController.inputRoutingMode === "manual"
                         spacing: 10
 
                         Button {
@@ -751,7 +945,7 @@ ApplicationWindow {
                             text: "输入到光标"
                             checkable: true
                             autoExclusive: true
-                            visible: appController.inputRoutingMode === "manual"
+                            visible: !appController.inlineInput.enabled && appController.inputRoutingMode === "manual"
                             enabled: appController.inputRoutingMode === "manual"
                             checked: appController.inputMode === "dictation"
                             onClicked: appController.inputMode = "dictation"
@@ -768,7 +962,7 @@ ApplicationWindow {
                             text: "修改当前文本"
                             checkable: true
                             autoExclusive: true
-                            visible: appController.inputRoutingMode === "manual"
+                            visible: !appController.inlineInput.enabled && appController.inputRoutingMode === "manual"
                             enabled: appController.inputRoutingMode === "manual"
                             checked: appController.inputMode === "edit"
                             onClicked: appController.inputMode = "edit"
@@ -780,7 +974,9 @@ ApplicationWindow {
                     Label {
                         Layout.alignment: Qt.AlignHCenter
                         Layout.maximumWidth: 430
-                        text: appController.inputRoutingMode === "auto"
+                        text: appController.inlineInput.enabled
+                              ? "点入文本框后 tap 自动切入语音输入法；需要拼音时手动切回\n默认实时听写，转换为编辑会结束本句并修改原文"
+                              : appController.inputRoutingMode === "auto"
                               ? "自动判断听写或编辑；处理期间可取消，应用后可在文本框旁撤销或改用另一种理解"
                               : (appController.inputMode === "edit"
                               ? "把光标留在目标文本框；修改会直接应用，随后可在文本框旁撤销"
@@ -790,8 +986,6 @@ ApplicationWindow {
                         wrapMode: Text.Wrap
                         horizontalAlignment: Text.AlignHCenter
                     }
-
-                    Item { Layout.fillHeight: true }
 
                     Rectangle {
                         Layout.alignment: Qt.AlignHCenter
@@ -1029,16 +1223,15 @@ ApplicationWindow {
                             }
                         }
                     }
-                    Item { Layout.fillHeight: true }
                 }
             }
 
             Rectangle {
                 id: voiceHistoryCard
                 objectName: "voiceHistoryCard"
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.minimumHeight: 250
+                width: parent.width
+                height: Math.max(250, mainPageScroll.availableHeight
+                                 - voiceInputCard.height - mainPageContent.spacing)
                 radius: 18
                 color: root.panel
                 border.color: root.border
@@ -1318,10 +1511,22 @@ ApplicationWindow {
             x: Math.round((parent.width - width) / 2)
             y: Math.round((parent.height - height) / 2)
             width: Math.min(720, parent.width - 48)
-            height: Math.min(680, parent.height - 48)
+            height: Math.min(760, parent.height - 48)
             modal: true
             popupType: Popup.Item
-            title: "设置"
+            property int currentPage: 0
+            readonly property var pageTitles: ["设置", "听写与撤销", "手势与快捷键", "麦克风与启停", "语音识别", "编辑模型", "输入法与权限", "发送与切换对话", "微信聊天切换设置"]
+            title: pageTitles[currentPage]
+            Overlay.modal: Rectangle { color: "#99000000" }
+            header: Label {
+                text: runtimeSettingsDialog.title
+                leftPadding: 24; rightPadding: 24; topPadding: 22; bottomPadding: 14
+                color: root.textMain; font.pixelSize: 20; font.bold: true
+            }
+            enter: Transition { NumberAnimation { property: "opacity"; from: 0; to: 1; duration: 100 } }
+            exit: Transition { NumberAnimation { property: "opacity"; from: 1; to: 0; duration: 80 } }
+            onClosed: appController.appGestures.recording = false
+            onAboutToShow: navigate(0)
             onOpened: {
                 if (appController.audioSource === "microphone")
                     appController.refreshMicrophones()
@@ -1343,8 +1548,15 @@ ApplicationWindow {
                 border.color: "#2A3548"
             }
 
+            function navigate(page) {
+                runtimeSettingsScroll.forceActiveFocus(Qt.OtherFocusReason)
+                appController.appGestures.recording = false
+                currentPage = page
+                Qt.callLater(function() { runtimeSettingsScroll.contentItem.contentY = 0 })
+            }
             function goBack() {
-                runtimeSettingsDialog.close()
+                if (currentPage === 0) close()
+                else navigate(currentPage === 8 ? 7 : currentPage === 7 ? 2 : 0)
             }
 
             function applyAndClose() {
@@ -1354,705 +1566,895 @@ ApplicationWindow {
                 Qt.callLater(function() { runtimeSettingsDialog.close() })
             }
 
-            contentItem: ScrollView {
-                id: runtimeSettingsScroll
-                clip: true
-                ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                ScrollBar.vertical.policy: ScrollBar.AsNeeded
-                ColumnLayout {
-                    width: runtimeSettingsScroll.availableWidth
-                    spacing: 14
-
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: runtimeSettingsDialog.deviceSettingsLocked
-                              ? "连接期间可调整即时设置；灰色设备和 ASR 设置需断开后修改。"
-                              : "设置会自动保存，下次启动继续使用"
-                        color: runtimeSettingsDialog.deviceSettingsLocked ? "#AFC0D8" : root.textMuted
-                        font.pixelSize: 12
-                        wrapMode: Text.Wrap
-                    }
-
-                    SettingsSectionHeader {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        title: "语音设备"
-                        badge: runtimeSettingsDialog.deviceSettingsLocked ? "断开后修改" : "可修改"
-                        accent: "#6F8BFF"
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "先连接 Ring 以使用手势。音频可选 Ring 或电脑连接的 DJI 麦克风。"
-                        color: root.textMain
-                        font.pixelSize: 12
-                        wrapMode: Text.Wrap
-                    }
-                    Label { text: "音频来源"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    ComboBox {
-                        objectName: "audioSourceCombo"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        Layout.preferredHeight: 44
-                        model: ["Ring 麦克风", "电脑麦克风（DJI）"]
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
-                        currentIndex: appController.audioSource === "microphone" ? 1 : 0
-                        onActivated: {
-                            appController.audioSource = currentIndex === 1 ? "microphone" : "ring"
-                            if (currentIndex === 1) appController.refreshMicrophones()
-                        }
-                    }
-                    RowLayout {
-                        visible: appController.audioSource === "microphone"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        ComboBox {
-                            objectName: "microphoneDeviceCombo"
-                            Layout.fillWidth: true
-                            Layout.minimumWidth: 0
-                            Layout.preferredHeight: 44
-                            enabled: !runtimeSettingsDialog.deviceSettingsLocked && !appController.microphoneScanBusy
-                            model: appController.microphoneDevices
-                            textRole: "label"
-                            valueRole: "value"
-                            currentIndex: {
-                                var rows = appController.microphoneDevices
-                                for (var i = 0; i < rows.length; ++i)
-                                    if (rows[i].value === appController.microphoneDevice) return i
-                                return 0
-                            }
-                            onActivated: appController.microphoneDevice = currentValue
-                        }
-                        Button {
-                            objectName: "refreshMicrophonesButton"
-                            text: appController.microphoneScanBusy ? "检测中…" : "刷新"
-                            enabled: !runtimeSettingsDialog.deviceSettingsLocked && !appController.microphoneScanBusy
-                            onClicked: appController.refreshMicrophones()
-                        }
-                    }
-                    Label {
-                        visible: appController.audioSource === "microphone"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.microphoneDevicesError.length > 0
-                              ? appController.microphoneDevicesError
-                              : "可自动识别 DJI，也可指定输入设备；未找到时不会切换到其他麦克风。Ring 或麦克风断开都会停止交互。"
-                        color: appController.microphoneDevicesError.length > 0 ? "#F3AA82" : root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
-                    Label {
-                        visible: appController.audioSource === "ring"
-                        text: "连接质量"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20
-                    }
-                    ComboBox {
-                        id: audioEncodingCombo
-                        objectName: "audioEncodingCombo"
-                        visible: appController.audioSource === "ring"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        Layout.preferredHeight: 44
-                        model: ["稳定优先（推荐）", "平衡模式", "原始音质"]
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
-                        currentIndex: Math.max(0, ["opus", "adpcm", "pcm"].indexOf(appController.audioEncoding))
-                        onActivated: appController.audioEncoding = ["opus", "adpcm", "pcm"][currentIndex]
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        visible: appController.audioSource === "ring"
-                        text: appController.audioEncoding === "pcm"
-                              ? "原始 PCM 带宽最高，BLE 链路繁忙时更容易出现音频停流。"
-                              : appController.audioEncoding === "adpcm"
-                                ? "BLE 带宽较低，但有损压缩可能改变近点模型的 Stage2 分数分布。"
-                                : "默认使用 Opus 降低 BLE 带宽；SDK 解码后仍向模型提供 16 kHz PCM。"
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
-                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
-
-                    SettingsSectionHeader {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        title: "语音启停方式"
-                        badge: runtimeSettingsDialog.deviceSettingsLocked ? "断开后修改" : "可修改"
-                        accent: "#55D6AE"
-                    }
-                    ComboBox {
-                        objectName: "speechControlModeCombo"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        Layout.preferredHeight: 44
-                        model: ["靠近说话开始 · 确认手势结束", "纯手势 · 确认手势开始／结束"]
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
-                        currentIndex: appController.speechControlMode === "gesture" ? 1 : 0
-                        onActivated: appController.speechControlMode = currentIndex === 1 ? "gesture" : "proximity"
-                    }
-                    Label {
-                        objectName: "speechControlModeHint"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.speechControlMode === "gesture"
-                              ? "开启语音识别后，" + appController.confirmGestureHint + " 开始，再做一次结束。不使用近点模型；本句处理完成后才能开始下一句。"
-                              : "保持原有启停方式：靠近说话开始，" + appController.confirmGestureHint + " 结束。"
-                                + (appController.audioSource === "microphone" ? "靠近检测和语音识别均使用选定麦克风的音频。" : "")
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        Label { text: "声音触发灵敏度"; color: root.textMuted; font.pixelSize: 12 }
-                        Item { Layout.fillWidth: true }
-                        Label {
-                            text: Math.round(stage1SensitivitySlider.value) + " / 10"
-                            color: root.textMain
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                    }
-                    Slider {
-                        id: stage1SensitivitySlider
-                        objectName: "stage1SensitivitySlider"
-                        enabled: appController.speechControlMode === "proximity"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        from: 1
-                        to: 10
-                        stepSize: 1
-                        value: runtimeSettingsDialog.stage1Sensitivity(appController.stage1Threshold)
-                        onMoved: appController.stage1Threshold = runtimeSettingsDialog.thresholdForSensitivity(value)
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: appController.speechControlMode === "gesture"
-                              ? "纯手势模式不使用声音触发灵敏度，原设置会保留。"
-                              : "数值越高越容易触发；连接期间调整会立即生效。"
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
-
-                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
-
-                    SettingsSectionHeader {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        title: "语音识别"
-                        badge: runtimeSettingsDialog.deviceSettingsLocked ? "部分需断开" : "可修改"
-                        accent: "#8EA4FF"
-                    }
-                    ComboBox {
-                        id: asrBackendCombo
-                        objectName: "asrBackendCombo"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        Layout.preferredHeight: 44
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
-                        model: ["实时识别（推荐）", "本地高精度", "在线识别"]
-                        currentIndex: Math.max(0, ["streaming_sensevoice", "funasr_nano", "volcengine"].indexOf(appController.asrBackend))
-                        onActivated: appController.asrBackend = ["streaming_sensevoice", "funasr_nano", "volcengine"][currentIndex]
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        Label {
-                            text: "识别音量增强"
-                            color: root.textMuted
-                            font.pixelSize: 12
-                        }
-                        Item { Layout.fillWidth: true }
-                        Label {
-                            text: "+" + appController.asrGainDb.toFixed(0) + " dB"
-                            color: root.textMain
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                    }
-                    Slider {
-                        id: asrGainSlider
-                        objectName: "asrGainSlider"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        from: 0
-                        to: 12
-                        stepSize: 1
-                        value: appController.asrGainDb
-                        onMoved: appController.asrGainDb = value
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: "仅增强送入 ASR 和语音记录的音频，不影响近点模型。默认 0 dB；弱声可先试 +6 dB，过高可能削波。连接期间修改会实时生效。"
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; spacing: 10
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Label { text: "本地识别性能"; color: root.textMuted; font.pixelSize: 12 }
-                            ComboBox {
-                                id: asrDeviceCombo
-                                objectName: "asrDeviceCombo"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 42
-                                model: appController.computeDevices
-                                textRole: "label"
-                                valueRole: "value"
-                                enabled: appController.asrBackend !== "volcengine"
-                                currentIndex: Math.max(0, indexOfValue(appController.asrDevice))
-                                onActivated: appController.asrDevice = currentValue
-                            }
-                        }
-                        ColumnLayout {
-                            Layout.preferredWidth: 110
-                            Label { text: "语言"; color: root.textMuted; font.pixelSize: 12 }
-                            ComboBox {
-                                id: asrLanguageCombo
-                                objectName: "asrLanguageCombo"
-                                Layout.fillWidth: true
-                                Layout.preferredHeight: 42
-                                model: ["中文", "自动", "英语", "粤语", "日语", "韩语"]
-                                currentIndex: Math.max(0, ["zh", "auto", "en", "yue", "ja", "ko"].indexOf(appController.asrLanguage))
-                                onActivated: appController.asrLanguage = ["zh", "auto", "en", "yue", "ja", "ko"][currentIndex]
-                            }
-                        }
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: appController.asrBackend === "volcengine"
-                              ? "火山引擎是云端识别，不使用本机 CPU 或 GPU；Key 会保存在当前用户的应用设置中。"
-                              : appController.gpuStatusText
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
-                    Label {
-                        text: "线上语音模型 API Key"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.asrBackend === "volcengine"
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        spacing: 8
-                        visible: appController.asrBackend === "volcengine"
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
-
-                        TextField {
-                            id: asrApiKeyField
-                            objectName: "asrApiKeyField"
-                            Layout.fillWidth: true
-                            text: appController.asrApiKey
-                            placeholderText: "填写豆包语音 App Key"
-                            echoMode: showAsrApiKeyButton.checked
-                                      ? TextInput.Normal : TextInput.Password
-                            onEditingFinished: appController.asrApiKey = text
-                        }
-                        ToolButton {
-                            id: showAsrApiKeyButton
-                            objectName: "showAsrApiKeyButton"
-                            checkable: true
-                            text: checked ? "隐藏" : "显示"
-                        }
-                    }
+            contentItem: ColumnLayout {
+                spacing: 12
+                RowLayout {
+                    Layout.fillWidth: true
+                    visible: runtimeSettingsDialog.currentPage !== 0
                     Button {
-                        id: gpuInstallButton
-                        objectName: "gpuInstallButton"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: "安装 NVIDIA GPU 加速"
-                        visible: appController.gpuInstallerAvailable
-                                 && appController.asrBackend !== "volcengine"
-                        enabled: !appController.connected && !appController.busy
-                        onClicked: gpuInstallDialog.open()
+                        objectName: "settingsBackButton"
+                        text: "返回"
+                        onClicked: runtimeSettingsDialog.goBack()
                     }
-                    RowLayout {
+                    Label {
                         Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        visible: appController.asrBackend === "funasr_nano"
-                        spacing: 8
-
-                        Label {
-                            text: "识别热词"
-                            color: root.textMain
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                        Label {
-                            text: "每行一个"
-                            color: root.textMuted
-                            font.pixelSize: 11
-                        }
-                        Item { Layout.fillWidth: true }
+                        text: runtimeSettingsDialog.currentPage === 8 ? "设置 / 手势与快捷键 / 发送与切换对话"
+                              : runtimeSettingsDialog.currentPage === 7 ? "设置 / 手势与快捷键" : "设置"
+                        color: root.textMuted; font.pixelSize: 12
+                        elide: Text.ElideLeft
                     }
-                    Rectangle {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        Layout.preferredHeight: 116
-                        visible: appController.asrBackend === "funasr_nano"
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked
-                        color: root.panelAlt
-                        radius: 9
-                        border.width: 1
-                        border.color: asrHotwordsField.activeFocus
-                                      ? root.primary : root.border
-                        clip: true
+                }
+                ScrollView {
+                    id: runtimeSettingsScroll
+                    objectName: "runtimeSettingsScroll"
+                    Layout.fillWidth: true; Layout.fillHeight: true
+                    clip: true
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                    ColumnLayout {
+                        width: runtimeSettingsScroll.availableWidth
+                        spacing: 14
+                        ColumnLayout {
+                            objectName: "settingsPage0"
+                            Layout.fillWidth: true
+                            visible: runtimeSettingsDialog.currentPage === 0
+                            spacing: 14
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "选择要调整的内容，修改会自动保存。"
+                                color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                            }
+                            SettingsCategoryButton {
+                                objectName: "settingsCategory1"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "听写与撤销"
+                                description: "多次撤销、文本输入与转换方式"
+                                onClicked: runtimeSettingsDialog.navigate(1)
+                            }
+                            SettingsCategoryButton {
+                                objectName: "settingsCategory2"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "手势与快捷键"
+                                description: "开始说话、撤销、编辑、发送和切换对话"
+                                onClicked: runtimeSettingsDialog.navigate(2)
+                            }
+                            SettingsCategoryButton {
+                                objectName: "settingsCategory3"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "麦克风与启停"
+                                description: "音频来源、连接质量和开始说话的方式"
+                                onClicked: runtimeSettingsDialog.navigate(3)
+                            }
+                            SettingsCategoryButton {
+                                objectName: "settingsCategory4"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "语音识别"
+                                description: "识别服务、语言、音量和服务密钥"
+                                onClicked: runtimeSettingsDialog.navigate(4)
+                            }
+                            SettingsCategoryButton {
+                                objectName: "settingsCategory5"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "编辑模型"
+                                description: "处理编辑指令的模型与服务密钥"
+                                onClicked: runtimeSettingsDialog.navigate(5)
+                            }
+                            SettingsCategoryButton {
+                                objectName: "settingsCategory6"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "输入法与权限"
+                                description: "安装语音输入法、辅助功能和输入位置"
+                                onClicked: runtimeSettingsDialog.navigate(6)
+                            }
+                        }
+                        ColumnLayout {
+                            objectName: "settingsPage1"
+                            Layout.fillWidth: true
+                            visible: runtimeSettingsDialog.currentPage === 1
+                            spacing: 14
+                            SettingsSectionHeader {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                title: "使用方式"
+                                badge: "即时保存"
+                                accent: "#C89BFF"
+                            }
+                            Label { visible: !appController.inlineInput.enabled; text: "撤销浮窗"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                            SegmentedChoice {
+                                id: appliedOverlayStyleCombo
+                                objectName: "appliedOverlayStyleCombo"
+                                visible: !appController.inlineInput.enabled
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                options: ["普通浮窗", "极简浮窗"]
+                                currentIndex: appController.appliedOverlayStyle === "compact" ? 1 : 0
+                                onActivated: function(index) {
+                                    appController.appliedOverlayStyle = index === 1 ? "compact" : "normal"
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                visible: !appController.inlineInput.enabled
+                                text: appController.appliedOverlayStyle === "compact"
+                                      ? "仅保留撤销与语音类型转换按钮，占用更少空间。"
+                                      : "在按钮上方显示本次输入或修改的简短摘要；较长内容会自动省略。"
+                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                            }
+                            RowLayout {
+                                visible: !appController.inlineInput.enabled
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                Label { text: "撤销浮窗显示时长"; color: root.textMuted; font.pixelSize: 12 }
+                                Item { Layout.fillWidth: true }
+                                Label {
+                                    text: (Math.round(appliedOverlayDurationSlider.value * 2) / 2) + " 秒"
+                                    color: root.textMain
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                            }
+                            Slider {
+                                id: appliedOverlayDurationSlider
+                                objectName: "appliedOverlayDurationSlider"
+                                visible: !appController.inlineInput.enabled
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                from: 1
+                                to: 10
+                                stepSize: 0.5
+                                snapMode: Slider.SnapAlways
+                                value: appController.appliedOverlayDurationSeconds
+                                onMoved: appController.appliedOverlayDurationSeconds = value
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                visible: !appController.inlineInput.enabled
+                                text: "连接设备期间也可即时调整；仅改变浮窗停留时间，不会清除撤销记录。"
+                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                            }
 
-                        ScrollView {
-                            id: asrHotwordsScroll
-                            anchors.fill: parent
-                            anchors.margins: 1
-                            clip: true
-                            ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
-                            ScrollBar.vertical.policy: ScrollBar.AsNeeded
+                            Switch {
+                                objectName: "multiUndoSwitch"
+                                visible: appController.inlineInput.enabled
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: "多次撤销"
+                                checked: appController.multiUndoEnabled
+                                onToggled: appController.multiUndoEnabled = checked
+                            }
+                            Label {
+                                visible: appController.inlineInput.enabled
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: "开启后可逐次撤回当前输入框内的听写和编辑。手动输入或切换输入框后清空历史；关闭后仅保留最近一次操作。"
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                            Label {
+                                text: "类型转换按键"
+                                color: root.textMuted
+                                font.pixelSize: 12
+                                Layout.leftMargin: 20
+                            }
+                            ComboBox {
+                                id: modeCorrectionShortcutCombo
+                                objectName: "modeCorrectionShortcutCombo"
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                Layout.preferredHeight: 44
+                                model: appController.modeCorrectionShortcutOptions
+                                currentIndex: Math.max(
+                                    0,
+                                    appController.modeCorrectionShortcutOptions.indexOf(
+                                        appController.modeCorrectionShortcut
+                                    )
+                                )
+                                onActivated: appController.modeCorrectionShortcut =
+                                             appController.modeCorrectionShortcutOptions[currentIndex]
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: "仅在当前结果可以转换时拦截所选功能键；连接期间修改也会立即生效。"
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
 
-                            TextArea {
-                                id: asrHotwordsField
-                                objectName: "asrHotwordsField"
-                                width: asrHotwordsScroll.availableWidth
-                                text: appController.asrHotwords
+                            Label { text: "听写与指令识别"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                            SegmentedChoice {
+                                id: inputRoutingModeCombo
+                                visible: !appController.inlineInput.enabled
+                                objectName: "inputRoutingModeCombo"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                options: ["自动判断", "手动选择"]
+                                currentIndex: appController.inputRoutingMode === "auto" ? 0 : 1
+                                onActivated: function(index) {
+                                    appController.inputRoutingMode = index === 0 ? "auto" : "manual"
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: appController.inlineInput.enabled
+                                      ? "每句默认听写；仅在手动转换为编辑时调用文本模型。"
+                                      : appController.inputRoutingMode === "auto"
+                                      ? "每段语音结束后先调用所选文本 LLM 判断听写或编辑指令；日志会记录开始时间、结束时间和判断耗时。"
+                                      : "沿用上方“输入到光标 / 修改当前文本”的固定模式；Alt+1、Alt+2 以及后续手势只负责手动切换。"
+                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                            }
+
+                            Switch {
+                                id: dictationLlmSwitch
+                                visible: !appController.inlineInput.enabled
+                                objectName: "dictationLlmSwitch"
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: "使用大模型整理听写文本"
+                                checked: appController.llmEnabled
+                                onToggled: appController.llmEnabled = checked
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                visible: !appController.inlineInput.enabled
+                                text: "关闭后，普通听写会直接使用语音识别结果；编辑指令和自动判断仍会使用文本模型。"
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                        }
+                        ColumnLayout {
+                            objectName: "settingsPage2"
+                            Layout.fillWidth: true
+                            visible: runtimeSettingsDialog.currentPage === 2
+                            spacing: 14
+                            SettingsCategoryButton {
+                                objectName: "openAppGestureSettingsButton"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                visible: appController.appGestures.supported
+                                text: "发送与切换对话"
+                                description: "选择 Codex、WorkBuddy 或微信，自定义手势对应的快捷键"
+                                onClicked: runtimeSettingsDialog.navigate(7)
+                            }
+
+                            SettingsSectionHeader {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                objectName: "gestureSettingsSection"
+                                title: "听写手势"
+                                badge: "即时生效"
+                                accent: "#69CDB8"
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "每项最多设置两个手势，语音操作之间不能重复分配。确认手势在纯手势模式下用于开始和结束；应用操作可在其他阶段复用撤销和转换手势。"
+                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                            }
+                            GestureBindingRow { actionName: "confirm"; title: "确认 · 开始／结束本句语音" }
+                            GestureBindingRow { actionName: "undo"; title: "撤销 · 处理中用于取消" }
+                            GestureBindingRow { actionName: "switch_mode"; title: "转换 · 下划线期间转为编辑" }
+                            ColumnLayout {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                visible: appController.appGestures.supported
+                                Label { text: "切入 ProxiMic Voice"; color: root.textMain }
+                                ComboBox {
+                                    id: inputSourceGestureSelector
+                                    objectName: "inputSourceGestureSelector"
+                                    Layout.fillWidth: true
+                                    model: appController.appGestures.inputSourceOptions
+                                    textRole: "label"; valueRole: "value"
+                                    readonly property int selectedIndex: {
+                                        var options = appController.appGestures.inputSourceOptions
+                                        for (var i = 0; i < options.length; ++i)
+                                            if (options[i].value === appController.appGestures.inputSourceGesture) return i
+                                        return 0
+                                    }
+                                    currentIndex: selectedIndex
+                                    onActivated: {
+                                        appController.appGestures.setInputSourceGesture(currentValue)
+                                        currentIndex = Qt.binding(function() { return inputSourceGestureSelector.selectedIndex })
+                                    }
+                                }
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "默认未绑定，可自行选择空闲手势。此操作只切换输入法，不开始听写；暂停语音识别时也可用。tap 自动切换并开始听写不受此设置影响。"
+                                    color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                                }
+                            }
+                            Label {
+                                objectName: "gestureSettingsErrorLabel"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                visible: appController.gestureSettingsError.length > 0
+                                text: appController.gestureSettingsError
+                                color: "#F0B85A"; font.pixelSize: 12; wrapMode: Text.Wrap
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: "确认至少保留一个手势。设置会自动保存。"
+                                    color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                                }
+                                Button {
+                                    objectName: "resetGestureBindingsButton"
+                                    text: "恢复默认手势"
+                                    onClicked: appController.resetGestureBindings()
+                                }
+                            }
+
+
+                        }
+                        ColumnLayout {
+                            objectName: "settingsPage3"
+                            Layout.fillWidth: true
+                            visible: runtimeSettingsDialog.currentPage === 3
+                            spacing: 14
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: runtimeSettingsDialog.deviceSettingsLocked ? "设备已连接，灰色选项需断开后修改。" : "设备与识别参数在下次连接时生效。"
+                                color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                            }
+                            SettingsSectionHeader {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                title: "语音设备"
+                                badge: runtimeSettingsDialog.deviceSettingsLocked ? "断开后修改" : "可修改"
+                                accent: "#6F8BFF"
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "先连接 Ring 以使用手势。音频可选 Ring 或电脑连接的 DJI 麦克风。"
                                 color: root.textMain
-                                font.pixelSize: 14
-                                wrapMode: TextEdit.Wrap
-                                selectByMouse: true
-                                leftPadding: 12
-                                rightPadding: 12
-                                topPadding: 10
-                                bottomPadding: 10
-                                background: Rectangle { color: "transparent" }
-                                onActiveFocusChanged: {
-                                    if (!activeFocus)
-                                        appController.asrHotwords = text
+                                font.pixelSize: 12
+                                wrapMode: Text.Wrap
+                            }
+                            Label { text: "音频来源"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                            ComboBox {
+                                objectName: "audioSourceCombo"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.preferredHeight: 44
+                                model: ["Ring 麦克风", "电脑麦克风（DJI）"]
+                                enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                                currentIndex: appController.audioSource === "microphone" ? 1 : 0
+                                onActivated: {
+                                    appController.audioSource = currentIndex === 1 ? "microphone" : "ring"
+                                    if (currentIndex === 1) appController.refreshMicrophones()
+                                }
+                            }
+                            RowLayout {
+                                visible: appController.audioSource === "microphone"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                ComboBox {
+                                    objectName: "microphoneDeviceCombo"
+                                    Layout.fillWidth: true
+                                    Layout.minimumWidth: 0
+                                    Layout.preferredHeight: 44
+                                    enabled: !runtimeSettingsDialog.deviceSettingsLocked && !appController.microphoneScanBusy
+                                    model: appController.microphoneDevices
+                                    textRole: "label"
+                                    valueRole: "value"
+                                    currentIndex: {
+                                        var rows = appController.microphoneDevices
+                                        for (var i = 0; i < rows.length; ++i)
+                                            if (rows[i].value === appController.microphoneDevice) return i
+                                        return 0
+                                    }
+                                    onActivated: appController.microphoneDevice = currentValue
+                                }
+                                Button {
+                                    objectName: "refreshMicrophonesButton"
+                                    text: appController.microphoneScanBusy ? "检测中…" : "刷新"
+                                    enabled: !runtimeSettingsDialog.deviceSettingsLocked && !appController.microphoneScanBusy
+                                    onClicked: appController.refreshMicrophones()
+                                }
+                            }
+                            Label {
+                                visible: appController.audioSource === "microphone"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: appController.microphoneDevicesError.length > 0
+                                      ? appController.microphoneDevicesError
+                                      : "可自动识别 DJI，也可指定输入设备；未找到时不会切换到其他麦克风。Ring 或麦克风断开都会停止交互。"
+                                color: appController.microphoneDevicesError.length > 0 ? "#F3AA82" : root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                            Label {
+                                visible: appController.audioSource === "ring"
+                                text: "连接质量"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20
+                            }
+                            ComboBox {
+                                id: audioEncodingCombo
+                                objectName: "audioEncodingCombo"
+                                visible: appController.audioSource === "ring"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.preferredHeight: 44
+                                model: ["稳定优先（推荐）", "平衡模式", "原始音质"]
+                                enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                                currentIndex: Math.max(0, ["opus", "adpcm", "pcm"].indexOf(appController.audioEncoding))
+                                onActivated: appController.audioEncoding = ["opus", "adpcm", "pcm"][currentIndex]
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                visible: appController.audioSource === "ring"
+                                text: appController.audioEncoding === "pcm"
+                                      ? "原始 PCM 带宽最高，BLE 链路繁忙时更容易出现音频停流。"
+                                      : appController.audioEncoding === "adpcm"
+                                        ? "BLE 带宽较低，但有损压缩可能改变近点模型的 Stage2 分数分布。"
+                                        : "默认使用 Opus 降低 BLE 带宽；SDK 解码后仍向模型提供 16 kHz PCM。"
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                            Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
+
+                            SettingsSectionHeader {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                title: "语音启停方式"
+                                badge: runtimeSettingsDialog.deviceSettingsLocked ? "断开后修改" : "可修改"
+                                accent: "#55D6AE"
+                            }
+                            ComboBox {
+                                objectName: "speechControlModeCombo"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.preferredHeight: 44
+                                model: ["靠近说话开始 · 确认手势结束", "纯手势 · 确认手势开始／结束"]
+                                enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                                currentIndex: appController.speechControlMode === "gesture" ? 1 : 0
+                                onActivated: appController.speechControlMode = currentIndex === 1 ? "gesture" : "proximity"
+                            }
+                            Label {
+                                objectName: "speechControlModeHint"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: appController.speechControlMode === "gesture"
+                                      ? "开启语音识别后，" + appController.confirmGestureHint + " 开始，再做一次结束。不使用近点模型；本句处理完成后才能开始下一句。"
+                                      : "保持原有启停方式：靠近说话开始，" + appController.confirmGestureHint + " 结束。"
+                                        + (appController.audioSource === "microphone" ? "靠近检测和语音识别均使用选定麦克风的音频。" : "")
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                Label { text: "声音触发灵敏度"; color: root.textMuted; font.pixelSize: 12 }
+                                Item { Layout.fillWidth: true }
+                                Label {
+                                    text: Math.round(stage1SensitivitySlider.value) + " / 10"
+                                    color: root.textMain
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                            }
+                            Slider {
+                                id: stage1SensitivitySlider
+                                objectName: "stage1SensitivitySlider"
+                                enabled: appController.speechControlMode === "proximity"
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                from: 1
+                                to: 10
+                                stepSize: 1
+                                value: runtimeSettingsDialog.stage1Sensitivity(appController.stage1Threshold)
+                                onMoved: appController.stage1Threshold = runtimeSettingsDialog.thresholdForSensitivity(value)
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: appController.speechControlMode === "gesture"
+                                      ? "纯手势模式不使用声音触发灵敏度，原设置会保留。"
+                                      : "数值越高越容易触发；连接期间调整会立即生效。"
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                        }
+                        ColumnLayout {
+                            objectName: "settingsPage4"
+                            Layout.fillWidth: true
+                            visible: runtimeSettingsDialog.currentPage === 4
+                            spacing: 14
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: runtimeSettingsDialog.deviceSettingsLocked ? "设备已连接，灰色选项需断开后修改。" : "设备与识别参数在下次连接时生效。"
+                                color: root.textMuted; font.pixelSize: 12; wrapMode: Text.Wrap
+                            }
+                            SettingsSectionHeader {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                title: "语音识别"
+                                badge: runtimeSettingsDialog.deviceSettingsLocked ? "部分需断开" : "可修改"
+                                accent: "#8EA4FF"
+                            }
+                            ComboBox {
+                                id: asrBackendCombo
+                                objectName: "asrBackendCombo"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                Layout.preferredHeight: 44
+                                enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                                model: ["实时识别（推荐）", "本地高精度", "在线识别"]
+                                currentIndex: Math.max(0, ["streaming_sensevoice", "funasr_nano", "volcengine"].indexOf(appController.asrBackend))
+                                onActivated: appController.asrBackend = ["streaming_sensevoice", "funasr_nano", "volcengine"][currentIndex]
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                Label {
+                                    text: "识别音量增强"
+                                    color: root.textMuted
+                                    font.pixelSize: 12
+                                }
+                                Item { Layout.fillWidth: true }
+                                Label {
+                                    text: "+" + appController.asrGainDb.toFixed(0) + " dB"
+                                    color: root.textMain
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                            }
+                            Slider {
+                                id: asrGainSlider
+                                objectName: "asrGainSlider"
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                from: 0
+                                to: 12
+                                stepSize: 1
+                                value: appController.asrGainDb
+                                onMoved: appController.asrGainDb = value
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: "仅增强送入 ASR 和语音记录的音频，不影响近点模型。默认 0 dB；弱声可先试 +6 dB，过高可能削波。连接期间修改会实时生效。"
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; spacing: 10
+                                enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                                ColumnLayout {
+                                    Layout.fillWidth: true
+                                    Label { text: "本地识别性能"; color: root.textMuted; font.pixelSize: 12 }
+                                    ComboBox {
+                                        id: asrDeviceCombo
+                                        objectName: "asrDeviceCombo"
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 42
+                                        model: appController.computeDevices
+                                        textRole: "label"
+                                        valueRole: "value"
+                                        enabled: appController.asrBackend !== "volcengine"
+                                        currentIndex: Math.max(0, indexOfValue(appController.asrDevice))
+                                        onActivated: appController.asrDevice = currentValue
+                                    }
+                                }
+                                ColumnLayout {
+                                    Layout.preferredWidth: 110
+                                    Label { text: "语言"; color: root.textMuted; font.pixelSize: 12 }
+                                    ComboBox {
+                                        id: asrLanguageCombo
+                                        objectName: "asrLanguageCombo"
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 42
+                                        model: ["中文", "自动", "英语", "粤语", "日语", "韩语"]
+                                        currentIndex: Math.max(0, ["zh", "auto", "en", "yue", "ja", "ko"].indexOf(appController.asrLanguage))
+                                        onActivated: appController.asrLanguage = ["zh", "auto", "en", "yue", "ja", "ko"][currentIndex]
+                                    }
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: appController.asrBackend === "volcengine"
+                                      ? "火山引擎是云端识别，不使用本机 CPU 或 GPU；Key 会保存在当前用户的应用设置中。"
+                                      : appController.gpuStatusText
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                            }
+                            Label {
+                                text: "线上语音模型 API Key"
+                                color: root.textMuted
+                                font.pixelSize: 12
+                                Layout.leftMargin: 20
+                                visible: appController.asrBackend === "volcengine"
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                spacing: 8
+                                visible: appController.asrBackend === "volcengine"
+                                enabled: !runtimeSettingsDialog.deviceSettingsLocked
+
+                                TextField {
+                                    id: asrApiKeyField
+                                    objectName: "asrApiKeyField"
+                                    Layout.fillWidth: true
+                                    text: appController.asrApiKey
+                                    placeholderText: "填写豆包语音 App Key"
+                                    echoMode: showAsrApiKeyButton.checked
+                                              ? TextInput.Normal : TextInput.Password
+                                    onEditingFinished: appController.asrApiKey = text
+                                }
+                                ToolButton {
+                                    id: showAsrApiKeyButton
+                                    objectName: "showAsrApiKeyButton"
+                                    checkable: true
+                                    text: checked ? "隐藏" : "显示"
+                                }
+                            }
+                            Button {
+                                id: gpuInstallButton
+                                objectName: "gpuInstallButton"
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: "安装 NVIDIA GPU 加速"
+                                visible: appController.gpuInstallerAvailable
+                                         && appController.asrBackend !== "volcengine"
+                                enabled: !appController.connected && !appController.busy
+                                onClicked: gpuInstallDialog.open()
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                visible: appController.asrBackend === "funasr_nano"
+                                spacing: 8
+
+                                Label {
+                                    text: "识别热词"
+                                    color: root.textMain
+                                    font.pixelSize: 12
+                                    font.bold: true
+                                }
+                                Label {
+                                    text: "每行一个"
+                                    color: root.textMuted
+                                    font.pixelSize: 11
+                                }
+                                Item { Layout.fillWidth: true }
+                            }
+                            Rectangle {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                Layout.preferredHeight: 116
+                                visible: appController.asrBackend === "funasr_nano"
+                                enabled: !runtimeSettingsDialog.deviceSettingsLocked
+                                color: root.panelAlt
+                                radius: 9
+                                border.width: 1
+                                border.color: asrHotwordsField.activeFocus
+                                              ? root.primary : root.border
+                                clip: true
+
+                                ScrollView {
+                                    id: asrHotwordsScroll
+                                    anchors.fill: parent
+                                    anchors.margins: 1
+                                    clip: true
+                                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+                                    ScrollBar.vertical.policy: ScrollBar.AsNeeded
+
+                                    TextArea {
+                                        id: asrHotwordsField
+                                        objectName: "asrHotwordsField"
+                                        width: asrHotwordsScroll.availableWidth
+                                        text: appController.asrHotwords
+                                        color: root.textMain
+                                        font.pixelSize: 14
+                                        wrapMode: TextEdit.Wrap
+                                        selectByMouse: true
+                                        leftPadding: 12
+                                        rightPadding: 12
+                                        topPadding: 10
+                                        bottomPadding: 10
+                                        background: Rectangle { color: "transparent" }
+                                        onActiveFocusChanged: {
+                                            if (!activeFocus)
+                                                appController.asrHotwords = text
+                                        }
+                                    }
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                text: "也支持逗号或分号分隔；自动去空和去重，断开并重新连接后生效。"
+                                color: root.textMuted
+                                font.pixelSize: 11
+                                wrapMode: Text.Wrap
+                                visible: appController.asrBackend === "funasr_nano"
+                            }
+                        }
+                        ColumnLayout {
+                            objectName: "settingsPage5"
+                            Layout.fillWidth: true
+                            visible: runtimeSettingsDialog.currentPage === 5
+                            spacing: 14
+                            SettingsSectionHeader {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                title: "文本助手"
+                                badge: "下一句话生效"
+                                accent: "#F0B85A"
+                            }
+                            Label { text: "运行方式"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
+                            SegmentedChoice {
+                                id: llmProviderCombo
+                                objectName: "llmProviderCombo"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                options: ["本地运行", "在线服务"]
+                                currentIndex: appController.llmProvider === "local" ? 0 : 1
+                                onActivated: function(index) {
+                                    appController.llmProvider = index === 0 ? "local" : "volcengine"
+                                }
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: appController.llmProvider === "local"
+                                    ? "使用本机文本模型，首次处理时自动启动，内容不会发送到云端。"
+                                    : "使用在线文本服务处理编辑指令和听写整理。"
+                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                visible: appController.llmProvider === "local"
+                                Label {
+                                    Layout.fillWidth: true
+                                    text: appController.localModelInstallStatus
+                                    color: appController.localModelInstalled ? "#4DD4AC" : root.textMuted
+                                    font.pixelSize: 11
+                                    wrapMode: Text.Wrap
+                                }
+                                Button {
+                                    objectName: "installLocalModelButton"
+                                    text: appController.localModelInstalled
+                                        ? "已安装"
+                                        : (appController.localModelInstalling ? "下载中…" : "下载本地模型")
+                                    enabled: !appController.localModelInstalled && !appController.localModelInstalling
+                                    onClicked: appController.installLocalModel()
+                                }
+                            }
+                            Label {
+                                text: "在线模型"
+                                color: root.textMuted
+                                font.pixelSize: 12
+                                Layout.leftMargin: 20
+                                visible: appController.llmProvider !== "local"
+                            }
+                            SegmentedChoice {
+                                id: llmModelCombo
+                                objectName: "llmModelCombo"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                options: ["豆包 Seed 2.0", "DeepSeek V4"]
+                                currentIndex: appController.llmModel === "deepseek-v4-flash-260425" ? 1 : 0
+                                onActivated: function(index) {
+                                    appController.llmModel = index === 0
+                                        ? "doubao-seed-2-0-lite-260215"
+                                        : "deepseek-v4-flash-260425"
+                                }
+                                visible: appController.llmProvider !== "local"
+                            }
+                            Label {
+                                text: "在线服务密钥"
+                                color: root.textMuted
+                                font.pixelSize: 12
+                                Layout.leftMargin: 20
+                                visible: appController.llmProvider !== "local"
+                            }
+                            RowLayout {
+                                Layout.fillWidth: true
+                                Layout.leftMargin: 20
+                                Layout.rightMargin: 20
+                                spacing: 8
+                                visible: appController.llmProvider !== "local"
+
+                                TextField {
+                                    id: llmApiKeyField
+                                    objectName: "llmApiKeyField"
+                                    Layout.fillWidth: true
+                                    text: appController.llmApiKey
+                                    placeholderText: "填写火山方舟 API Key"
+                                    echoMode: showLlmApiKeyButton.checked
+                                              ? TextInput.Normal : TextInput.Password
+                                    onEditingFinished: appController.llmApiKey = text
+                                }
+                                ToolButton {
+                                    id: showLlmApiKeyButton
+                                    objectName: "showLlmApiKeyButton"
+                                    checkable: true
+                                    text: checked ? "隐藏" : "显示"
                                 }
                             }
                         }
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: "也支持逗号或分号分隔；自动去空和去重，断开并重新连接后生效。"
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                        visible: appController.asrBackend === "funasr_nano"
-                    }
-
-                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
-
-                    SettingsSectionHeader {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        title: "使用方式"
-                        badge: "即时保存"
-                        accent: "#C89BFF"
-                    }
-                    Label { text: "撤销浮窗"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    SegmentedChoice {
-                        id: appliedOverlayStyleCombo
-                        objectName: "appliedOverlayStyleCombo"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        options: ["普通浮窗", "极简浮窗"]
-                        currentIndex: appController.appliedOverlayStyle === "compact" ? 1 : 0
-                        onActivated: function(index) {
-                            appController.appliedOverlayStyle = index === 1 ? "compact" : "normal"
-                        }
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.appliedOverlayStyle === "compact"
-                              ? "仅保留撤销与语音类型转换按钮，占用更少空间。"
-                              : "在按钮上方显示本次输入或修改的简短摘要；较长内容会自动省略。"
-                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        Label { text: "撤销浮窗显示时长"; color: root.textMuted; font.pixelSize: 12 }
-                        Item { Layout.fillWidth: true }
-                        Label {
-                            text: (Math.round(appliedOverlayDurationSlider.value * 2) / 2) + " 秒"
-                            color: root.textMain
-                            font.pixelSize: 12
-                            font.bold: true
-                        }
-                    }
-                    Slider {
-                        id: appliedOverlayDurationSlider
-                        objectName: "appliedOverlayDurationSlider"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        from: 1
-                        to: 10
-                        stepSize: 0.5
-                        snapMode: Slider.SnapAlways
-                        value: appController.appliedOverlayDurationSeconds
-                        onMoved: appController.appliedOverlayDurationSeconds = value
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "连接设备期间也可即时调整；仅改变浮窗停留时间，不会清除撤销记录。"
-                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                    }
-
-                    Label {
-                        text: "类型转换按键"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                    }
-                    ComboBox {
-                        id: modeCorrectionShortcutCombo
-                        objectName: "modeCorrectionShortcutCombo"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        Layout.preferredHeight: 44
-                        model: appController.modeCorrectionShortcutOptions
-                        currentIndex: Math.max(
-                            0,
-                            appController.modeCorrectionShortcutOptions.indexOf(
-                                appController.modeCorrectionShortcut
-                            )
-                        )
-                        onActivated: appController.modeCorrectionShortcut =
-                                     appController.modeCorrectionShortcutOptions[currentIndex]
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: "仅在当前结果可以转换时拦截所选功能键；连接期间修改也会立即生效。"
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
-
-                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
-
-                    SettingsSectionHeader {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        objectName: "gestureSettingsSection"
-                        title: "手势操作"
-                        badge: "即时生效"
-                        accent: "#69CDB8"
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "每项最多设置两个手势，不能重复分配。确认手势在纯手势模式下同时用于开始和结束；按键仍可独立使用。"
-                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                    }
-                    GestureBindingRow { actionName: "confirm"; title: "确认 · 结束本句语音" }
-                    GestureBindingRow { actionName: "undo"; title: "撤销 · 处理中用于取消" }
-                    GestureBindingRow { actionName: "switch_mode"; title: "转换 · 听写与编辑类型" }
-                    Label {
-                        objectName: "gestureSettingsErrorLabel"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        visible: appController.gestureSettingsError.length > 0
-                        text: appController.gestureSettingsError
-                        color: "#F0B85A"; font.pixelSize: 12; wrapMode: Text.Wrap
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        Label {
+                        ColumnLayout {
+                            objectName: "settingsPage6"
                             Layout.fillWidth: true
-                            text: "确认至少保留一个手势。设置会自动保存。"
-                            color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                            visible: runtimeSettingsDialog.currentPage === 6
+                            spacing: 14
+                            SettingsCategoryButton {
+                                objectName: "openInputMethodSetupButton"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                visible: appController.inlineInput.enabled
+                                text: "安装与启用语音输入法"
+                                description: "查看组件状态、输入法选择和系统权限"
+                                onClicked: inputMethodSetupDialog.open()
+                            }
+                            Switch {
+                                id: desktopOutputSwitch
+                                objectName: "desktopOutputSwitch"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "识别完成后输入到当前光标"
+                                checked: appController.desktopOutputEnabled
+                                onToggled: appController.desktopOutputEnabled = checked
+                                visible: Qt.platform.os === "windows" || Qt.platform.os === "osx"
+                            }
+                            Switch {
+                                id: pushToTalkSwitch
+                                objectName: "pushToTalkSwitch"
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                enabled: !runtimeSettingsDialog.deviceSettingsLocked && appController.speechControlMode !== "gesture"
+                                text: "启用右 Alt 按住说话"
+                                checked: appController.pushToTalkEnabled
+                                onToggled: appController.pushToTalkEnabled = checked
+                                visible: Qt.platform.os === "windows"
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: "macOS 听写和编辑可作用于当前文本框；首次使用请在系统设置的“隐私与安全性 → 辅助功能”中允许 Proximic Voice。语音处理期间可按 Esc 取消，结果应用后可在文本框旁撤销或切换处理方式；右 Alt 控制仍仅支持 Windows。"
+                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                                visible: Qt.platform.os !== "windows"
+                            }
+                            Label {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                text: appController.speechControlMode === "gesture"
+                                    ? "纯手势模式仅由确认手势开始和结束，右 Alt 按住说话不启用。暂停识别不会断开 Ring。"
+                                    : Qt.platform.os === "windows"
+                                    ? "设备连接和语音识别相互独立；暂停识别不会断开 Ring。识别开启时，按键优先于自动靠近检测。"
+                                    : "设备连接和语音识别相互独立；暂停识别不会断开 Ring。"
+                                color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
+                            }
                         }
-                        Button {
-                            objectName: "resetGestureBindingsButton"
-                            text: "恢复默认手势"
-                            onClicked: appController.resetGestureBindings()
-                        }
-                    }
-                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
-
-                    Label { text: "听写与指令识别"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    SegmentedChoice {
-                        id: inputRoutingModeCombo
-                        objectName: "inputRoutingModeCombo"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        options: ["自动判断", "手动选择"]
-                        currentIndex: appController.inputRoutingMode === "auto" ? 0 : 1
-                        onActivated: function(index) {
-                            appController.inputRoutingMode = index === 0 ? "auto" : "manual"
-                        }
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.inputRoutingMode === "auto"
-                              ? "每段语音结束后先调用所选文本 LLM 判断听写或编辑指令；日志会记录开始时间、结束时间和判断耗时。"
-                              : "沿用上方“输入到光标 / 修改当前文本”的固定模式；Alt+1、Alt+2 以及后续手势只负责手动切换。"
-                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                    }
-
-                    Switch {
-                        id: dictationLlmSwitch
-                        objectName: "dictationLlmSwitch"
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: "使用大模型整理听写文本"
-                        checked: appController.llmEnabled
-                        onToggled: appController.llmEnabled = checked
-                    }
-                    Label {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        text: "关闭后，普通听写会直接使用语音识别结果；编辑指令和自动判断仍会使用文本模型。"
-                        color: root.textMuted
-                        font.pixelSize: 11
-                        wrapMode: Text.Wrap
-                    }
-
-                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
-
-                    SettingsSectionHeader {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        title: "文本助手"
-                        badge: "下一句话生效"
-                        accent: "#F0B85A"
-                    }
-                    Label { text: "运行方式"; color: root.textMuted; font.pixelSize: 12; Layout.leftMargin: 20 }
-                    SegmentedChoice {
-                        id: llmProviderCombo
-                        objectName: "llmProviderCombo"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        options: ["本地运行", "在线服务"]
-                        currentIndex: appController.llmProvider === "local" ? 0 : 1
-                        onActivated: function(index) {
-                            appController.llmProvider = index === 0 ? "local" : "volcengine"
-                        }
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.llmProvider === "local"
-                            ? "使用本机文本模型，首次处理时自动启动，内容不会发送到云端。"
-                            : "使用在线文本服务处理编辑指令和听写整理。"
-                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        visible: appController.llmProvider === "local"
-                        Label {
+                        ColumnLayout {
+                            objectName: "settingsPage7"
                             Layout.fillWidth: true
-                            text: appController.localModelInstallStatus
-                            color: appController.localModelInstalled ? "#4DD4AC" : root.textMuted
-                            font.pixelSize: 11
-                            wrapMode: Text.Wrap
+                            visible: runtimeSettingsDialog.currentPage === 7
+                            spacing: 14
+                            AppGestureSettings {
+                                id: appGestureSettings
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                service: appController.appGestures
+                                onWechatSetupRequested: runtimeSettingsDialog.navigate(8)
+                            }
                         }
-                        Button {
-                            objectName: "installLocalModelButton"
-                            text: appController.localModelInstalled
-                                ? "已安装"
-                                : (appController.localModelInstalling ? "下载中…" : "下载本地模型")
-                            enabled: !appController.localModelInstalled && !appController.localModelInstalling
-                            onClicked: appController.installLocalModel()
-                        }
-                    }
-                    Label {
-                        text: "在线模型"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.llmProvider !== "local"
-                    }
-                    SegmentedChoice {
-                        id: llmModelCombo
-                        objectName: "llmModelCombo"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        options: ["豆包 Seed 2.0", "DeepSeek V4"]
-                        currentIndex: appController.llmModel === "deepseek-v4-flash-260425" ? 1 : 0
-                        onActivated: function(index) {
-                            appController.llmModel = index === 0
-                                ? "doubao-seed-2-0-lite-260215"
-                                : "deepseek-v4-flash-260425"
-                        }
-                        visible: appController.llmProvider !== "local"
-                    }
-                    Label {
-                        text: "在线服务密钥"
-                        color: root.textMuted
-                        font.pixelSize: 12
-                        Layout.leftMargin: 20
-                        visible: appController.llmProvider !== "local"
-                    }
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 20
-                        Layout.rightMargin: 20
-                        spacing: 8
-                        visible: appController.llmProvider !== "local"
-
-                        TextField {
-                            id: llmApiKeyField
-                            objectName: "llmApiKeyField"
+                        ColumnLayout {
+                            objectName: "settingsPage8"
                             Layout.fillWidth: true
-                            text: appController.llmApiKey
-                            placeholderText: "填写火山方舟 API Key"
-                            echoMode: showLlmApiKeyButton.checked
-                                      ? TextInput.Normal : TextInput.Password
-                            onEditingFinished: appController.llmApiKey = text
-                        }
-                        ToolButton {
-                            id: showLlmApiKeyButton
-                            objectName: "showLlmApiKeyButton"
-                            checkable: true
-                            text: checked ? "隐藏" : "显示"
+                            visible: runtimeSettingsDialog.currentPage === 8
+                            spacing: 14
+                            WeChatShortcutGuide {
+                                Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
+                                service: appController.appGestures
+                            }
                         }
                     }
-                    Rectangle { Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20; height: 1; color: root.border }
-
-                    Switch {
-                        id: desktopOutputSwitch
-                        objectName: "desktopOutputSwitch"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "识别完成后输入到当前光标"
-                        checked: appController.desktopOutputEnabled
-                        onToggled: appController.desktopOutputEnabled = checked
-                        visible: Qt.platform.os === "windows" || Qt.platform.os === "osx"
-                    }
-                    Switch {
-                        id: pushToTalkSwitch
-                        objectName: "pushToTalkSwitch"
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        enabled: !runtimeSettingsDialog.deviceSettingsLocked && appController.speechControlMode !== "gesture"
-                        text: "启用右 Alt 按住说话"
-                        checked: appController.pushToTalkEnabled
-                        onToggled: appController.pushToTalkEnabled = checked
-                        visible: Qt.platform.os === "windows"
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: "macOS 听写和编辑可作用于当前文本框；首次使用请在系统设置的“隐私与安全性 → 辅助功能”中允许 Proximic Voice。语音处理期间可按 Esc 取消，结果应用后可在文本框旁撤销或切换处理方式；右 Alt 控制仍仅支持 Windows。"
-                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                        visible: Qt.platform.os !== "windows"
-                    }
-                    Label {
-                        Layout.fillWidth: true; Layout.leftMargin: 20; Layout.rightMargin: 20
-                        text: appController.speechControlMode === "gesture"
-                            ? "纯手势模式仅由确认手势开始和结束，右 Alt 按住说话不启用。暂停识别不会断开 Ring。"
-                            : Qt.platform.os === "windows"
-                            ? "设备连接和语音识别相互独立；暂停识别不会断开 Ring。识别开启时，按键优先于自动靠近检测。"
-                            : "设备连接和语音识别相互独立；暂停识别不会断开 Ring。"
-                        color: root.textMuted; font.pixelSize: 11; wrapMode: Text.Wrap
-                    }
-                    Item { Layout.preferredHeight: 22 }
                 }
             }
 
@@ -2076,20 +2478,9 @@ ApplicationWindow {
 
                     Label {
                         Layout.fillWidth: true
-                        text: appController.connected || appController.busy
-                              ? "即时设置会立即或从下一句话开始生效"
-                              : "完成设置后点击应用返回"
+                        text: "设置自动保存"
                         color: root.textMuted
                         font.pixelSize: 11
-                    }
-
-                    Button {
-                        id: settingsBackButton
-                        objectName: "settingsBackButton"
-                        Layout.preferredWidth: 88
-                        Layout.preferredHeight: 38
-                        text: "返回"
-                        onClicked: runtimeSettingsDialog.goBack()
                     }
 
                     Button {
@@ -2097,11 +2488,32 @@ ApplicationWindow {
                         objectName: "settingsApplyButton"
                         Layout.preferredWidth: 88
                         Layout.preferredHeight: 38
-                        text: "应用"
+                        text: "完成"
                         highlighted: true
                         onClicked: runtimeSettingsDialog.applyAndClose()
                     }
                 }
+            }
+        }
+    }
+
+    Window {
+        objectName: "appGestureNotice"
+        transientParent: null
+        flags: Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.WindowDoesNotAcceptFocus
+        width: 380
+        height: appGestureNoticeText.implicitHeight + 28
+        x: Screen.virtualX + Screen.width - width - 24
+        y: Screen.virtualY + 48
+        color: "transparent"
+        visible: appController.appGestures.notice.length > 0
+        Rectangle {
+            anchors.fill: parent; radius: 12; color: "#202B3D"; border.color: "#45516A"
+            Label {
+                id: appGestureNoticeText
+                anchors.left: parent.left; anchors.right: parent.right; anchors.top: parent.top
+                anchors.margins: 14; wrapMode: Text.Wrap
+                text: appController.appGestures.notice; color: "#F5F7FB"; font.pixelSize: 13
             }
         }
     }
@@ -2233,7 +2645,7 @@ ApplicationWindow {
                 ? Screen.desktopAvailableHeight
                 : Screen.height) - height - 20
         ))
-        visible: appController.transcriptVisible
+        visible: !appController.inlineInput.enabled && appController.transcriptVisible
         color: "transparent"
         Material.theme: Material.Dark
         Material.accent: root.primary
@@ -2549,7 +2961,7 @@ ApplicationWindow {
             if (!systemDragActive)
                 restoreApplicationPosition()
         }
-        visible: appController.appliedActionVisible
+        visible: !appController.inlineInput.enabled && appController.appliedActionVisible
         color: "transparent"
         // The controller hides this when the target app leaves the foreground;
         // while visible it must float over that app instead of behind it.

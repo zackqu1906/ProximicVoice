@@ -17,6 +17,7 @@ class SessionSink(Protocol):
     def feed(self, audio_16k: np.ndarray) -> None: ...
     def end(self, final_audio_16k: np.ndarray) -> None: ...
     def discard(self, captured_audio_16k: np.ndarray) -> None: ...
+    def cancel_pending(self) -> None: ...
     def abort(self) -> None: ...
     def close(self) -> None: ...
 
@@ -120,6 +121,13 @@ class SessionFanout:
             discard = getattr(sink, "discard", None)
             if callable(discard):
                 discard(captured_audio_16k)
+
+    def cancel_pending(self) -> None:
+        """Cancel inference after END without recording the waveform twice."""
+        for sink in self.sinks:
+            cancel = getattr(sink, "cancel_pending", None)
+            if callable(cancel):
+                cancel()
 
     def abort(self) -> None:
         for sink in self.sinks:

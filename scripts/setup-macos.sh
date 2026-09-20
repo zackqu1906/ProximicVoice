@@ -9,6 +9,12 @@ if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     exit 1
 fi
 
+# opuslib is only a Python binding. Build the native library inside the project
+# so source installs, like the packaged app, do not depend on Homebrew.
+if [[ ! -f "$PROJECT_ROOT/.runtime/opus/lib/libopus.0.dylib" ]]; then
+    MACOSX_DEPLOYMENT_TARGET=12.0 "$PROJECT_ROOT/scripts/install-opus-macos.sh"
+fi
+
 if [[ ! -d "$PROJECT_ROOT/third_party/streaming-sensevoice/streaming_sensevoice" ]]; then
     echo "Missing third_party/streaming-sensevoice. Clone or download the complete project." >&2
     exit 1
@@ -58,6 +64,7 @@ fi
 
 "$VENV_PYTHON" -m pip install --upgrade "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
 "$VENV_PYTHON" -m pip install -c "$CONSTRAINT_FILE" -e ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui,dev]"
+PROXIMIC_OPUS_DIR="$PROJECT_ROOT/.runtime/opus/lib" "$VENV_PYTHON" -c 'from ring_python_sdk.audio.opus_codec import OpusBlockDecoder; import struct; assert len(OpusBlockDecoder().decode_block(struct.pack("<HB", 1600, 5) + b"\x03\x00\xf8\xff\xfe" * 5)) == 3200; print("Bundled Opus decode passed.")'
 "$VENV_PYTHON" -c 'import torch, torchaudio, PySide6, bleak, cryptography, funasr, modelscope_hub, transformers, websocket, asr_decoder, online_fbank, proximic_ring, ring_python_sdk; import proximic_ring.ui.main; assert torch.version.cuda is None; print("Torch:", torch.__version__); print("Compute: cpu"); print("macOS installation self-check passed.")'
 
 echo

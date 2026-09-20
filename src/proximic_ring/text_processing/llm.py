@@ -11,7 +11,6 @@ from urllib import error as urllib_error
 from urllib import request as urllib_request
 
 from .edit_response import apply_edit_response
-from .edit_constraints import validate_expansion_result
 from .edit_tool import (
     DEFAULT_EDIT_MODE,
     EDIT_MODE_FRAGMENT,
@@ -231,7 +230,7 @@ class OpenAICompatibleTextProcessor:
             return "", "", (), ""
         if not settings.enabled:
             return raw_text, "", (), ""
-        target = validate_edit_target_text(target_text).strip()
+        target = validate_edit_target_text(target_text)
         user_content = (
             "<待修改文本>\n"
             f"{target}\n"
@@ -277,7 +276,7 @@ class OpenAICompatibleTextProcessor:
 
         if normalized_mode == INPUT_MODE_EDIT:
             normalized_edit_mode = normalize_edit_mode(edit_mode)
-            target = validate_edit_target_text(target_text).strip()
+            target = validate_edit_target_text(target_text)
             user_content = (
                 "<待修改文本>\n"
                 f"{target}\n"
@@ -404,7 +403,6 @@ class OpenAICompatibleTextProcessor:
             model_outputs.append(model_output)
             try:
                 final_text = apply_edit_response(target, response, edit_mode)
-                validate_expansion_result(instruction, target, final_text)
             except Exception as exc:
                 if not final_attempt:
                     retry_error = str(exc)

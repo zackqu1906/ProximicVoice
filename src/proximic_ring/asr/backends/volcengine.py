@@ -34,6 +34,13 @@ DEFAULT_URL = "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel"
 DEFAULT_RESOURCE_ID = "volc.seedasr.sauc.duration"
 DEFAULT_REQUEST_MODEL = "bigmodel"
 _SAMPLE_RATE = 16_000
+_CANCEL_POLL_S = 0.025
+_CLOSE_JOIN_S = 0.025
+
+
+class VolcengineASRCancelled(RuntimeError):
+    """Internal terminal signal for a discarded utterance."""
+
 
 # Seed binary protocol values.  The first byte encodes protocol v1 and a
 # four-byte header; the other header nibbles describe message/payload format.
@@ -229,6 +236,10 @@ class VolcengineStreamingASR:
         self.debug = bool(debug)
         self._ws_factory = ws_factory
         self._ws: Any | None = None
+        self._session_lock = threading.RLock()
+        self._session_generation = 0
+        self._cancel_event = threading.Event()
+        self._active_cancel_event = self._cancel_event
         self._pending_pcm = bytearray()
         self._last_text = ""
         self._final_seen = False
@@ -261,6 +272,25 @@ class VolcengineStreamingASR:
             "truncated": False,
             "reason": "not_provided",
         }
+
+    def set_cancel_event(self, event: threading.Event) -> None:
+        """Bind the producer's cancellation event to the next utterance.
+
+        Do not clear this event: discard can arrive before start/connect runs.
+        Every receiver captures its own event rather than following this mutable
+        next-session slot.
+        """
+        self._cancel_event = event
+
+    def _check_cancelled(
+        self,
+        generation: int,
+        cancel_event: threading.Event,
+        stop_event: threading.Event,
+    ) -> None:
+        if (cancel_event.is_set() or stop_event.is_set()
+                or generation != self._session_generation):
+            raise VolcengineASRCancelled("Volcengine ASR session was cancelled")
 
     def set_partial_callback(
         self,
@@ -326,7 +356,12 @@ class VolcengineStreamingASR:
         if self.debug:
             print(f"[ASR:volcengine] {message}")
 
-    def _connect(self):
+    def _connect(
+        self,
+        generation: int,
+        cancel_event: threading.Event,
+        stop_event: threading.Event,
+    ):
         if self._ws_factory is not None:
             factory = self._ws_factory
         else:
@@ -346,10 +381,74 @@ class VolcengineStreamingASR:
         self._log(
             f"connecting resource_id={self.resource_id} timeout={self.timeout_s:.1f}s"
         )
-        return factory(self.url, header=headers, timeout=self.timeout_s)
+        self._check_cancelled(generation, cancel_event, stop_event)
+        completed = threading.Event()
+        result_lock = threading.Lock()
+        result: list[Any] = []
+        failures: list[BaseException] = []
+        abandoned = False
+
+        def connect() -> None:
+            nonlocal abandoned
+            try:
+                ws = factory(self.url, header=headers, timeout=self.timeout_s)
+            except BaseException as exc:
+                with result_lock:
+                    if not abandoned:
+                        failures.append(exc)
+                    completed.set()
+                return
+            with result_lock:
+                late = abandoned or cancel_event.is_set() or stop_event.is_set()
+                if not late:
+                    result.append(ws)
+                completed.set()
+            if late:
+                self._dispose_socket(ws)
+
+        threading.Thread(target=connect, name="VolcengineASRConnect", daemon=True).start()
+        deadline = time.monotonic() + max(0.0, self.timeout_s)
+        try:
+            while True:
+                self._check_cancelled(generation, cancel_event, stop_event)
+                if completed.is_set():
+                    break
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise RuntimeError("Volcengine ASR connection timed out")
+                completed.wait(min(_CANCEL_POLL_S, remaining))
+            self._check_cancelled(generation, cancel_event, stop_event)
+            with result_lock:
+                if failures:
+                    raise failures[0]
+                if not result:
+                    raise VolcengineASRCancelled("Volcengine ASR session was cancelled")
+                return result.pop()
+        finally:
+            with result_lock:
+                abandoned = True
+                late_socket = result.pop() if result else None
+            if late_socket is not None:
+                self._dispose_socket(late_socket)
 
     def start(self) -> None:
         self._close()
+        generation = self._session_generation
+        try:
+            self._start_session(generation)
+        except BaseException:
+            self._close(expected_generation=generation)
+            raise
+
+    def _start_session(self, generation: int) -> None:
+        with self._session_lock:
+            cancel_event = self._cancel_event
+            self._active_cancel_event = cancel_event
+            # Never clear/reuse an old receiver's events. A slow old recv may
+            # still return after the next utterance is already established.
+            stop_event = self._receiver_stop = threading.Event()
+            final_response = self._final_response = threading.Event()
+        self._check_cancelled(generation, cancel_event, stop_event)
         context_metadata = self._pending_session_context
         self._pending_session_context = None
         if context_metadata is None:
@@ -359,13 +458,18 @@ class VolcengineStreamingASR:
         if context_metadata is None:  # pragma: no cover - defensive invariant
             context_metadata = {}
         self._session_context_metadata = deepcopy(context_metadata)
-        self._ws = self._connect()
+        ws = self._connect(generation, cancel_event, stop_event)
+        with self._session_lock:
+            try:
+                self._check_cancelled(generation, cancel_event, stop_event)
+            except VolcengineASRCancelled:
+                self._dispose_socket(ws)
+                raise
+            self._ws = ws
         self._pending_pcm.clear()
         self._last_text = ""
         self._final_seen = False
         self._updates = queue.SimpleQueue()
-        self._receiver_stop.clear()
-        self._final_response.clear()
         self._receiver_error = None
         self._sent_audio_packets = 0
         self._sent_audio_bytes = 0
@@ -405,7 +509,11 @@ class VolcengineStreamingASR:
                     separators=(",", ":"),
                 )
             }
-        self._ws.send(
+        # Bound socket writes as well as receiver polls. This does not wait
+        # for a response and avoids the connection timeout carrying into send.
+        ws.settimeout(min(max(self.partial_timeout_s, 0.01), 0.2))
+        self._check_cancelled(generation, cancel_event, stop_event)
+        ws.send(
             _packet(
                 _FULL_CLIENT_REQUEST,
                 json.dumps(request, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
@@ -413,6 +521,7 @@ class VolcengineStreamingASR:
                 serialization=_SERIALIZATION_JSON,
             )
         )
+        self._check_cancelled(generation, cancel_event, stop_event)
         if context_data:
             self._session_context_metadata["status"] = "sent"
         self._next_sequence += 1
@@ -423,6 +532,7 @@ class VolcengineStreamingASR:
         # and stores responses for the next feed/finish call to publish.
         self._receiver_thread = threading.Thread(
             target=self._receive_loop,
+            args=(ws, generation, cancel_event, stop_event, final_response, self._partial_callback),
             name="VolcengineASRReceiver",
             daemon=True,
         )
@@ -434,6 +544,7 @@ class VolcengineStreamingASR:
         self._close()
 
     def _send_audio(self, pcm: bytes, *, is_last: bool) -> None:
+        self._check_cancelled(self._session_generation, self._active_cancel_event, self._receiver_stop)
         if self._ws is None:
             raise RuntimeError("Volcengine streaming ASR session was not started")
         sequence = self._next_sequence
@@ -516,59 +627,67 @@ class VolcengineStreamingASR:
             # best available attribution in that case.
             return timing or self._latest_packet_timing
 
-    def _receive_loop(self) -> None:
-        """Continuously read cloud results without delaying audio production."""
-
+    def _receive_loop(
+        self,
+        ws: Any,
+        generation: int,
+        cancel_event: threading.Event,
+        stop_event: threading.Event,
+        final_response: threading.Event,
+        callback: Callable[[str, float, float], None] | None,
+    ) -> None:
+        """Read only this utterance's socket and publish only while it owns state."""
         try:
-            while not self._receiver_stop.is_set() and self._ws is not None:
+            while True:
+                self._check_cancelled(generation, cancel_event, stop_event)
                 try:
-                    # This is a polling interval for clean shutdown, not a
-                    # per-audio latency budget. Keep it modest even when the
-                    # user selects a larger partial_timeout_s compatibility
-                    # setting from an earlier version of this adapter.
-                    self._ws.settimeout(min(max(self.partial_timeout_s, 0.01), 0.2))
-                    frame = self._ws.recv()
+                    ws.settimeout(min(max(self.partial_timeout_s, 0.01), 0.2))
+                    frame = ws.recv()
                 except Exception as exc:
                     if isinstance(exc, TimeoutError) or exc.__class__.__name__ == "WebSocketTimeoutException":
                         continue
                     raise
+                self._check_cancelled(generation, cancel_event, stop_event)
                 if frame is None:
-                    if self._receiver_stop.is_set() or self._final_seen:
-                        return
                     raise RuntimeError("Volcengine ASR WebSocket closed before a final response")
                 if isinstance(frame, str):
                     frame = frame.encode("latin1")
                 text, is_final, summary, response_sequence = self._consume_frame(bytes(frame))
-                self._received_frames += 1
-                if text:
-                    self._last_text = text
-                    callback = self._partial_callback
-                    timing = self._timing_for_response(response_sequence)
-                    if callback is not None and not is_final and timing is not None:
-                        callback(text, timing[0], timing[1])
-                    elif callback is None:
-                        self._updates.put(text)
-                    self._log(
-                        f"received transcript frame={self._received_frames} "
-                        f"chars={len(text)} final={is_final}"
-                    )
-                elif is_final:
-                    self._log(
-                        f"received final response frame={self._received_frames} without text; {summary}"
-                    )
+                timing = None
+                with self._session_lock:
+                    self._check_cancelled(generation, cancel_event, stop_event)
+                    self._received_frames += 1
+                    if text:
+                        self._last_text = text
+                        timing = self._timing_for_response(response_sequence)
+                        if callback is None:
+                            self._updates.put(text)
+                        self._log(
+                            f"received transcript frame={self._received_frames} "
+                            f"chars={len(text)} final={is_final}"
+                        )
+                    elif is_final:
+                        self._log(
+                            f"received final response frame={self._received_frames} without text; {summary}"
+                        )
+                    if is_final:
+                        self._final_seen = True
+                        final_response.set()
+                if text and callback is not None and not is_final and timing is not None:
+                    # The callback itself is permanently bound by the worker to
+                    # this session, so even a concurrent cancellation cannot
+                    # relabel a last in-flight callback as the next utterance.
+                    self._check_cancelled(generation, cancel_event, stop_event)
+                    callback(text, timing[0], timing[1])
                 if is_final:
-                    self._final_seen = True
-                    self._final_response.set()
-                    # A negative/final server sequence completes this one-shot
-                    # recognition stream.  The service may close the WebSocket
-                    # immediately afterwards; do not call recv() again and
-                    # misreport that normal close as a lost connection.
                     return
         except BaseException as exc:
-            if not self._receiver_stop.is_set() and not self._final_seen:
-                self._receiver_error = exc
-                self._final_response.set()
-                self._log(f"receiver failed: {exc}")
+            with self._session_lock:
+                if (generation == self._session_generation and not stop_event.is_set()
+                        and not cancel_event.is_set() and not self._final_seen):
+                    self._receiver_error = exc
+                    final_response.set()
+                    self._log(f"receiver failed: {exc}")
 
     def _drain_updates(self) -> str | None:
         if self._receiver_error is not None:
@@ -581,6 +700,7 @@ class VolcengineStreamingASR:
                 return latest
 
     def feed(self, audio_16k: np.ndarray) -> str | None:
+        self._check_cancelled(self._session_generation, self._active_cancel_event, self._receiver_stop)
         self._pending_pcm.extend(_pcm16(audio_16k))
         # Keep one complete packet queued.  ``finish`` marks that actual final
         # packet with the required last-packet flag instead of sending audio
@@ -593,19 +713,30 @@ class VolcengineStreamingASR:
 
     def finish(self, final_audio_16k: np.ndarray) -> str:
         del final_audio_16k  # Already streamed by start/feed; do not duplicate it.
+        generation = self._session_generation
+        cancel_event = self._active_cancel_event
+        stop_event = self._receiver_stop
+        final_response = self._final_response
         try:
+            self._check_cancelled(generation, cancel_event, stop_event)
             self._log(
                 f"finish entered; queued_pcm_bytes={len(self._pending_pcm)} "
                 f"sent_packets={self._sent_audio_packets} received_frames={self._received_frames}"
             )
             self._send_audio(bytes(self._pending_pcm), is_last=True)
             self._pending_pcm.clear()
-            if not self._final_response.wait(self.final_timeout_s):
-                self._log(
-                    f"final timeout after {self.final_timeout_s:.1f}s; "
-                    f"sent_packets={self._sent_audio_packets} received_frames={self._received_frames}"
-                )
-                raise RuntimeError("Volcengine ASR did not return a final response before timeout")
+            deadline = time.monotonic() + max(0.0, self.final_timeout_s)
+            while not final_response.is_set():
+                self._check_cancelled(generation, cancel_event, stop_event)
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    self._log(
+                        f"final timeout after {self.final_timeout_s:.1f}s; "
+                        f"sent_packets={self._sent_audio_packets} received_frames={self._received_frames}"
+                    )
+                    raise RuntimeError("Volcengine ASR did not return a final response before timeout")
+                final_response.wait(min(_CANCEL_POLL_S, remaining))
+            self._check_cancelled(generation, cancel_event, stop_event)
             self._drain_updates()
             if self._receiver_error is not None:
                 raise RuntimeError(f"Volcengine ASR receive failed: {self._receiver_error}") from self._receiver_error
@@ -619,19 +750,41 @@ class VolcengineStreamingASR:
             )
             return self._last_text
         finally:
-            self._close()
+            self._close(expected_generation=generation)
 
-    def _close(self) -> None:
-        self._receiver_stop.set()
-        ws, self._ws = self._ws, None
-        if ws is not None:
+    @staticmethod
+    def _dispose_socket(ws: Any) -> None:
+        """Avoid a graceful close handshake blocking cancellation/new audio."""
+        def close() -> None:
             try:
-                ws.close()
+                shutdown = getattr(ws, "shutdown", None)
+                if callable(shutdown):
+                    shutdown()
+                else:
+                    try:
+                        ws.close(timeout=0)
+                    except TypeError:
+                        ws.close()
             except Exception:
                 pass
-        receiver, self._receiver_thread = self._receiver_thread, None
-        if receiver is not None and receiver is not threading.current_thread():
-            receiver.join(timeout=max(1.0, min(self.partial_timeout_s, 2.0)))
+
+        closer = threading.Thread(target=close, name="VolcengineASRClose", daemon=True)
+        closer.start()
+        # Usually immediate; retain deterministic cleanup for ordinary sockets
+        # while bounding an injected/custom close implementation that blocks.
+        closer.join(timeout=_CLOSE_JOIN_S)
+
+    def _close(self, *, expected_generation: int | None = None) -> None:
+        with self._session_lock:
+            if expected_generation is not None and expected_generation != self._session_generation:
+                return
+            self._session_generation += 1
+            self._receiver_stop.set()
+            self._final_response.set()
+            ws, self._ws = self._ws, None
+            self._receiver_thread = None
+        if ws is not None:
+            self._dispose_socket(ws)
 
 
 def create_streaming_backend(settings: ASRBackendSettings) -> VolcengineStreamingASR:

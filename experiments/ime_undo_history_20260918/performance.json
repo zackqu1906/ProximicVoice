@@ -1,0 +1,137 @@
+{
+  "date": "2026-09-18",
+  "platform": "macOS, local development machine",
+  "scope": "Production CompositionSession and CompositionUndoHistory with an in-memory editor; excludes live applications, IPC, audio, ASR network and LLM.",
+  "samples": {
+    "dictation_sentences": 120,
+    "edit_operations": 10,
+    "current_undo": 1
+  },
+  "memory_unit": "UTF-16 code units retained by the history, not measured process RSS",
+  "results": [
+    {
+      "after_ten_edits_retained_utf16_units": 0,
+      "client_reads_before_undo": 960,
+      "dictation_retained_utf16_units": 0,
+      "enabled": false,
+      "initial_characters": 1000,
+      "metrics": {
+        "begin": {
+          "median_ms": 0.0021666674001608044,
+          "p95_ms": 0.005291665729600936
+        },
+        "edit_apply": {
+          "median_ms": 0.7268750014191028,
+          "p95_ms": 1.3520833344955463
+        },
+        "final": {
+          "median_ms": 0.20145833332207985,
+          "p95_ms": 0.3074999985983595
+        },
+        "partial": {
+          "median_ms": 0.007833335985196754,
+          "p95_ms": 0.0180000024556648
+        },
+        "undo_current": {
+          "median_ms": 0.8765000020503066,
+          "p95_ms": 0.8765000020503066
+        }
+      }
+    },
+    {
+      "after_ten_edits_retained_utf16_units": 20181,
+      "client_reads_before_undo": 960,
+      "dictation_retained_utf16_units": 828,
+      "enabled": true,
+      "initial_characters": 1000,
+      "metrics": {
+        "begin": {
+          "median_ms": 0.002625001798151061,
+          "p95_ms": 0.0060416641645133495
+        },
+        "edit_apply": {
+          "median_ms": 0.6170416636450682,
+          "p95_ms": 0.7007916683505755
+        },
+        "final": {
+          "median_ms": 0.20125000082771294,
+          "p95_ms": 0.24041666620178148
+        },
+        "partial": {
+          "median_ms": 0.006208334525581449,
+          "p95_ms": 0.008583334420109168
+        },
+        "undo_current": {
+          "median_ms": 0.7562499995401595,
+          "p95_ms": 0.7562499995401595
+        },
+        "undo_history": {
+          "median_ms": 0.004166664439253509,
+          "p95_ms": 0.007083333912305534
+        }
+      }
+    },
+    {
+      "after_ten_edits_retained_utf16_units": 0,
+      "client_reads_before_undo": 960,
+      "dictation_retained_utf16_units": 0,
+      "enabled": false,
+      "initial_characters": 100000,
+      "metrics": {
+        "begin": {
+          "median_ms": 0.012124997738283128,
+          "p95_ms": 0.01741666710586287
+        },
+        "edit_apply": {
+          "median_ms": 60.751041666662786,
+          "p95_ms": 61.808874997950625
+        },
+        "final": {
+          "median_ms": 11.856999997689854,
+          "p95_ms": 12.125333334552124
+        },
+        "partial": {
+          "median_ms": 0.041916668124031276,
+          "p95_ms": 0.08554166561225429
+        },
+        "undo_current": {
+          "median_ms": 35.67970833319123,
+          "p95_ms": 35.67970833319123
+        }
+      }
+    },
+    {
+      "after_ten_edits_retained_utf16_units": 2000181,
+      "client_reads_before_undo": 960,
+      "dictation_retained_utf16_units": 828,
+      "enabled": true,
+      "initial_characters": 100000,
+      "metrics": {
+        "begin": {
+          "median_ms": 0.013624998246086761,
+          "p95_ms": 0.025624998670537025
+        },
+        "edit_apply": {
+          "median_ms": 61.38699999792152,
+          "p95_ms": 61.99695833493024
+        },
+        "final": {
+          "median_ms": 11.83366666737129,
+          "p95_ms": 12.065416663972428
+        },
+        "partial": {
+          "median_ms": 0.041208331822417676,
+          "p95_ms": 0.05454166603158228
+        },
+        "undo_current": {
+          "median_ms": 35.548958330764435,
+          "p95_ms": 35.548958330764435
+        },
+        "undo_history": {
+          "median_ms": 0.01687500116531737,
+          "p95_ms": 0.023166667233454064
+        }
+      }
+    }
+  ]
+}

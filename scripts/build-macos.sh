@@ -4,6 +4,14 @@ set -euo pipefail
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_ROOT"
 
+APP_ONLY=0
+if [[ "${1:-}" == "--app-only" && "$#" == "1" ]]; then
+    APP_ONLY=1
+elif [[ "$#" != "0" ]]; then
+    echo "Usage: $0 [--app-only]" >&2
+    exit 2
+fi
+
 if [[ "$(uname -s)" != "Darwin" || "$(uname -m)" != "arm64" ]]; then
     echo "The macOS package must be built on Apple Silicon." >&2
     exit 1
@@ -33,14 +41,26 @@ fi
 VENV_ROOT="$PROJECT_ROOT/.build/packaging-venv"
 [[ -x "$VENV_ROOT/bin/python" ]] || "$PYTHON_BIN" -m venv "$VENV_ROOT"
 PYTHON="$VENV_ROOT/bin/python"
-"$PYTHON" -m pip install --upgrade \
-    "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
-"$PYTHON" -m pip install -c requirements-macos.lock \
-    ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" \
-    -r requirements-packaging.txt
-"$PYTHON" -m PyInstaller --noconfirm --clean packaging/proximic_voice.spec
+if [[ "${PROXIMIC_SKIP_DEPENDENCY_INSTALL:-0}" != "1" ]]; then
+    "$PYTHON" -m pip install --upgrade \
+        "pip==26.2.1" "setuptools==81.0.0" "wheel==0.48.0"
+    "$PYTHON" -m pip install -c requirements-macos.lock \
+        ".[ring-opus,asr-streaming-sensevoice,asr-funasr-nano,asr-volcengine,ui]" \
+        -r requirements-packaging.txt
+fi
+PROXIMIC_SIGN_IDENTITY="${APPLE_SIGNING_IDENTITY:--}" /bin/zsh scripts/build-input-method.sh
+PYTHONPATH="$PROJECT_ROOT/src${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON" -m PyInstaller --noconfirm --clean packaging/proximic_voice.spec
 
 APP="$PROJECT_ROOT/dist/Proximic Voice.app"
+# Keep the installable app bundle intact. PyInstaller's binary collection can
+# flatten nested apps; copy/sign these helpers after it has built the host.
+mkdir -p "$APP/Contents/Helpers"
+ditto "$PROJECT_ROOT/.build/input-method/ProxiMicInput.app" "$APP/Contents/Helpers/ProxiMicInput.app"
+cp "$PROJECT_ROOT/.build/input-method/InputMethodAdmin" "$APP/Contents/Helpers/InputMethodAdmin"
+# Audited libraries only; leave the executable/Python archive and all features
+# intact. Validate exports and linkage before the final bundle signature.
+"$PYTHON" tools/strip_macos_runtime.py "$APP" --report "$PROJECT_ROOT/.build/macos-runtime-size.json"
 if [[ -n "${APPLE_SIGNING_IDENTITY:-}" ]]; then
     codesign --force --deep --options runtime --timestamp \
         --sign "$APPLE_SIGNING_IDENTITY" "$APP"
@@ -64,13 +84,17 @@ fi
 SMOKE_DATA_ROOT="$PROJECT_ROOT/.build/macos-smoke-data"
 rm -rf "$SMOKE_DATA_ROOT"
 mkdir -p "$SMOKE_DATA_ROOT"
+SMOKE_IME_DIR="$(mktemp -d /tmp/proximic-build-ime.XXXXXX)"
+trap 'rm -rf "$SMOKE_IME_DIR"' EXIT
 PROXIMIC_DATA_HOME="$SMOKE_DATA_ROOT" \
+    PROXIMIC_IME_SOCKET="$SMOKE_IME_DIR/bridge.sock" \
     "$APP_EXECUTABLE" --self-check-package
 SMOKE_LOG="$SMOKE_DATA_ROOT/logs/startup.log"
 if [[ ! -f "$SMOKE_LOG" ]] \
     || ! grep -q "bundled Opus decoder ready" "$SMOKE_LOG" \
     || ! grep -q "bundled QML files ready" "$SMOKE_LOG" \
-    || ! grep -q "macOS desktop injection bridge ready" "$SMOKE_LOG" \
+    || ! grep -q "macOS input method transport ready" "$SMOKE_LOG" \
+    || ! grep -q "bundled input method installer ready" "$SMOKE_LOG" \
     || ! grep -q "QML root window ready" "$SMOKE_LOG" \
     || ! grep -q "packaged ASR imports ready" "$SMOKE_LOG"; then
     echo "macOS packaged application did not complete its startup probe." >&2
@@ -79,11 +103,18 @@ if [[ ! -f "$SMOKE_LOG" ]] \
 fi
 echo "macOS packaged startup probe passed."
 
+if [[ "$APP_ONLY" == "1" ]]; then
+    echo "App: $APP"
+    echo "App-only build complete; existing DMG unchanged."
+    exit 0
+fi
+
 DMG_ROOT="$PROJECT_ROOT/.build/dmg"
 rm -rf "$DMG_ROOT"
 mkdir -p "$DMG_ROOT"
 cp -R "$APP" "$DMG_ROOT/"
 ln -s /Applications "$DMG_ROOT/Applications"
+cp "$PROJECT_ROOT/packaging/macos-installation.txt" "$DMG_ROOT/安装说明.txt"
 DMG="$PROJECT_ROOT/dist/ProximicVoice-0.6.0-macos-arm64.dmg"
 rm -f "$DMG"
 hdiutil create -volname "Proximic Voice" -srcfolder "$DMG_ROOT" \

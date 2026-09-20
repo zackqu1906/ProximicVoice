@@ -1,6 +1,8 @@
 # 电脑端手势识别测试
 
-Ring 传输 200 Hz 六轴 IMU，电脑运行 `GestureRecognizer` 完成预处理、分类和触发。
+Ring 传输 200 Hz 六轴 IMU，电脑用 PyTorch CPU 运行新版密度手势模型。
+来源为 `ring-python-sdk` 的 `ringo` 分支提交 `d735304`，模型为
+`density-pw64-dh96-swipe3-rot-0913`；模型权重、网络、归一化和证据解码一起更新。
 无需戒指固件包含 Swipe 模型。这个独立终端程序不启动麦克风、ASR、LLM，
 不调用语音或数据关联按钮。它和下面主程序的操作映射相互独立。
 
@@ -10,12 +12,12 @@ Ring 传输 200 Hz 六轴 IMU，电脑运行 `GestureRecognizer` 完成预处理
 
 | 默认手势 | 对应现有操作 | 原有按键 |
 | --- | --- | --- |
-| tap（轻点/捏合） | 结束正在收听的这一句，进入 ASR final 和文本处理 | 无新增快捷键 |
+| tap（轻点） | 结束正在收听的这一句，进入 ASR final 和文本处理 | 无新增快捷键 |
 | 左滑、下滑 | 收听或处理时取消；已输入文本的目标获得焦点时原生撤销 | `Esc` |
 | 右滑、上滑 | 转换当前语句的处理类型 | 默认 `F8`，或设置中选择的转换键 |
 
 “设置 → 手势操作”允许用户修改确认、撤销、转换的手势，每项最多两个。可选 tap、
-弹指和四个方向的滑动；已分配的手势会从其他位置的选项中移除，后端也拒绝重复配置。
+弹指、四方向滑动、握拳、食指/中指捏合和顺/逆时针画圈；已分配的手势会从其他位置的选项中移除，后端也拒绝重复配置。
 第二个位置可留空，确认至少保留一个。配置自动保存、无需重连，可恢复上表默认分配。
 确认仍直接通知音频线程结束，修改设置不会增加 GUI 排队延迟；修改前排队的旧手势不执行新配置。
 
@@ -58,7 +60,9 @@ Stage2 推理，继续向 ASR 发送音频。确认手势从 SDK 手势线程直
 
 MIC 和 IMU 同时开启时，固件包尾时间戳可能抖动。识别器只对序号连续的数据包
 边界容忍最多 50 ms 的时间误差；真正的样本/包丢失、乱序或长时间停顿仍清空窗口。
-SDK 模型、预处理、投票和冷却参数保持不变，原始采集时间戳也保留不改写。
+模型、预处理和密度证据解码与新版 SDK 一致；抖动修正仅用于推理时钟，原始采集时间戳保留。
+SDK 输入直接使用主机坐标，加速度换算至 9.8 m/s² 每 g、角速度转为 rad/s，
+不再应用旧七分类模型的 135° 安装旋转和杆臂补偿。
 云端 ASR 路径的两个本地小型 CNN 使用与独立测试相同的单线程推理，避免近场检测
 和手势同时抢占 CPU 而积压手势队列；本地 ASR 后端保持原有线程配置。
 
@@ -95,7 +99,7 @@ Windows 使用 `scripts\test-host-gestures.cmd`，参数相同，或者：
 ```
 
 使用项目的 `.runtime/venv`。模型及配置已放在
-`src/ring_python_sdk/gestures/assets/`，无需另外运行 ai-ring 或下载模型。
+`src/ring_python_sdk/ringo/gestures/_upstream/swipe_density/assets/density-pw64-dh96-swipe3-rot-0913/`，无需另外运行 ai-ring 或下载模型。
 旧的 `test-firmware-gestures` 程序仍专门用于固件端测试。
 
 ## 手势与输出
@@ -107,10 +111,16 @@ Windows 使用 `scripts\test-host-gestures.cmd`，参数相同，或者：
 | 2 | swipe-down | 下滑 |
 | 3 | swipe-left | 左滑 |
 | 4 | swipe-right | 右滑 |
-| 5 | tap | 点击/捏合，共用一个类别 |
+| 5 | tap | 轻点；SDK 原名 swipe-tap，保留 tap 以兼容已保存设置 |
 | 6 | snap | 响指 |
+| 7 | clench | 握拳 |
+| 8 | index-pinch | 食指捏合 |
+| 9 | middle-pinch | 中指捏合 |
+| 12 | circle-clockwise | 顺时针画圈 |
+| 13 | circle-counterclockwise | 逆时针画圈 |
 
-共 **6 个有效手势**。握拳、分指捏合、画圈不在这个电脑模型的范围内。
+共 **11 个有效手势**。ID 10、11 不属于此密度模型，不将分指捏合合并为 tap。
+新增手势默认未分配，需在设置中选择对应操作。
 方向与佩戴方式和模型坐标系有关，不能直接认定始终等于屏幕方向。
 
 - `PREDICTION`：逐窗口分类，包含 empty，始终保存，终端默认隐藏。
@@ -125,36 +135,23 @@ Windows 使用 `scripts\test-host-gestures.cmd`，参数相同，或者：
 
 ## 参数
 
-默认保留源 SDK 的算法：200 Hz、60 帧窗口、每 5 帧推理、0.10 秒稳定窗、同类投票
-比例 1.0、触发后 10 帧冷却及半窗口补充。empty 不触发，不额外增加置信度门槛。
+使用 SDK 原版密度算法：200 Hz、60 帧窗口、每 20 帧推理。默认密度阈值与
+最小类别置信度均为 0.55，观察 30 帧，事件最小距离 28 帧。逐窗口预测不会直接
+触发动作；SDK 在多个窗口中汇集峰值证据后才发出事件。
 
 ```bash
-./scripts/test-host-gestures.sh --mount-angle 135 --mount-radius 0.01
-./scripts/test-host-gestures.sh --step-frames 5 --stable-window 0.10 \
-  --positive-ratio 1.0 --cooldown-frames 10
+./scripts/test-host-gestures.sh --torch-threads 1
+# 如需严格保留包尾时间间隔，可在独立测试中禁用抖动修正
+./scripts/test-host-gestures.sh --packet-timestamp-tolerance-ms 0
 ```
 
-`--positive-ratio` 是同类投票比例，**不是置信度阈值**。安装杆臂以米为单位。
 `--torch-threads` 默认为 1，仅这个独立进程设置 PyTorch 线程数。
+旧版 `--mount-angle`、`--mount-radius`、`--step-frames`、`--stable-window`、
+`--positive-ratio`、`--cooldown-frames` 已移除，因为它们属于旧七分类模型。
 IMU 固定为 raw 六轴、200 Hz、16 g、2000 dps、每包 10 帧，不使用低功耗三轴或 token。
 
-### 对照测试漏触发
-
-默认参数需要连续 4 次分类为同一手势才触发。模型短暂判出方向后又回到 empty，
-即使最高概率较高，也可能没有 `GESTURE`；周期状态中的“最近分类”只是一瞬间的
-结果，不能代表此前整段动作。可检查 `results.csv` 中的连续分类来区分这两种情况。
-
-可以在独立测试中用连续 3 次确认做对照，继续使用同一个 SDK 模型和预处理：
-
-```bash
-# 启动后仍输入戒指编号；仅本次测试改成连续 3 次确认
-./scripts/test-host-gestures.sh --stable-window 0.075
-```
-
-该命令保留默认 200 Hz、每 5 帧推理、同类比例 1.0 和冷却参数；启动时会打印实际
-判定参数。直接运行不带参数的脚本仍使用 SDK 默认的 4 次确认，主程序也不受影响。
-缩短确认可能增加误触，须分别观察静置/正常打字和每方向重复动作；不能仅凭触发
-次数增加判断准确率改善。一直分类为 empty 的动作不会因为缩短确认而被识别。
+若逐窗口概率较高却没有触发，需要结合密度证据、连续输入与丢帧情况排查；
+单个窗口的最高概率不等于最终事件置信度。合成输入和触发次数不能用于评估真人准确率。
 
 推理在单独的 `GestureWorker` 线程串行执行。BLE 回调记录数据并入队，队列最多
 200 个样本；若处理跟不上，清掉过时积压并计数，后续样本缺口使识别器重置窗口。
@@ -164,7 +161,8 @@ IMU 固定为 raw 六轴、200 Hz、16 g、2000 dps、每包 10 帧，不使用�
 默认保存到 `data/host_gestures/<时间>/`，可用 `--output-dir` 指定新目录；不覆盖已有目录：
 
 - `samples.csv`：SDK 物理坐标下的六轴值、原始整数、设备时间、样本/包序号、接收时间。
-- `results.csv`：全部分类与触发、七类概率、时间和触发序号。
+- `results.csv`：全部分类与触发、12 类逐窗口概率、时间和触发序号。概率列按原始 ID
+  命名（p0–p9、p12、p13）；最终事件没有聚合概率向量，因此事件行概率列留空，保留 SDK 事件置信度。
 - `summary.json`：固件版本、模型 SHA-256、参数、各手势计数、采样/推理及丢弃统计。
 - `sdk/`：SDK 自身的 IMU 等采集记录。
 
@@ -175,7 +173,7 @@ CSV 使用 UTF-8 BOM。退出时断开设备、处理完有限的推理积压并
 # 用真实模型重放之前保存的原始 IMU，不连接设备
 ./scripts/test-host-gestures.sh --replay data/host_gestures/某次测试/samples.csv
 
-# 合成静止 IMU 经过真实模型，只检查链路，不伪造六种手势
+# 合成静止 IMU 经过真实模型，只检查链路，不代表真人识别效果
 ./scripts/test-host-gestures.sh --demo
 
 # 只显示配置，不加载模型、不连接、不写文件
@@ -188,7 +186,8 @@ CSV 使用 UTF-8 BOM。退出时断开设备、处理完有限的推理积压并
 ## SDK 用法
 
 ```python
-from ring_python_sdk.gestures import GestureRecognizer, GestureWorker
+from proximic_ring.host_gestures import GestureRecognizer
+from ring_python_sdk.gestures import GestureWorker
 
 # on_prediction(prediction, timestamp_ms) 可选，用于逐窗口诊断。
 recognizer = GestureRecognizer(on_gesture=on_gesture, on_prediction=on_prediction)
@@ -204,7 +203,9 @@ finally:
 ```
 
 同步 `GestureRecognizer.on_sample()` / `feed()` 仍可用。新增 `on_prediction`、
-累计 `prediction_count` 和 `reset_count` 只提供观察信息，不改变模型或投票规则。
+累计 `prediction_count` 和 `reset_count` 只提供观察信息，不改变模型或密度证据规则。
 `reset_count` 包含构造时的首次 reset，worker 的 `window_resets` 排除这一次。
 回调在识别线程执行，应将 UI/耗时工作投递出去。每轮新建识别器和 worker。
-来源见 `src/ring_python_sdk/gestures/NOTICE.md`。
+版本与逐文件 SHA-256 见 `src/ring_python_sdk/ringo/gestures/VENDORED.json`。
+该目录只引入主机端密度手势子集；旧 `ring_python_sdk.gestures` 保留作为兼容接口，
+主程序和独立测试工具均使用上面的新版适配器。

@@ -1111,7 +1111,7 @@ def test_edit_prompt_grounds_asr_misrecognition_to_exact_original_target():
 
     assert result == "会议安排在周五。"
     system_prompt = captured[0]["messages"][0]["content"]
-    assert "明显 ASR 错词" in system_prompt
+    assert "ASR 错词" in system_prompt and "结合原文" in system_prompt
     assert "original_text：从待修改文本逐字复制" in system_prompt
     assert "星巴克" not in system_prompt
     assert "把周丝替换成周五" in captured[0]["messages"][1]["content"]

@@ -1,0 +1,655 @@
+{
+  "at": "2026-09-20T09:19:32.359292+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "cases": [
+    {
+      "id": "insert",
+      "source": "周五开会。",
+      "instruction": "在开会前面加上下午三点",
+      "expected": "周五下午三点开会。"
+    },
+    {
+      "id": "delete_last",
+      "source": "保留第一句。删掉这一句。",
+      "instruction": "删掉最后一句话",
+      "expected": "保留第一句。"
+    },
+    {
+      "id": "delete_repeated",
+      "source": "好的。我们明天见。好的。",
+      "instruction": "删掉最后一句",
+      "expected": "好的。我们明天见。"
+    },
+    {
+      "id": "replace_all",
+      "source": "上午三点开会，下午三点培训。",
+      "instruction": "把所有三点改成四点",
+      "expected": "上午四点开会，下午四点培训。"
+    },
+    {
+      "id": "homophone",
+      "source": "事情效果还不错。",
+      "instruction": "识别",
+      "expected": "识别效果还不错。"
+    },
+    {
+      "id": "correction_scope",
+      "source": "我们用心模型处理文本。",
+      "instruction": "新模型",
+      "expected": "我们用新模型处理文本。"
+    },
+    {
+      "id": "character_explanation",
+      "source": "这个界面还不错。",
+      "instruction": "街道的街面包的面",
+      "expected": "这个街面还不错。"
+    },
+    {
+      "id": "name",
+      "source": "我叫黎静。",
+      "instruction": "木子李，安静的静",
+      "expected": "我叫李静。"
+    },
+    {
+      "id": "spelling",
+      "source": "请安装 numby，然后运行程序。",
+      "instruction": "英文词拼作 n u m p y，全小写",
+      "expected": "请安装 numpy，然后运行程序。"
+    },
+    {
+      "id": "spelling_symbols",
+      "source": "文件叫 data-v1.csv。",
+      "instruction": "文件名改成 d a t a 下划线 v 2 点 c s v，全小写",
+      "expected": "文件叫 data_v2.csv。"
+    },
+    {
+      "id": "missing_target",
+      "source": "明天去买菜。",
+      "instruction": "英文词拼作 n u m p y",
+      "expected": "明天去买菜。"
+    },
+    {
+      "id": "ambiguous",
+      "source": "上午三点开会，下午三点培训。",
+      "instruction": "四点",
+      "expected": "上午三点开会，下午三点培训。"
+    },
+    {
+      "id": "polish",
+      "source": "公司里面现在就是可能还没有这个计划。",
+      "instruction": "润色一下",
+      "contains": [
+        "可能",
+        "没有"
+      ],
+      "changed": true
+    },
+    {
+      "id": "format",
+      "source": "苹果、香蕉、橙子",
+      "instruction": "改成三行，每行一个词，不加编号",
+      "expected": "苹果\n香蕉\n橙子"
+    },
+    {
+      "id": "expand_digits",
+      "source": "67890。",
+      "instruction": "扩写到20个字",
+      "length": [
+        16,
+        24
+      ],
+      "compare": true
+    },
+    {
+      "id": "expand_review",
+      "source": "这套输入法用起来很方便。",
+      "instruction": "扩写到80个字",
+      "length": [
+        64,
+        96
+      ],
+      "compare": true
+    },
+    {
+      "id": "creative",
+      "source": "小猫回家了。",
+      "instruction": "扩写成100字左右的小故事",
+      "length": [
+        80,
+        120
+      ],
+      "compare": true
+    },
+    {
+      "id": "notice",
+      "source": "图书馆周五闭馆一天。",
+      "instruction": "扩写成60字左右的通知，不增加其他安排",
+      "length": [
+        48,
+        72
+      ],
+      "contains": [
+        "周五",
+        "一天"
+      ],
+      "compare": true
+    },
+    {
+      "id": "translate",
+      "source": "我们可能不会在周五发布更新。",
+      "instruction": "翻译成英文",
+      "contains": [
+        "Friday"
+      ],
+      "changed": true
+    },
+    {
+      "id": "clear",
+      "source": "这段内容不需要了。",
+      "instruction": "清空全文",
+      "expected": ""
+    }
+  ],
+  "prompt_hashes": {
+    "before": {
+      "fragment": "f839241d9f58afbc7514b9601dcaf4cdcaf2ed810eefa04a9bc8a5b590f9e4d2",
+      "full": "4e42e83314049fba6f1239f0471501f837cbea80d6b426606c4e9e8a7b888481"
+    },
+    "after": {
+      "fragment": "46627d885e1a32fc4ad4f9265ac68ec437bfdb89defdec88a455e73e9c6a172c",
+      "full": "f55e0e7a479971ec05748e13806dda3d8dff19acf30aa117e6cebe5ec8635ced"
+    }
+  },
+  "results": [
+    {
+      "case": "delete_last",
+      "variant": "after",
+      "branch": "full",
+      "result": "保留第一句。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"modified_text\": \"保留第一句。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.508
+    },
+    {
+      "case": "delete_last",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "保留第一句。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"original_text\": \"保留第一句。删掉这一句。\", \"modified_text\": \"保留第一句。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.53
+    },
+    {
+      "case": "insert",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "周五下午三点开会。",
+      "characters": 9,
+      "raw_outputs": [
+        "{\"original_text\": \"开会\", \"modified_text\": \"下午三点开会\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.847
+    },
+    {
+      "case": "insert",
+      "variant": "after",
+      "branch": "full",
+      "result": "周五下午三点开会。",
+      "characters": 9,
+      "raw_outputs": [
+        "{\"modified_text\": \"周五下午三点开会。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.913
+    },
+    {
+      "case": "delete_repeated",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "我们明天见。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"original_text\": \"好的。\", \"modified_text\": \"\"}"
+      ],
+      "failures": [
+        "exact_text"
+      ],
+      "elapsed_s": 1.655
+    },
+    {
+      "case": "delete_repeated",
+      "variant": "after",
+      "branch": "full",
+      "result": "好的。我们明天见。",
+      "characters": 9,
+      "raw_outputs": [
+        "{\"modified_text\": \"好的。我们明天见。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.872
+    },
+    {
+      "case": "replace_all",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "上午四点开会，下午四点培训。",
+      "characters": 14,
+      "raw_outputs": [
+        "{\"original_text\": \"三点\", \"modified_text\": \"四点\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.942
+    },
+    {
+      "case": "replace_all",
+      "variant": "after",
+      "branch": "full",
+      "result": "上午四点开会，下午四点培训。",
+      "characters": 14,
+      "raw_outputs": [
+        "{\"modified_text\": \"上午四点开会，下午四点培训。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.029
+    },
+    {
+      "case": "homophone",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "识别效果还不错。",
+      "characters": 8,
+      "raw_outputs": [
+        "{\"original_text\": \"事情\", \"modified_text\": \"识别\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.338
+    },
+    {
+      "case": "correction_scope",
+      "variant": "after",
+      "branch": "full",
+      "result": "我们用新模型处理文本。",
+      "characters": 11,
+      "raw_outputs": [
+        "{\"modified_text\": \"我们用新模型处理文本。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.627
+    },
+    {
+      "case": "correction_scope",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "我们用新模型处理文本。",
+      "characters": 11,
+      "raw_outputs": [
+        "{\"original_text\": \"心模型\", \"modified_text\": \"新模型\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.925
+    },
+    {
+      "case": "character_explanation",
+      "variant": "after",
+      "branch": "full",
+      "result": "这个街面还不错。",
+      "characters": 8,
+      "raw_outputs": [
+        "{\"modified_text\": \"这个街面还不错。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.76
+    },
+    {
+      "case": "character_explanation",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "这个街面还不错。",
+      "characters": 8,
+      "raw_outputs": [
+        "{\"original_text\": \"界面\", \"modified_text\": \"街面\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.1
+    },
+    {
+      "case": "name",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "我叫李静。",
+      "characters": 5,
+      "raw_outputs": [
+        "{\"original_text\": \"黎\", \"modified_text\": \"李\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.253
+    },
+    {
+      "case": "name",
+      "variant": "after",
+      "branch": "full",
+      "result": "我叫李静。",
+      "characters": 5,
+      "raw_outputs": [
+        "{\"modified_text\": \"我叫李静。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.155
+    },
+    {
+      "case": "spelling",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "请安装 numby，然后运行程序。",
+      "characters": 16,
+      "raw_outputs": [
+        "{\"original_text\": \"请安装 numby，然后运行程序。\", \"modified_text\": \"请安装 numby，然后运行程序。\"}"
+      ],
+      "failures": [
+        "exact_text"
+      ],
+      "elapsed_s": 2.216
+    },
+    {
+      "case": "spelling",
+      "variant": "after",
+      "branch": "full",
+      "result": "请安装 numby，然后运行程序。",
+      "characters": 16,
+      "raw_outputs": [
+        "{\"modified_text\": \"请安装 numby，然后运行程序。\"}"
+      ],
+      "failures": [
+        "exact_text"
+      ],
+      "elapsed_s": 2.11
+    },
+    {
+      "case": "homophone",
+      "variant": "after",
+      "branch": "full",
+      "result": "识别效果还不错。",
+      "characters": 8,
+      "raw_outputs": [
+        "{\"modified_text\": \"识别效果还不错。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 7.345
+    },
+    {
+      "case": "missing_target",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "明天去买菜。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"original_text\": \"明天去买菜。\", \"modified_text\": \"明天去买菜。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.462
+    },
+    {
+      "case": "spelling_symbols",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "文件叫 data_v2.csv。",
+      "characters": 15,
+      "raw_outputs": [
+        "{\"original_text\": \"data-v1.csv\", \"modified_text\": \"data_v2.csv\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.118
+    },
+    {
+      "case": "spelling_symbols",
+      "variant": "after",
+      "branch": "full",
+      "result": "文件叫 data_v2.csv。",
+      "characters": 15,
+      "raw_outputs": [
+        "{\"modified_text\": \"文件叫 data_v2.csv。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.836
+    },
+    {
+      "case": "missing_target",
+      "variant": "after",
+      "branch": "full",
+      "result": "明天去买菜。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"modified_text\": \"明天去买菜。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.413
+    },
+    {
+      "case": "polish",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "公司目前可能还没有这个计划。",
+      "characters": 14,
+      "raw_outputs": [
+        "{\"original_text\": \"公司里面现在就是可能还没有这个计划。\", \"modified_text\": \"公司目前可能还没有这个计划。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.919
+    },
+    {
+      "case": "polish",
+      "variant": "after",
+      "branch": "full",
+      "result": "公司目前可能还没有这个计划。",
+      "characters": 14,
+      "raw_outputs": [
+        "{\"modified_text\": \"公司目前可能还没有这个计划。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.413
+    },
+    {
+      "case": "ambiguous",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "上午三点开会，下午三点培训。",
+      "characters": 14,
+      "raw_outputs": [
+        "{\"original_text\": \"上午三点开会，下午三点培训。\", \"modified_text\": \"上午三点开会，下午三点培训。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.266
+    },
+    {
+      "case": "ambiguous",
+      "variant": "after",
+      "branch": "full",
+      "result": "上午三点开会，下午三点培训。",
+      "characters": 14,
+      "raw_outputs": [
+        "{\"modified_text\": \"上午三点开会，下午三点培训。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.368
+    },
+    {
+      "case": "format",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "苹果\n香蕉\n橙子",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"original_text\": \"苹果、香蕉、橙子\", \"modified_text\": \"苹果\\n香蕉\\n橙子\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.495
+    },
+    {
+      "case": "format",
+      "variant": "after",
+      "branch": "full",
+      "result": "苹果\n香蕉\n橙子",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"modified_text\": \"苹果\\n香蕉\\n橙子\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.499
+    },
+    {
+      "case": "expand_digits",
+      "variant": "after",
+      "branch": "full",
+      "result": "67890是五个连续的数字，依次排列在一起。",
+      "characters": 22,
+      "raw_outputs": [
+        "{\"modified_text\": \"67890是五个连续的数字，依次排列在一起。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.675
+    },
+    {
+      "case": "expand_digits",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "今天拿到了67890这个数字，感觉很特别。",
+      "characters": 21,
+      "raw_outputs": [
+        "{\"original_text\": \"67890。\", \"modified_text\": \"今天拿到了67890这个数字，感觉很特别。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 3.423
+    },
+    {
+      "case": "expand_review",
+      "variant": "after",
+      "branch": "full",
+      "result": "这套输入法用起来很方便。它的词库很丰富，常用词汇一打就出来，联想功能也很智能，能根据输入快速匹配想要的词。打字流畅不卡顿，界面简洁舒适，用久了也不会累，整体体验非常不错。",
+      "characters": 85,
+      "raw_outputs": [
+        "{\"modified_text\": \"这套输入法用起来很方便。它的词库很丰富，常用词汇一打就出来，联想功能也很智能，能根据输入快速匹配想要的词。打字流畅不卡顿，界面简洁舒适，用久了也不会累，整体体验非常不错。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.633
+    },
+    {
+      "case": "expand_review",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "这套输入法用起来很方便，打字流畅准确，各种常用词汇都能快速联想出来。界面设计简洁清爽，按键布局合理，还支持多种自定义设置，让日常输入体验大大提升，工作效率也提高了不少。",
+      "characters": 84,
+      "raw_outputs": [
+        "{\"original_text\": \"这套输入法用起来很方便。\", \"modified_text\": \"这套输入法用起来很方便，打字流畅准确，各种常用词汇都能快速联想出来。界面设计简洁清爽，按键布局合理，还支持多种自定义设置，让日常输入体验大大提升，工作效率也提高了不少。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.677
+    },
+    {
+      "case": "creative",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "傍晚时分，一只毛茸茸的小橘猫踏着轻快的步子，终于回到了熟悉的家门口。它抖了抖身上的尘土，仰头朝窗台叫了一声，像是在说\"我回来啦！\"门一开，它便灵巧地钻了进去，绕着主人的脚边蹭来蹭去，尾巴翘得高高的。碗里的猫粮早已备好，它埋头吃得津津有味，吃饱后又跳上沙发，蜷成一团，满足地闭上了眼睛。家，终究是最温暖的地方。",
+      "characters": 154,
+      "raw_outputs": [
+        "{\"original_text\": \"小猫回家了。\", \"modified_text\": \"傍晚时分，一只毛茸茸的小橘猫踏着轻快的步子，终于回到了熟悉的家门口。它抖了抖身上的尘土，仰头朝窗台叫了一声，像是在说\\\"我回来啦！\\\"门一开，它便灵巧地钻了进去，绕着主人的脚边蹭来蹭去，尾巴翘得高高的。碗里的猫粮早已备好，它埋头吃得津津有味，吃饱后又跳上沙发，蜷成一团，满足地闭上了眼睛。家，终究是最温暖的地方。\"}"
+      ],
+      "failures": [
+        "length_band"
+      ],
+      "elapsed_s": 3.386
+    },
+    {
+      "case": "notice",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "尊敬的读者，图书馆将于本周五（全天）闭馆一天，暂停所有借阅、阅览及自习服务。请各位读者提前安排好借还书及学习计划，由此带来的不便，敬请谅解。",
+      "characters": 70,
+      "raw_outputs": [
+        "{\"original_text\": \"图书馆周五闭馆一天。\", \"modified_text\": \"尊敬的读者，图书馆将于本周五（全天）闭馆一天，暂停所有借阅、阅览及自习服务。请各位读者提前安排好借还书及学习计划，由此带来的不便，敬请谅解。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.051
+    },
+    {
+      "case": "notice",
+      "variant": "after",
+      "branch": "full",
+      "result": "尊敬的读者，图书馆将于本周五（全天）闭馆一天，暂停所有图书借阅、阅览及自习服务，请各位读者提前安排好借还书时间，以免耽误您的使用。",
+      "characters": 65,
+      "raw_outputs": [
+        "{\"modified_text\": \"尊敬的读者，图书馆将于本周五（全天）闭馆一天，暂停所有图书借阅、阅览及自习服务，请各位读者提前安排好借还书时间，以免耽误您的使用。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.247
+    },
+    {
+      "case": "creative",
+      "variant": "after",
+      "branch": "full",
+      "result": "那只毛茸茸的小橘猫终于回家了。它蹲在门口，一双琥珀色的眼睛怯生生地打量着熟悉又陌生的客厅。我蹲下来轻声唤它，它迟疑片刻，便喵呜一声扑进我怀里，小脑袋使劲往我手心蹭。阳光从窗外洒进来，照在它微微颤抖的身子上。它开始打呼噜，声音像一台老旧却温暖的小马达。我摸着它瘦了一圈的脊背，心里又酸又软——不管在外面经历了什么，回来就好。",
+      "characters": 161,
+      "raw_outputs": [
+        "{\"modified_text\": \"那只毛茸茸的小橘猫终于回家了。它蹲在门口，一双琥珀色的眼睛怯生生地打量着熟悉又陌生的客厅。我蹲下来轻声唤它，它迟疑片刻，便喵呜一声扑进我怀里，小脑袋使劲往我手心蹭。阳光从窗外洒进来，照在它微微颤抖的身子上。它开始打呼噜，声音像一台老旧却温暖的小马达。我摸着它瘦了一圈的脊背，心里又酸又软——不管在外面经历了什么，回来就好。\"}"
+      ],
+      "failures": [
+        "length_band"
+      ],
+      "elapsed_s": 3.001
+    },
+    {
+      "case": "translate",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "We may not release the update on Friday.",
+      "characters": 33,
+      "raw_outputs": [
+        "{\"original_text\": \"我们可能不会在周五发布更新。\", \"modified_text\": \"We may not release the update on Friday.\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.755
+    },
+    {
+      "case": "translate",
+      "variant": "after",
+      "branch": "full",
+      "result": "We may not release the update on Friday.",
+      "characters": 33,
+      "raw_outputs": [
+        "{\"modified_text\": \"We may not release the update on Friday.\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.856
+    },
+    {
+      "case": "clear",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "",
+      "characters": 0,
+      "raw_outputs": [
+        "{\"original_text\": \"这段内容不需要了。\", \"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.783
+    },
+    {
+      "case": "clear",
+      "variant": "after",
+      "branch": "full",
+      "result": "",
+      "characters": 0,
+      "raw_outputs": [
+        "{\"modified_text\": \"\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.622
+    }
+  ]
+}

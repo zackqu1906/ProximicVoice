@@ -20,9 +20,8 @@ def test_notice_is_topmost_when_main_window_is_hidden_and_requires_acknowledgeme
     monkeypatch.setattr(module, "app_data_root", lambda: tmp_path)
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
-    controller = module.AppController()
+    controller = module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
-    controller._accessibility_timer.stop()
     engine = QQmlApplicationEngine()
     warnings = []
     engine.warnings.connect(lambda values: warnings.extend(str(value) for value in values))

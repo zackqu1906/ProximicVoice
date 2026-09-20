@@ -17,11 +17,11 @@ def test_independent_mode_controls_and_gesture_hint_render_and_lock(tmp_path, mo
         pytest.skip("QML needs its own QApplication process")
     app = app or QApplication(["speech-modes", "-platform", "offscreen"])
     monkeypatch.setattr(module, "app_data_root", lambda: tmp_path)
-    monkeypatch.setattr(module.AppController, "_request_macos_accessibility", lambda self: None)
     monkeypatch.setattr(module, "input_device_choices", lambda: [])
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
-    controller = module.AppController()
+    monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat))
+    controller = module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
     engine = QQmlApplicationEngine()
     warnings = []
@@ -40,8 +40,12 @@ def test_independent_mode_controls_and_gesture_hint_render_and_lock(tmp_path, mo
         window.show()
         QMetaObject.invokeMethod(controls["runtimeSettingsDialog"], "open")
         QTest.qWait(100)
+        QMetaObject.invokeMethod(window.findChild(QObject, "settingsCategory3"), "click")
+        QTest.qWait(20)
         assert controls["audioSourceCombo"].property("currentIndex") == 0
-        assert controls["speechControlModeCombo"].property("currentIndex") == 0
+        assert controls["speechControlModeCombo"].property("currentIndex") == 1
+        controller.speechControlMode = "proximity"  # Exercise both modes; new users default to tap.
+        QTest.qWait(20)
         assert not controls["microphoneDeviceCombo"].property("visible")
         controller.audioSource = "microphone"
         controller.speechControlMode = "gesture"

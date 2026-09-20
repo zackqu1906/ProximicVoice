@@ -337,6 +337,7 @@ def test_streaming_worker_aborts_lost_feed_and_reconnects_on_next_start():
 
 def test_streaming_worker_discards_session_without_final_and_can_restart():
     updates = []
+    started = threading.Event()
 
     class CancellableBackend(FakeStreamingBackend):
         def __init__(self):
@@ -347,10 +348,15 @@ def test_streaming_worker_discards_session_without_final_and_can_restart():
             self.aborted += 1
             self.parts = []
 
+        def start(self):
+            super().start()
+            started.set()
+
     backend = CancellableBackend()
     worker = StreamingASRWorker(backend, on_update=updates.append)
 
     worker.start(np.ones(160, dtype=np.float32))
+    assert started.wait(1.0)
     worker.discard(np.ones(160, dtype=np.float32))
     worker.start(np.ones(80, dtype=np.float32))
     worker.end(np.ones(80, dtype=np.float32))
@@ -359,6 +365,177 @@ def test_streaming_worker_discards_session_without_final_and_can_restart():
     assert backend.aborted == 1
     assert backend.started == 2
     assert [update.text for update in updates if update.is_final] == ["final=80"]
+
+
+def test_cancelled_queue_never_starts_old_sessions_and_preserves_next_audio():
+    entered = threading.Event()
+    release = threading.Event()
+    updates = []
+
+    class BlockedBackend(FakeStreamingBackend):
+        def __init__(self):
+            super().__init__()
+            self.aborted = 0
+
+        def start(self):
+            super().start()
+            if self.started == 1:
+                entered.set()
+                assert release.wait(2.0)
+
+        def abort(self):
+            self.aborted += 1
+
+    backend = BlockedBackend()
+    worker = StreamingASRWorker(backend, on_update=updates.append)
+    worker.start(np.ones(160, dtype=np.float32))
+    assert entered.wait(1.0)
+    worker.discard(np.ones(160, dtype=np.float32))
+    for _ in range(20):
+        worker.start(np.ones(160, dtype=np.float32))
+        worker.feed(np.ones(320, dtype=np.float32))
+        worker.end(np.ones(480, dtype=np.float32))
+        worker.cancel_pending()
+    initial = np.arange(80, dtype=np.float32)
+    following = np.arange(80, 240, dtype=np.float32)
+    worker.start(initial)
+    worker.feed(following)
+    worker.end(np.concatenate((initial, following)))
+    release.set()
+    worker.close()
+
+    assert backend.started == 2
+    assert backend.aborted == 1
+    assert {update.session_id for update in updates} == {22}
+    assert updates[-1].is_final and updates[-1].text == "final=240"
+    np.testing.assert_array_equal(np.concatenate(backend.parts), np.arange(240, dtype=np.float32))
+
+
+def test_cancel_signals_active_backend_and_drops_its_late_result():
+    entered = threading.Event()
+    cancelled = threading.Event()
+    updates = []
+
+    class CooperativeBackend(FakeStreamingBackend):
+        def set_cancel_event(self, event):
+            self.cancel_event = event
+
+        def start(self):
+            super().start()
+            if self.started == 1:
+                entered.set()
+                assert self.cancel_event.wait(2.0)
+                cancelled.set()
+                raise RuntimeError("cancelled connection")
+
+        def abort(self):
+            pass
+
+    backend = CooperativeBackend()
+    worker = StreamingASRWorker(backend, on_update=updates.append, on_error=lambda _: None)
+    worker.start(np.ones(160, dtype=np.float32))
+    assert entered.wait(1.0)
+    worker.discard(np.ones(160, dtype=np.float32))
+    assert cancelled.wait(0.5)
+    worker.start(np.ones(80, dtype=np.float32))
+    worker.end(np.ones(80, dtype=np.float32))
+    worker.close()
+    assert not backend.cancel_event.is_set()
+    assert all(update.session_id == 2 and not update.error for update in updates)
+    assert updates[-1].is_final
+
+
+def test_cancelling_new_queued_sentence_does_not_cancel_previous_valid_final():
+    finishing = threading.Event()
+    release = threading.Event()
+    updates = []
+
+    class PreviousFinalBackend(FakeStreamingBackend):
+        def set_cancel_event(self, event):
+            self.cancel_event = event
+
+        def finish(self, audio):
+            finishing.set()
+            assert release.wait(2.0)
+            assert not self.cancel_event.is_set()
+            return super().finish(audio)
+
+    backend = PreviousFinalBackend()
+    worker = StreamingASRWorker(backend, on_update=updates.append)
+    worker.start(np.ones(160, dtype=np.float32))
+    worker.end(np.ones(160, dtype=np.float32))
+    assert finishing.wait(1.0)
+    worker.start(np.ones(80, dtype=np.float32))
+    worker.end(np.ones(80, dtype=np.float32))
+    worker.cancel_pending()
+    release.set()
+    worker.close()
+    assert backend.started == 1
+    assert [(update.session_id, update.text) for update in updates if update.is_final] == [(1, "final=160")]
+
+
+def test_cancel_after_end_interrupts_final_without_losing_next_sentence():
+    finishing = threading.Event()
+    updates = []
+
+    class WaitingFinalBackend(FakeStreamingBackend):
+        def set_cancel_event(self, event):
+            self.cancel_event = event
+
+        def finish(self, audio):
+            if self.started == 1:
+                finishing.set()
+                assert self.cancel_event.wait(2.0)
+                return "late cancelled final"
+            return super().finish(audio)
+
+        def abort(self):
+            pass
+
+    backend = WaitingFinalBackend()
+    worker = StreamingASRWorker(backend, on_update=updates.append)
+    worker.start(np.ones(160, dtype=np.float32))
+    worker.end(np.ones(160, dtype=np.float32))
+    assert finishing.wait(1.0)
+    worker.cancel_pending()
+    worker.start(np.ones(80, dtype=np.float32))
+    worker.end(np.ones(80, dtype=np.float32))
+    worker.close()
+    finals = [update for update in updates if update.is_final]
+    assert [(update.session_id, update.text) for update in finals] == [(2, "final=80")]
+
+
+def test_receiver_callbacks_keep_originating_session_and_cancelled_callbacks_are_ignored():
+    updates = []
+    started = threading.Event()
+    callbacks = []
+
+    class CallbackBackend(FakeStreamingBackend):
+        def set_partial_callback(self, callback):
+            self.callback = callback
+
+        def start(self):
+            super().start()
+            callbacks.append(self.callback)
+            started.set()
+
+        def abort(self):
+            pass
+
+    backend = CallbackBackend()
+    worker = StreamingASRWorker(backend, on_update=updates.append)
+    worker.start(np.ones(160, dtype=np.float32))
+    assert started.wait(1.0)
+    worker.cancel_pending()
+    started.clear()
+    worker.start(np.ones(80, dtype=np.float32))
+    assert started.wait(1.0)
+    callbacks[0]("late old partial", time.perf_counter(), 1.0)
+    callbacks[1]("current partial", time.perf_counter(), 0.1)
+    worker.end(np.ones(80, dtype=np.float32))
+    worker.close()
+    assert not any(update.text == "late old partial" for update in updates)
+    assert next(update for update in updates if update.text == "current partial").session_id == 2
 
 
 def test_third_party_adapter_uses_external_api_and_redecodes_trimmed_final(monkeypatch):

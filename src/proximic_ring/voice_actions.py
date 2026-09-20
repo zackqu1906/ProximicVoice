@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ctypes
 import os
-import sys
 import threading
 from typing import Callable
 
@@ -29,16 +28,6 @@ DEFAULT_MODE_SWITCH_SHORTCUT = "F8"
 MODE_SWITCH_SHORTCUTS = tuple(f"F{number}" for number in range(5, 13))
 _WINDOWS_FUNCTION_KEYS = {
     f"F{number}": 0x6F + number for number in range(5, 13)
-}
-_MACOS_FUNCTION_KEYS = {
-    "F5": 96,
-    "F6": 97,
-    "F7": 98,
-    "F8": 100,
-    "F9": 101,
-    "F10": 109,
-    "F11": 103,
-    "F12": 111,
 }
 
 
@@ -78,10 +67,6 @@ def normalize_mode_switch_shortcut(value: object) -> str:
 
 def windows_mode_switch_key_code(shortcut: object) -> int:
     return _WINDOWS_FUNCTION_KEYS[normalize_mode_switch_shortcut(shortcut)]
-
-
-def macos_mode_switch_key_code(shortcut: object) -> int:
-    return _MACOS_FUNCTION_KEYS[normalize_mode_switch_shortcut(shortcut)]
 
 
 if os.name == "nt":
@@ -323,209 +308,3 @@ class WindowsVoiceActionHotkeys:
         kernel32.GetCurrentThreadId.restype = wintypes.DWORD
         kernel32.GetModuleHandleW.argtypes = (wintypes.LPCWSTR,)
         kernel32.GetModuleHandleW.restype = wintypes.HMODULE
-
-
-class MacOSVoiceActionHotkeys:
-    """Consume active-utterance and result-correction shortcuts on macOS."""
-
-    KEY_MODE_SWITCH = 100  # F8
-    KEY_ESCAPE = 53
-
-    def __init__(
-        self,
-        on_action: Callable[[str], None],
-        *,
-        mode_switch_shortcut: Callable[[], str] | None = None,
-        is_interaction_active: Callable[[], bool] | None = None,
-        is_mode_correction_active: Callable[[], bool] | None = None,
-        is_undo_active: Callable[[], bool] | None = None,
-        on_error: Callable[[str], None] = print,
-        quartz: object | None = None,
-        core_foundation: object | None = None,
-    ) -> None:
-        if sys.platform != "darwin":
-            raise RuntimeError("macOS 全局语音交互快捷键仅支持 macOS")
-        if quartz is None:
-            import Quartz as quartz_module
-
-            quartz = quartz_module
-        if core_foundation is None:
-            import CoreFoundation as core_foundation_module
-
-            core_foundation = core_foundation_module
-        self._quartz = quartz
-        self._core_foundation = core_foundation
-        self._on_action = on_action
-        self._mode_switch_shortcut = mode_switch_shortcut or (
-            lambda: DEFAULT_MODE_SWITCH_SHORTCUT
-        )
-        self._is_interaction_active = is_interaction_active or (lambda: False)
-        self._is_mode_correction_active = (
-            is_mode_correction_active or (lambda: False)
-        )
-        self._is_undo_active = is_undo_active or (lambda: False)
-        self._on_error = on_error
-        self._ready = threading.Event()
-        self._failed: str | None = None
-        self._tap = None
-        self._run_loop = None
-        self._source = None
-        self._callback = None
-        self._thread = threading.Thread(
-            target=self._run,
-            name="ProxiMicMacVoiceActions",
-            daemon=True,
-        )
-        self._thread.start()
-        if not self._ready.wait(timeout=3.0):
-            raise RuntimeError("安装 macOS 全局语音交互快捷键超时")
-        if self._failed:
-            raise RuntimeError(self._failed)
-
-    @classmethod
-    def _action_for_key(
-        cls,
-        key_code: int,
-        *,
-        command_down: bool = False,
-        control_down: bool = False,
-        option_down: bool = False,
-        shift_down: bool = False,
-        mode_switch_key: int | None = None,
-        interaction_active: bool = False,
-        correction_active: bool = False,
-        undo_active: bool = False,
-    ) -> str | None:
-        # A visible applied action owns Escape even if an alternate-mode
-        # background request has not finished clearing its interaction state.
-        if int(key_code) == cls.KEY_ESCAPE:
-            return cancel_or_undo_action(
-                interaction_active=interaction_active, undo_active=undo_active
-            )
-        if (
-            correction_active
-            and int(key_code)
-            == (
-                cls.KEY_MODE_SWITCH
-                if mode_switch_key is None
-                else int(mode_switch_key)
-            )
-            and not command_down
-            and not control_down
-            and not option_down
-            and not shift_down
-        ):
-            return ACTION_SWITCH_MODE
-        return None
-
-    def _run(self) -> None:
-        quartz = self._quartz
-        cf = self._core_foundation
-        try:
-            disabled_types = {
-                int(quartz.kCGEventTapDisabledByTimeout),
-                int(quartz.kCGEventTapDisabledByUserInput),
-            }
-
-            def callback(proxy, event_type, event, refcon):
-                try:
-                    if int(event_type) in disabled_types:
-                        quartz.CGEventTapEnable(self._tap, True)
-                        return event
-                    if int(event_type) != int(quartz.kCGEventKeyDown):
-                        return event
-                    key_code = quartz.CGEventGetIntegerValueField(
-                        event, quartz.kCGKeyboardEventKeycode
-                    )
-                    flags = int(quartz.CGEventGetFlags(event))
-                    action = self._action_for_key(
-                        int(key_code),
-                        mode_switch_key=macos_mode_switch_key_code(
-                            self._mode_switch_shortcut()
-                        ),
-                        command_down=bool(
-                            flags & int(quartz.kCGEventFlagMaskCommand)
-                        ),
-                        control_down=bool(
-                            flags
-                            & int(getattr(quartz, "kCGEventFlagMaskControl", 0))
-                        ),
-                        option_down=bool(
-                            flags
-                            & int(getattr(quartz, "kCGEventFlagMaskAlternate", 0))
-                        ),
-                        shift_down=bool(
-                            flags & int(quartz.kCGEventFlagMaskShift)
-                        ),
-                        interaction_active=self._is_interaction_active(),
-                        correction_active=self._is_mode_correction_active(),
-                        undo_active=self._is_undo_active(),
-                    )
-                    repeat_field = getattr(
-                        quartz, "kCGKeyboardEventAutorepeat", None
-                    )
-                    if (
-                        repeat_field is not None
-                        and quartz.CGEventGetIntegerValueField(event, repeat_field)
-                    ):
-                        # Suppress repeats only for a key this hook owns. A held
-                        # letter, Backspace, or Tab must continue reaching the
-                        # foreground application while an overlay is visible.
-                        return None if action is not None else event
-                    if action is None:
-                        return event
-                    self._on_action(action)
-                    # A session event tap can consume the key, preventing
-                    # Return/Escape from also changing the external editor.
-                    return None
-                except BaseException as exc:
-                    self._on_error(
-                        f"[voice-actions] macOS 语音交互快捷键处理失败：{exc}"
-                    )
-                    return event
-
-            self._callback = callback
-            mask = quartz.CGEventMaskBit(quartz.kCGEventKeyDown)
-            self._tap = quartz.CGEventTapCreate(
-                quartz.kCGSessionEventTap,
-                quartz.kCGHeadInsertEventTap,
-                quartz.kCGEventTapOptionDefault,
-                mask,
-                callback,
-                None,
-            )
-            if self._tap is None:
-                raise RuntimeError(
-                    "无法安装系统按键监听，请在系统设置中允许辅助功能权限"
-                )
-            self._source = quartz.CFMachPortCreateRunLoopSource(
-                None, self._tap, 0
-            )
-            self._run_loop = cf.CFRunLoopGetCurrent()
-            cf.CFRunLoopAddSource(
-                self._run_loop, self._source, cf.kCFRunLoopCommonModes
-            )
-            quartz.CGEventTapEnable(self._tap, True)
-            self._ready.set()
-            cf.CFRunLoopRun()
-        except BaseException as exc:
-            self._failed = f"macOS global edit keys unavailable: {exc}"
-            self._ready.set()
-            self._on_error(f"[voice-actions] {self._failed}")
-        finally:
-            if self._tap is not None:
-                try:
-                    quartz.CFMachPortInvalidate(self._tap)
-                except BaseException:
-                    pass
-            self._tap = None
-            self._source = None
-            self._run_loop = None
-
-    def close(self) -> None:
-        run_loop = self._run_loop
-        if run_loop is not None:
-            self._core_foundation.CFRunLoopStop(run_loop)
-            self._core_foundation.CFRunLoopWakeUp(run_loop)
-        if threading.current_thread() is not self._thread:
-            self._thread.join(timeout=2.0)

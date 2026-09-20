@@ -101,6 +101,7 @@ class GestureWorker:
         prediction = getattr(self.recognizer, "last_prediction", None)
         prediction_counts = list(getattr(self.recognizer, "prediction_counts", ()))
         gesture_counts = list(getattr(self.recognizer, "gesture_counts", ()))
+        gesture_names = getattr(self.recognizer, "gesture_names", GESTURE_NAMES)
         result.update(
             queue_depth=self._queue.qsize(),
             prediction_count=self.recognizer.prediction_count,
@@ -108,9 +109,9 @@ class GestureWorker:
             timestamp_jitter_count=getattr(self.recognizer, "timestamp_jitter_count", 0),
             max_timestamp_jitter_ms=getattr(self.recognizer, "max_timestamp_jitter_ms", 0.0),
             nonempty_predictions=sum(prediction_counts[1:]),
-            prediction_counts=dict(zip(GESTURE_NAMES, prediction_counts)),
+            prediction_counts=dict(zip(gesture_names, prediction_counts)),
             gesture_count=sum(gesture_counts),
-            gesture_counts=dict(zip(GESTURE_NAMES, gesture_counts)),
+            gesture_counts=dict(zip(gesture_names, gesture_counts)),
             last_prediction=getattr(prediction, "name", None),
             last_confidence=getattr(prediction, "confidence", None),
             last_input_age_ms=(

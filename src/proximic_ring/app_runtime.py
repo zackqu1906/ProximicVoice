@@ -121,8 +121,17 @@ def _context_error_reason(prefix: str, exc: BaseException) -> str:
     return f"{prefix}:{type(exc).__name__}{suffix}"
 
 
-def _volcengine_context_provider() -> Callable[[], dict[str, object]]:
-    """Create a worker-thread reader for the currently focused text field."""
+def _volcengine_context_provider(
+    ime_context_provider: Callable[[], dict[str, object]] | None = None,
+) -> Callable[[], dict[str, object]]:
+    """Read IME context on macOS; Windows retains its read-only UIA adapter."""
+    if sys.platform == "darwin":
+        if ime_context_provider is not None:
+            return ime_context_provider
+        return lambda: {
+            "status": "unavailable", "source": "input_method",
+            "reason": "input_method_not_connected",
+        }
 
     adapter = None
 
@@ -137,14 +146,9 @@ def _volcengine_context_provider() -> Callable[[], dict[str, object]]:
         target = None
         try:
             if adapter is None:
-                if sys.platform == "darwin":
-                    from .desktop_target import MacOSDesktopTextTarget
+                from .desktop_target import WindowsDesktopTextTarget
 
-                    adapter = MacOSDesktopTextTarget(_ReadOnlyContextClipboard())
-                else:
-                    from .desktop_target import WindowsDesktopTextTarget
-
-                    adapter = WindowsDesktopTextTarget(_ReadOnlyContextClipboard())
+                adapter = WindowsDesktopTextTarget(_ReadOnlyContextClipboard())
             target = adapter.capture_reference()
             # Context capture is deliberately observation-only.  It never
             # falls back to Select-All/Copy, so it cannot move the caret,
@@ -543,6 +547,7 @@ class RecognitionRuntime:
         recognition_event: threading.Event,
         *,
         cancel_utterance_event: threading.Event | None = None,
+        finish_utterance_event: threading.Event | None = None,
         on_update: Callable[[object], None],
         on_state: Callable[[str], None],
         on_connected: Callable[[], None],
@@ -560,6 +565,8 @@ class RecognitionRuntime:
             [int | None, int | None, int | None], None
         ]
         | None = None,
+        ime_context_provider: Callable[[], dict[str, object]] | None = None,
+        prepare_gesture_start: Callable[[Callable[[bool], None] | None], None] | None = None,
         asr_gain_db_provider: Callable[[], float] | None = None,
         stage1_threshold_provider: Callable[[], float] | None = None,
         gesture_bindings_provider: Callable[[], GestureBindings] | None = None,
@@ -571,7 +578,7 @@ class RecognitionRuntime:
             "-", "_"
         )
         asr_context_provider = (
-            _volcengine_context_provider()
+            _volcengine_context_provider(ime_context_provider)
             if selected_backend == "volcengine"
             else None
         )
@@ -748,8 +755,10 @@ class RecognitionRuntime:
             if on_gesture is not None or end_on_gesture:
                 on_state("正在加载电脑端手势模型…")
                 try:
-                    from ring_python_sdk.gestures import GestureRecognizer, GestureWorker
-                    from ring_python_sdk.gestures import classifier as gesture_classifier
+                    from ring_python_sdk.gestures import GestureWorker
+                    from proximic_ring.host_gestures import (
+                        GestureRecognizer, MODEL_PATH, MODEL_NAME, SDK_REVISION,
+                    )
 
                     def publish_gesture(event: object) -> None:
                         bindings = (
@@ -769,6 +778,7 @@ class RecognitionRuntime:
                         )
                         confirm_requested = False
                         requested_action = "end"
+                        blocked_reason = ""
                         if accepted and is_confirm_endpoint:
                             # Do this before logging or queuing any GUI work.
                             # The audio producer owns END and closes the normal
@@ -782,10 +792,16 @@ class RecognitionRuntime:
                             )
                             if can_request:
                                 if gesture_control:
-                                    requested_action = controller.request_gesture_toggle()
+                                    requested_action = controller.request_gesture_toggle(prepare_gesture_start)
                                     confirm_requested = requested_action is not None
                                 else:
                                     confirm_requested = controller.request_tap_end()
+                            else:
+                                blocked_reason = (
+                                    "cancellation_pending"
+                                    if cancel_utterance_event is not None and cancel_utterance_event.is_set()
+                                    else "recognition_gate_closed"
+                                )
                         # Record model output before application state gating.
                         on_state("[GESTURE_RECOGNIZED] " + json.dumps({
                             "name": getattr(event, "name", ""),
@@ -795,12 +811,14 @@ class RecognitionRuntime:
                             "reason": (
                                 "runtime_stopped" if not accepted else
                                 f"confirm_{requested_action}_requested" if confirm_requested else
+                                blocked_reason if blocked_reason else
                                 "no_active_utterance_or_duplicate" if is_confirm_endpoint else
                                 "ui_dispatch"
                             ),
                         }, ensure_ascii=False))
                         if confirm_requested:
-                            action_label = "开始本句" if requested_action == "start" else "结束本句"
+                            action_label = {"start": "准备本句" if prepare_gesture_start else "开始本句",
+                                            "cancel_start": "取消准备", "end": "结束本句"}[requested_action]
                             on_state(f"[手势] {name} → {action_label}")
                         if accepted and not is_confirm_endpoint and on_gesture is not None:
                             on_gesture(
@@ -818,8 +836,12 @@ class RecognitionRuntime:
                     gesture_worker.start()
                     source.imu_sample_observer = gesture_worker.submit
                     gestures_enabled.set()
-                    model_path = Path(gesture_classifier.__file__).with_name("assets") / "swipe.pt"
+                    model_path = MODEL_PATH
                     on_state("[GESTURE_MODEL] " + json.dumps({
+                        "model": MODEL_NAME,
+                        "backend": "pytorch-cpu",
+                        "source": "host",
+                        "sdk_revision": SDK_REVISION,
                         "path": str(model_path),
                         "sha256": hashlib.sha256(model_path.read_bytes()).hexdigest(),
                         "sample_hz": GESTURE_SAMPLE_RATE_HZ,
@@ -909,16 +931,33 @@ class RecognitionRuntime:
                     cancel_utterance_event is not None
                     and cancel_utterance_event.is_set()
                 ):
-                    cancel_utterance_event.clear()
                     discard_current = getattr(controller, "discard_current", None)
                     if callable(discard_current):
                         discard_current()
+                    cancel_pending = getattr(controller, "cancel_pending", None)
+                    if callable(cancel_pending):
+                        cancel_pending()
                     if detector is not None:
                         detector.reset()
+                    # Keep confirm gestures gated until the controller's old
+                    # tap flags are cleared; otherwise a new START can be lost.
+                    cancel_utterance_event.clear()
+                    # UI cancellation can race with END closing the gate.
+                    # Acknowledge only after retiring all pending ASR work so
+                    # the Qt owner can reopen that gate even without a final.
+                    on_state("[ASR] CANCELLED reason=user-request")
                     # Keep the user's recognition on/off choice unchanged.
                     # The next block begins with clean detector/session clocks.
                     recognition_was_enabled = recognition_event.is_set()
                     continue
+
+                if finish_utterance_event is not None and finish_utterance_event.is_set():
+                    finish_utterance_event.clear()
+                    request_end = getattr(controller, "request_user_end", None)
+                    if callable(request_end):
+                        request_end()
+                    else:
+                        controller.flush()  # direct-ASR baseline has no tap gate
 
                 recognition_enabled = recognition_event.is_set()
                 if not recognition_enabled:

@@ -12,6 +12,11 @@ GESTURE_LABELS = {
     "swipe-down": "下滑",
     "swipe-right": "右滑",
     "swipe-up": "上滑",
+    "clench": "握拳",
+    "index-pinch": "食指捏合",
+    "middle-pinch": "中指捏合",
+    "circle-clockwise": "顺时针画圈",
+    "circle-counterclockwise": "逆时针画圈",
 }
 GESTURE_ACTION_LABELS = {"confirm": "确认", "undo": "撤销", "switch_mode": "类型转换"}
 
@@ -19,8 +24,8 @@ GESTURE_ACTION_LABELS = {"confirm": "确认", "undo": "撤销", "switch_mode": "
 @dataclass(frozen=True)
 class GestureBindings:
     confirm: tuple[str, str] = ("tap", "")
-    undo: tuple[str, str] = ("swipe-left", "swipe-down")
-    switch_mode: tuple[str, str] = ("swipe-right", "swipe-up")
+    undo: tuple[str, str] = ("swipe-left", "")
+    switch_mode: tuple[str, str] = ("swipe-right", "")
 
     def __post_init__(self):
         used = {}

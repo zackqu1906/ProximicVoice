@@ -1,0 +1,27 @@
+{
+  "repository": "https://github.com/MythLink/ring-python-sdk",
+  "branch": "ringo",
+  "commit": "d7353047ad92006143c772e765c3f17a72c6290b",
+  "source_revision": "a621886ba1d74eadd96b362aee82c190792484eb",
+  "model": "density-pw64-dh96-swipe3-rot-0913",
+  "backend": "pytorch-cpu",
+  "files": {
+    "__init__.py": "14d87d72522b7dd41a243c862f2a426f1285fb292be65d668c5881ea6b44ff61",
+    "imu.py": "e035480874151a782bb108e7500f13f86ad9eebf99b8fd07c2f8aa864d9fe982",
+    "events.py": "87e7ddb76ec21a2441439ebe52b974028fe518e91364302714c2d0ec569bb52a",
+    "NOTICE.md": "b141841c86da588a8cc9af4ac79a7af37e9228e2c7a541b06e2da506a91b3688",
+    "gestures/NOTICE.md": "60c244a640ae89590b37b985b0757eef1737e02d47d1d9f7410fccaf861c7175",
+    "gestures/UPSTREAM.md": "54d568be5e67e87eaaba37ecc668ab6c2866e441f7345978a49657637f58d23f",
+    "gestures/model.py": "514ddc43ba092fb40c1e86dfdd2336282e34184fa1459aa8fcfa4c6de58d7081",
+    "gestures/runtime.py": "e6f415cec164570d0b49075b525025ac335193f58223aa5d874d46abd40a345c",
+    "gestures/stream.py": "575a80795ee66d8ff50fc24fe053f298ddb541cfc09126c502bb8ad6948db9ee",
+    "gestures/decoder.py": "bb2f10b4cbcc87fd7630d90d79c042dbbe44901d7cccb8535e669b6c2642e94f",
+    "gestures/_upstream/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "gestures/_upstream/swipe_density/decoder.py": "9780c044d714601cc9be1a942a42472d29e913f287c8f6c9482e0bd17545de0c",
+    "gestures/_upstream/swipe_density/snapshot_model.py": "d4076743891e33bb871b100697cf401f8087c581d6c5c634ced11340064c079a",
+    "gestures/_upstream/swipe_density/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "gestures/_upstream/swipe_density/stream.py": "db9380bfde2141d7dc3d4ac9c88bc7d67ca5c7b8c75b62fb00523793ecb2b69d",
+    "gestures/_upstream/swipe_density/model.py": "6e6e9dab9caab4655b6e7327c52632baba52336fae6d6101f6b28c9413ccfda8",
+    "gestures/_upstream/swipe_density/assets/density-pw64-dh96-swipe3-rot-0913/swipe_cnn_classification_best.pt": "6c3a816306861d966a894b60be115ef8d9fcd3553dc3d87c4a3d576ff774c2fc"
+  }
+}

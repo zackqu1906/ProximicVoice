@@ -16,7 +16,7 @@ def _controller(tmp_path, monkeypatch):
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
     monkeypatch.setattr(controller_module, "app_data_root", lambda: tmp_path)
-    controller = controller_module.AppController()
+    controller = controller_module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
     return controller
 

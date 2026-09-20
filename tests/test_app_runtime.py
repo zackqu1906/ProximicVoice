@@ -19,110 +19,25 @@ from proximic_ring.config import DetectorConfig
 from proximic_ring.events import Stage2Event
 
 
-def test_volcengine_context_provider_reads_focused_text_without_clipboard(
-    monkeypatch,
-):
-    from proximic_ring import desktop_target
-
-    full_text = "旧" * 200 + "新" * 1700
-    target = SimpleNamespace(
-        process_id=123,
-        window_handle=456,
-        control_handle=789,
-        accessibility_id="editor-field",
-        uia_control=None,
-        process_name="测试编辑器",
-        window_title="文档",
-        screen_x=0,
-        screen_y=0,
-        screen_width=100,
-        screen_height=100,
-    )
-
-    class FakeMacTarget:
-        def __init__(self, clipboard):
-            self.clipboard = clipboard
-            self.last_context_read_method = "system.parent1.AXStringForRange"
-            self.last_context_source_char_count = len(full_text)
-
-        def capture_reference(self):
-            return target
-
-        def observe_context_text(self, observed_target, *, max_chars):
-            assert observed_target is target
-            assert max_chars == 1600
-            return SimpleNamespace(text=full_text[-max_chars:])
-
-        def observe_text(self, _observed_target):
-            raise AssertionError("generic edit observation must not be used")
-
-        def capture_text(self, _target):
-            raise AssertionError("clipboard/select-all capture must not be used")
-
-    monkeypatch.setattr(app_runtime, "DESKTOP_TEXT_INJECTION_SUPPORTED", True)
+def test_volcengine_context_provider_uses_native_ime_on_macos(monkeypatch):
     monkeypatch.setattr(app_runtime.sys, "platform", "darwin")
-    monkeypatch.setattr(desktop_target, "MacOSDesktopTextTarget", FakeMacTarget)
-
-    context = app_runtime._volcengine_context_provider()()
-
-    assert context["status"] == "captured"
-    assert context["source"] == "focused_text"
-    assert context["text"] == full_text[-1600:]
-    assert context["source_char_count"] == len(full_text)
-    assert context["target_key"] == "123:456:editor-field"
-    assert context["application"] == "测试编辑器"
-    assert context["read_method"] == "system.parent1.AXStringForRange"
+    expected = {"status": "captured", "source": "input_method", "text": "原文", "context_complete": True}
+    called = []
+    def capture():
+        called.append(True)
+        return expected
+    provider = app_runtime._volcengine_context_provider(capture)
+    assert provider() == expected
+    assert called == [True]
 
 
-def test_volcengine_context_provider_never_uses_unverified_text_cache(
-    monkeypatch,
-):
-    from proximic_ring import desktop_target
-
-    target = SimpleNamespace(
-        process_id=475,
-        window_handle=0,
-        control_handle=0,
-        accessibility_id="",
-        uia_control=None,
-        process_name="WeChat",
-        window_title="WeChat",
-        screen_x=0,
-        screen_y=0,
-        screen_width=0,
-        screen_height=0,
-    )
-
-    class UnreadableMacTarget:
-        def __init__(self, _clipboard):
-            self.last_context_accessibility_probe = (
-                "attribute_unsupported:-25205"
-            )
-
-        def capture_reference(self):
-            return target
-
-        def observe_context_text(self, _target, *, max_chars):
-            assert max_chars == 1600
-            raise RuntimeError("no live AX text")
-
-    monkeypatch.setattr(app_runtime, "DESKTOP_TEXT_INJECTION_SUPPORTED", True)
+def test_volcengine_context_provider_has_no_macos_ax_fallback(monkeypatch):
     monkeypatch.setattr(app_runtime.sys, "platform", "darwin")
-    monkeypatch.setattr(
-        desktop_target, "MacOSDesktopTextTarget", UnreadableMacTarget
-    )
-
     context = app_runtime._volcengine_context_provider()()
-
-    assert context["status"] == "unavailable"
-    assert context["source"] == "focused_text"
-    assert context["target_key"] == "475:0:unresolved"
-    assert context["application"] == "WeChat"
-    assert context["ax_manual_accessibility"] == (
-        "attribute_unsupported:-25205"
-    )
-    assert "text" not in context
-    assert "context_data" not in context
+    assert context == {
+        "status": "unavailable", "source": "input_method",
+        "reason": "input_method_not_connected",
+    }
 
 
 def test_imu_buffer_slices_samples_and_preserves_sync_metadata():

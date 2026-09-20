@@ -77,5 +77,8 @@ def configure_runtime_environment() -> None:
         opus_directories.append(resource_root() / ".runtime" / "opus" / "lib")
     for opus_dir in opus_directories:
         if opus_dir.is_dir():
-            os.environ.setdefault("PROXIMIC_OPUS_DIR", str(opus_dir))
+            if is_frozen():
+                os.environ["PROXIMIC_OPUS_DIR"] = str(opus_dir)
+            else:
+                os.environ.setdefault("PROXIMIC_OPUS_DIR", str(opus_dir))
             break

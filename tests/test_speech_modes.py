@@ -48,7 +48,7 @@ def test_pending_start_does_not_survive_cancel_pause_or_disconnect(boundary):
 @pytest.mark.parametrize("audio_source", ["ring", "microphone"])
 @pytest.mark.parametrize("control_mode", ["proximity", "gesture"])
 def test_four_combinations_use_selected_audio_and_respect_processing_gate(monkeypatch, audio_source, control_mode):
-    import ring_python_sdk.gestures as gestures
+    import proximic_ring.host_gestures as gestures
 
     state, logs, finals, actions, detections = {}, [], [], [], []
     disconnect, recognition, cancel = threading.Event(), threading.Event(), threading.Event()
@@ -211,7 +211,8 @@ def test_settings_persist_independent_choices_and_lock_during_connection(tmp_pat
     row.update(value=json.dumps(row), label="DJI Mic")
     try:
         assert controller.audioSource == "ring"
-        assert controller.speechControlMode == "proximity"
+        assert controller.speechControlMode == "gesture"
+        controller.speechControlMode = "proximity"
         controller._apply_microphone_scan_finished([row], "")
         controller.audioSource = "microphone"
         controller.speechControlMode = "gesture"

@@ -31,12 +31,10 @@ def overlay_ui(tmp_path, monkeypatch):
     monkeypatch.setattr(module, "app_data_root", lambda: tmp_path)
     # Native permission polling is unrelated to layout and can stall Qt's
     # animation clock in this offscreen test process.
-    monkeypatch.setattr(module.AppController, "_request_macos_accessibility", lambda self: None)
     QSettings.setDefaultFormat(QSettings.IniFormat)
     QSettings.setPath(QSettings.IniFormat, QSettings.UserScope, str(tmp_path))
-    controller = module.AppController()
+    controller = module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
-    controller._accessibility_timer.stop()
     monkeypatch.setattr(controller, "_capture_desktop_reference", lambda: None)
     engine = QQmlApplicationEngine()
     warnings = []

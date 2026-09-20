@@ -1,0 +1,320 @@
+{
+  "at": "2026-09-20T09:21:33.190309+00:00",
+  "model": "deepseek-v4-flash-260425",
+  "cases": [
+    {
+      "id": "delete_repeated",
+      "source": "好的。我们明天见。好的。",
+      "instruction": "删掉最后一句",
+      "expected": "好的。我们明天见。"
+    },
+    {
+      "id": "spelling",
+      "source": "请安装 numby，然后运行程序。",
+      "instruction": "英文词拼作 n u m p y，全小写",
+      "expected": "请安装 numpy，然后运行程序。"
+    },
+    {
+      "id": "missing_target",
+      "source": "明天去买菜。",
+      "instruction": "英文词拼作 n u m p y",
+      "expected": "明天去买菜。"
+    },
+    {
+      "id": "ambiguous",
+      "source": "上午三点开会，下午三点培训。",
+      "instruction": "四点",
+      "expected": "上午三点开会，下午三点培训。"
+    },
+    {
+      "id": "holdout_spelling",
+      "source": "我们使用 matplotlip 画图。",
+      "instruction": "库名拼作 m a t p l o t l i b，全小写",
+      "expected": "我们使用 matplotlib 画图。"
+    },
+    {
+      "id": "holdout_name",
+      "source": "请联系陈清。",
+      "instruction": "名字是晴天的晴",
+      "expected": "请联系陈晴。"
+    },
+    {
+      "id": "holdout_delete",
+      "source": "谢谢。材料已收到。谢谢。",
+      "instruction": "把最后一句删掉",
+      "expected": "谢谢。材料已收到。"
+    },
+    {
+      "id": "holdout_replace_first",
+      "source": "先说你好，再说你好。",
+      "instruction": "第一个你好改成早上好",
+      "expected": "先说早上好，再说你好。"
+    },
+    {
+      "id": "holdout_missing",
+      "source": "这束花很好看。",
+      "instruction": "英文词改成 p a n d a s",
+      "expected": "这束花很好看。"
+    },
+    {
+      "id": "holdout_ambiguous",
+      "source": "小王周一来，小李周一来。",
+      "instruction": "周二",
+      "expected": "小王周一来，小李周一来。"
+    }
+  ],
+  "prompt_hashes": {
+    "before": {
+      "fragment": "f839241d9f58afbc7514b9601dcaf4cdcaf2ed810eefa04a9bc8a5b590f9e4d2",
+      "full": "4e42e83314049fba6f1239f0471501f837cbea80d6b426606c4e9e8a7b888481"
+    },
+    "after": {
+      "fragment": "648e42a1f914125a63716596c9ffc63d7a0f2158f2db491c8169bb0002acd5f0",
+      "full": "0f73c26521fb22c7a83e9384426196e0c4841c0b5b5b24b86e4069fab052f7b3"
+    }
+  },
+  "results": [
+    {
+      "case": "delete_repeated",
+      "variant": "after",
+      "branch": "full",
+      "result": "好的。我们明天见。",
+      "characters": 9,
+      "raw_outputs": [
+        "{\"modified_text\": \"好的。我们明天见。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.121
+    },
+    {
+      "case": "delete_repeated",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "好的。我们明天见。",
+      "characters": 9,
+      "raw_outputs": [
+        "{\"original_text\": \"好的。我们明天见。好的。\", \"modified_text\": \"好的。我们明天见。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.377
+    },
+    {
+      "case": "spelling",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "请安装 numby，然后运行程序。",
+      "characters": 16,
+      "raw_outputs": [
+        "{\"original_text\": \"请安装 numby，然后运行程序。\", \"modified_text\": \"请安装 numby，然后运行程序。\"}"
+      ],
+      "failures": [
+        "exact_text"
+      ],
+      "elapsed_s": 1.391
+    },
+    {
+      "case": "spelling",
+      "variant": "after",
+      "branch": "full",
+      "result": "请安装 numpy，然后运行程序。",
+      "characters": 16,
+      "raw_outputs": [
+        "{\"modified_text\": \"请安装 numpy，然后运行程序。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.431
+    },
+    {
+      "case": "missing_target",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "明天去买菜。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"original_text\": \"明天去买菜。\", \"modified_text\": \"明天去买菜。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.037
+    },
+    {
+      "case": "missing_target",
+      "variant": "after",
+      "branch": "full",
+      "result": "明天去买菜。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"modified_text\": \"明天去买菜。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.941
+    },
+    {
+      "case": "ambiguous",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "上午三点开会，下午三点培训。",
+      "characters": 14,
+      "raw_outputs": [
+        "{\"original_text\": \"上午三点开会，下午三点培训。\", \"modified_text\": \"上午三点开会，下午三点培训。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.022
+    },
+    {
+      "case": "ambiguous",
+      "variant": "after",
+      "branch": "full",
+      "result": "上午三点开会，下午三点培训。",
+      "characters": 14,
+      "raw_outputs": [
+        "{\"modified_text\": \"上午三点开会，下午三点培训。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.118
+    },
+    {
+      "case": "holdout_spelling",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "我们使用 matplotlib 画图。",
+      "characters": 17,
+      "raw_outputs": [
+        "{\"original_text\": \"matplotlip\", \"modified_text\": \"matplotlib\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.63
+    },
+    {
+      "case": "holdout_spelling",
+      "variant": "after",
+      "branch": "full",
+      "result": "我们使用 matplotlib 画图。",
+      "characters": 17,
+      "raw_outputs": [
+        "{\"modified_text\": \"我们使用 matplotlib 画图。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.734
+    },
+    {
+      "case": "holdout_name",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "请联系陈晴。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"original_text\": \"清\", \"modified_text\": \"晴\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.64
+    },
+    {
+      "case": "holdout_name",
+      "variant": "after",
+      "branch": "full",
+      "result": "请联系陈晴。",
+      "characters": 6,
+      "raw_outputs": [
+        "{\"modified_text\": \"请联系陈晴。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.391
+    },
+    {
+      "case": "holdout_delete",
+      "variant": "after",
+      "branch": "full",
+      "result": "谢谢。材料已收到。",
+      "characters": 9,
+      "raw_outputs": [
+        "{\"modified_text\": \"谢谢。材料已收到。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.784
+    },
+    {
+      "case": "holdout_delete",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "谢谢。材料已收到。",
+      "characters": 9,
+      "raw_outputs": [
+        "{\"original_text\": \"谢谢。材料已收到。谢谢。\", \"modified_text\": \"谢谢。材料已收到。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.049
+    },
+    {
+      "case": "holdout_replace_first",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "先说早上好，再说你好。",
+      "characters": 11,
+      "raw_outputs": [
+        "{\"original_text\": \"先说你好，再说你好。\", \"modified_text\": \"先说早上好，再说你好。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.786
+    },
+    {
+      "case": "holdout_missing",
+      "variant": "after",
+      "branch": "full",
+      "result": "这束花很好看。",
+      "characters": 7,
+      "raw_outputs": [
+        "{\"modified_text\": \"这束花很好看。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.625
+    },
+    {
+      "case": "holdout_replace_first",
+      "variant": "after",
+      "branch": "full",
+      "result": "先说早上好，再说你好。",
+      "characters": 11,
+      "raw_outputs": [
+        "{\"modified_text\": \"先说早上好，再说你好。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 2.523
+    },
+    {
+      "case": "holdout_missing",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "这束花很好看。",
+      "characters": 7,
+      "raw_outputs": [
+        "{\"original_text\": \"这束花很好看。\", \"modified_text\": \"这束花很好看。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 1.63
+    },
+    {
+      "case": "holdout_ambiguous",
+      "variant": "after",
+      "branch": "fragment",
+      "result": "小王周一来，小李周一来。",
+      "characters": 12,
+      "raw_outputs": [
+        "{\"original_text\": \"小王周一来，小李周一来。\", \"modified_text\": \"小王周一来，小李周一来。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 3.796
+    },
+    {
+      "case": "holdout_ambiguous",
+      "variant": "after",
+      "branch": "full",
+      "result": "小王周一来，小李周一来。",
+      "characters": 12,
+      "raw_outputs": [
+        "{\"modified_text\": \"小王周一来，小李周一来。\"}"
+      ],
+      "failures": [],
+      "elapsed_s": 3.145
+    }
+  ]
+}

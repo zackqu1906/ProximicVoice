@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import struct
 import sys
+import threading
 from collections.abc import Iterable
 from typing import Any
 
@@ -19,6 +20,7 @@ OPUS_BLOCK_SAMPLES = OPUS_FRAME_SAMPLES * OPUS_FRAMES_PER_BLOCK
 OPUS_MAX_FRAME_BYTES = 256
 PCM_SAMPLE_BYTES = 2
 _WINDOWS_DLL_HANDLES: list[object] = []
+_OPUS_IMPORT_LOCK = threading.RLock()
 
 
 class OpusCodecError(RuntimeError):
@@ -30,6 +32,21 @@ class OpusUnavailableError(OpusCodecError):
 
 
 def _load_opuslib() -> Any:
+    # Import temporarily redirects ctypes discovery; concurrent recordings must
+    # not restore each other's resolver while opuslib is still importing.
+    with _OPUS_IMPORT_LOCK:
+        return _load_opuslib_locked()
+
+
+def _runtime_unavailable_message() -> str:
+    if getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"):
+        return "应用内置 Opus 解码组件缺失或无法加载，请重新安装完整应用；无需另装 Opus。"
+    if sys.platform == "darwin":
+        return "项目内 Opus 解码组件不可用，请运行 scripts/install-opus-macos.sh，并安装 requirements.txt 中的依赖。"
+    return "Opus 解码不可用，需要 opuslib 和原生 libopus 运行库。"
+
+
+def _load_opuslib_locked() -> Any:
     _prepare_windows_opus_runtime()
     bundled_opus = _bundled_macos_opus()
     original_find_library = ctypes.util.find_library
@@ -39,13 +56,13 @@ def _load_opuslib() -> Any:
         )
     try:
         import opuslib
+        if bundled_opus is not None and (getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS")):
+            loaded = getattr(opuslib.api.libopus, "_name", "")
+            if not loaded or Path(loaded).resolve() != bundled_opus:
+                raise RuntimeError("Opus 实际加载路径不是应用内置组件")
     except Exception as exc:
         raise OpusUnavailableError(
-            "Opus decoding is unavailable. Need both: "
-            "(1) native libopus — `brew install opus` (macOS) or "
-            "`apt install libopus0` (Debian/Ubuntu); "
-            "(2) Python package opuslib — from ring-python-sdk run "
-            "`uv sync` (opuslib is a default dependency)."
+            _runtime_unavailable_message() + f"（{exc}）"
         ) from exc
     finally:
         ctypes.util.find_library = original_find_library
@@ -55,14 +72,26 @@ def _load_opuslib() -> Any:
 def _bundled_macos_opus() -> Path | None:
     if sys.platform != "darwin":
         return None
-    configured = str(os.environ.get("PROXIMIC_OPUS_DIR", "")).strip()
-    if not configured:
-        return None
-    directory = Path(configured).expanduser()
-    for filename in ("libopus.0.dylib", "libopus.dylib"):
-        candidate = directory / filename
-        if candidate.is_file():
-            return candidate.resolve()
+    frozen = bool(getattr(sys, "frozen", False) or hasattr(sys, "_MEIPASS"))
+    if frozen:
+        root = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent.parent / "Frameworks")).resolve()
+        directories = [root / "opus"]
+    else:
+        configured = str(os.environ.get("PROXIMIC_OPUS_DIR", "")).strip()
+        project = Path(__file__).resolve().parents[3]
+        directories = ([Path(configured).expanduser()] if configured else []) + [
+            project / ".runtime" / "opus" / "lib", project / "opus"]
+    for directory in directories:
+        for filename in ("libopus.0.dylib", "libopus.dylib"):
+            candidate = directory / filename
+            if candidate.is_file():
+                resolved = candidate.resolve()
+                if frozen and not resolved.is_relative_to(root):
+                    raise OpusUnavailableError(_runtime_unavailable_message())
+                return resolved
+    if frozen:
+        # Never let a builder's Homebrew install hide a broken application.
+        raise OpusUnavailableError(_runtime_unavailable_message())
     return None
 
 
@@ -154,9 +183,7 @@ class OpusBlockDecoder:
             return self._opuslib.Decoder(DEFAULT_SAMPLE_RATE, 1)
         except (OSError, RuntimeError) as exc:
             raise OpusUnavailableError(
-                "Native libopus could not be loaded. Install it with "
-                "`brew install opus` on macOS or `apt install libopus0` on "
-                "Debian/Ubuntu, then re-run (opuslib is already a Python dep)."
+                _runtime_unavailable_message() + f"（{exc}）"
             ) from exc
 
     def reset(self) -> None:

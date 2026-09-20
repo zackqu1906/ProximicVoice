@@ -64,45 +64,8 @@ def main(argv: list[str] | None = None) -> int:
             app.aboutToQuit.connect(voice_action_hotkeys.close)
         except BaseException as exc:
             print(f"[voice-actions] 全局交互快捷键不可用：{exc}", file=sys.stderr)
-    elif sys.platform == "darwin":
-        mac_hotkeys: dict[str, object | None] = {"instance": None}
-
-        def install_macos_hotkeys() -> None:
-            if (
-                mac_hotkeys["instance"] is not None
-                or controller.macOSAccessibilityRequired
-            ):
-                return
-            try:
-                from ..voice_actions import MacOSVoiceActionHotkeys
-
-                mac_hotkeys["instance"] = MacOSVoiceActionHotkeys(
-                    controller.dispatchVoiceAction,
-                    mode_switch_shortcut=(
-                        lambda: controller.modeCorrectionShortcut
-                    ),
-                    is_interaction_active=lambda: controller.interactionCanCancel,
-                    is_mode_correction_active=lambda: (
-                        controller.modeCorrectionHotkeyAvailable
-                        or controller.processingModeCorrectionAvailable
-                    ),
-                    is_undo_active=lambda: controller.nativeUndoAvailable,
-                )
-                print("[voice-actions] macOS 语音交互按键已就绪")
-            except BaseException as exc:
-                print(
-                    f"[voice-actions] macOS 语音交互快捷键不可用：{exc}",
-                    file=sys.stderr,
-                )
-
-        def close_macos_hotkeys() -> None:
-            instance = mac_hotkeys["instance"]
-            if instance is not None:
-                instance.close()
-
-        controller.accessibilityChanged.connect(install_macos_hotkeys)
-        app.aboutToQuit.connect(close_macos_hotkeys)
-        QTimer.singleShot(0, install_macos_hotkeys)
+    # On macOS the selected input method handles F8/Esc directly. No global
+    # event tap or Accessibility permission is needed for speech interactions.
     engine = QQmlApplicationEngine()
     engine.rootContext().setContextProperty("appController", controller)
     qml_errors: list[str] = []

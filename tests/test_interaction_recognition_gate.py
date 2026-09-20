@@ -14,7 +14,7 @@ def test_final_utterance_resumes_immediately_after_direct_dictation_finishes(
 
     _app = QCoreApplication.instance() or QCoreApplication(["interaction-gate-test"])
     monkeypatch.setattr(controller_module, "app_data_root", lambda: tmp_path)
-    controller = controller_module.AppController()
+    controller = controller_module.AppController(inline_input_enabled=False)
     controller._text_processing_worker.close(wait=True)
 
     routed = []

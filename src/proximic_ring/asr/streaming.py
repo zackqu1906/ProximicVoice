@@ -12,6 +12,12 @@ import numpy as np
 _NO_ITEM = object()
 
 
+@dataclass(frozen=True)
+class _ASRSession:
+    identifier: int
+    cancelled: threading.Event
+
+
 class StreamingASRBackend(Protocol):
     """Backend contract for partial/final ASR without coupling session logic to a model.
 
@@ -76,7 +82,12 @@ class StreamingASRWorker:
         self.on_context = on_context
         # Session length is bounded by the controller.  SimpleQueue keeps the
         # real-time producer non-blocking and preserves every audio block.
-        self._queue: queue.SimpleQueue[tuple[str, np.ndarray, float] | None] = queue.SimpleQueue()
+        self._queue: queue.SimpleQueue[tuple[str, np.ndarray, float, _ASRSession] | None] = queue.SimpleQueue()
+        self._producer_lock = threading.Lock()
+        self._producer_session: _ASRSession | None = None
+        self._producer_session_id = 0
+        self._current_session: _ASRSession | None = None
+        self._backend_active = False
         self._session_samples = 0
         self._session_id = 0
         self._session_model_started_time_s: float | None = None
@@ -96,26 +107,49 @@ class StreamingASRWorker:
     # SessionSink-compatible API -------------------------------------------------
     def start(self, initial_audio_16k: np.ndarray) -> None:
         x = np.asarray(initial_audio_16k, dtype=np.float32).reshape(-1).copy()
-        self._queue.put(("start", x, time.perf_counter()))
+        with self._producer_lock:
+            self._producer_session_id += 1
+            session = _ASRSession(self._producer_session_id, threading.Event())
+            self._producer_session = session
+            self._queue.put(("start", x, time.perf_counter(), session))
+
+    def _enqueue(self, kind: str, audio: np.ndarray) -> None:
+        with self._producer_lock:
+            if self._producer_session is not None:
+                self._queue.put((kind, audio, time.perf_counter(), self._producer_session))
 
     def feed(self, audio_16k: np.ndarray) -> None:
         x = np.asarray(audio_16k, dtype=np.float32).reshape(-1).copy()
         if x.size:
-            self._queue.put(("feed", x, time.perf_counter()))
+            self._enqueue("feed", x)
 
     def end(self, final_audio_16k: np.ndarray) -> None:
         x = np.asarray(final_audio_16k, dtype=np.float32).reshape(-1).copy()
-        self._queue.put(("end", x, time.perf_counter()))
+        self._enqueue("end", x)
 
     def discard(self, captured_audio_16k: np.ndarray) -> None:
         """End only the live backend session without emitting a final result."""
         del captured_audio_16k
-        self._queue.put(
-            ("discard", np.empty(0, dtype=np.float32), time.perf_counter())
-        )
+        self.cancel_pending()
+
+    def cancel_pending(self) -> None:
+        """Cancel the latest sentence even after its audio endpoint was queued."""
+        with self._producer_lock:
+            session = self._producer_session
+            if session is None:
+                return
+            # Invalidate on the producer thread, not behind a slow connection
+            # or inference. Every queued item carries this same event.
+            session.cancelled.set()
+            self._queue.put(("discard", np.empty(0, dtype=np.float32), time.perf_counter(), session))
 
     def abort(self) -> None:
         self._abort_requested.set()
+        with self._producer_lock:
+            if self._producer_session is not None:
+                self._producer_session.cancelled.set()
+        if self._current_session is not None:
+            self._current_session.cancelled.set()
 
     def close(self) -> None:
         self._queue.put(None)
@@ -130,8 +164,11 @@ class StreamingASRWorker:
         latency_s: float,
         duration_s: float,
         chunk_ready_time_s: float,
+        session: _ASRSession | None = None,
     ) -> None:
-        if self._abort_requested.is_set() or self.on_update is None:
+        session = session or self._current_session
+        if (self._abort_requested.is_set() or self.on_update is None
+                or (session is not None and session.cancelled.is_set())):
             return
         self.on_update(
             StreamingASRUpdate(
@@ -143,7 +180,7 @@ class StreamingASRWorker:
                 audio_duration_s=duration_s,
                 sample_rate=self.sample_rate,
                 chunk_ready_time_s=chunk_ready_time_s,
-                session_id=self._session_id,
+                session_id=session.identifier if session else self._session_id,
             )
         )
 
@@ -155,6 +192,8 @@ class StreamingASRWorker:
         latency_s: float,
         chunk_ready_time_s: float,
     ) -> None:
+        if self._abort_requested.is_set() or (self._current_session is not None and self._current_session.cancelled.is_set()):
+            return
         name = str(getattr(self.backend, "backend_name", type(self.backend).__name__))
         message = str(exc)
         if self.on_update is not None:
@@ -179,6 +218,7 @@ class StreamingASRWorker:
         text: str,
         chunk_ready_time_s: float,
         audio_duration_s: float,
+        session: _ASRSession | None = None,
     ) -> None:
         """Publish a receiver-thread partial against its originating packet."""
 
@@ -189,6 +229,7 @@ class StreamingASRWorker:
             latency_s=max(0.0, emitted_at - chunk_ready_time_s),
             duration_s=audio_duration_s,
             chunk_ready_time_s=chunk_ready_time_s,
+            session=session,
         )
 
     def _mark_backend_chunk_ready(self, chunk_ready_time_s: float) -> None:
@@ -279,7 +320,7 @@ class StreamingASRWorker:
                 pass
 
     def _run(self) -> None:
-        deferred_item: tuple[str, np.ndarray, float] | None | object = _NO_ITEM
+        deferred_item: tuple[str, np.ndarray, float, _ASRSession] | None | object = _NO_ITEM
         while True:
             if deferred_item is _NO_ITEM:
                 item = self._queue.get()
@@ -288,13 +329,17 @@ class StreamingASRWorker:
                 deferred_item = _NO_ITEM
             if item is None:
                 if self._abort_requested.is_set():
-                    abort_backend = getattr(self.backend, "abort", None)
-                    if callable(abort_backend):
-                        abort_backend()
+                    self._abort_backend_session()
                 return
             if self._abort_requested.is_set():
                 continue
-            kind, audio, chunk_ready_time_s = item
+            kind, audio, chunk_ready_time_s, session = item
+            if session.cancelled.is_set():
+                if self._current_session is session:
+                    self._abort_backend_session()
+                if kind == "start":
+                    self._report_timing(f"[ASR TIMING] session={session.identifier} 已取消，跳过尚未开始的识别")
+                continue
 
             # A cumulative local model can take longer than real time once an
             # utterance grows.  In that case many tiny 20 ms feed messages may
@@ -309,7 +354,7 @@ class StreamingASRWorker:
                         next_item = self._queue.get_nowait()
                     except queue.Empty:
                         break
-                    if next_item is None or next_item[0] != "feed":
+                    if next_item is None or next_item[0] != "feed" or next_item[3] is not session:
                         deferred_item = next_item
                         break
                     pending_audio.append(next_item[1])
@@ -320,10 +365,25 @@ class StreamingASRWorker:
                     )
             try:
                 if kind == "start":
-                    self._session_id += 1
+                    self._current_session = session
+                    # Pair with abort() reading _current_session: whichever
+                    # thread wins, an in-flight start receives cancellation.
+                    if self._abort_requested.is_set():
+                        session.cancelled.set()
+                        continue
+                    self._session_id = session.identifier
                     self._session_failed = False
                     self._session_error = None
+                    set_cancel_event = getattr(self.backend, "set_cancel_event", None)
+                    if callable(set_cancel_event):
+                        set_cancel_event(session.cancelled)
+                    set_partial_callback = getattr(self.backend, "set_partial_callback", None)
+                    if callable(set_partial_callback):
+                        set_partial_callback(lambda text, ready, duration, origin=session:
+                                             self._on_async_partial(text, ready, duration, origin))
                     self._prepare_session_context()
+                    if session.cancelled.is_set():
+                        continue
                     model_started_time_s = time.perf_counter()
                     self._session_model_started_time_s = model_started_time_s
                     self._report_timing(
@@ -333,9 +393,13 @@ class StreamingASRWorker:
                         f"initial_audio={audio.size / self.sample_rate:.3f}s"
                     )
                     try:
+                        self._backend_active = True
                         self.backend.start()
                     finally:
                         self._publish_session_context()
+                    if session.cancelled.is_set():
+                        self._abort_backend_session()
+                        continue
                     self._mark_backend_chunk_ready(chunk_ready_time_s)
                     self._session_samples = int(audio.size)
                     text = self.backend.feed(audio) if audio.size else None
@@ -350,6 +414,9 @@ class StreamingASRWorker:
                         )
                 elif kind == "feed":
                     if self._session_failed:
+                        continue
+                    if session.cancelled.is_set():
+                        self._abort_backend_session()
                         continue
                     self._session_samples += int(audio.size)
                     self._mark_backend_chunk_ready(chunk_ready_time_s)
@@ -398,6 +465,7 @@ class StreamingASRWorker:
                         f"audio={self._session_samples / self.sample_rate:.3f}s"
                     )
                     text = self.backend.finish(audio)
+                    self._backend_active = False
                     finished_time_s = time.perf_counter()
                     latency = finished_time_s - chunk_ready_time_s
                     total_s = (
@@ -425,16 +493,13 @@ class StreamingASRWorker:
                     self._session_model_started_time_s = None
                     self._session_error = None
                 elif kind == "discard":
-                    abort_backend = getattr(self.backend, "abort", None)
-                    if callable(abort_backend):
-                        abort_backend()
-                    self._session_samples = 0
-                    self._session_failed = False
-                    self._session_error = None
-                    self._session_model_started_time_s = None
+                    self._abort_backend_session()
                 else:  # pragma: no cover - internal invariant
                     raise RuntimeError(f"Unknown streaming ASR worker message: {kind}")
             except BaseException as exc:
+                if session.cancelled.is_set() or self._abort_requested.is_set():
+                    self._abort_backend_session()
+                    continue
                 latency = time.perf_counter() - chunk_ready_time_s
                 self._emit_error(
                     exc,
@@ -457,8 +522,23 @@ class StreamingASRWorker:
                             # Cleanup must not replace the original connection
                             # error that was already reported above.
                             pass
+                    self._backend_active = False
                 elif kind == "end":
                     self._session_samples = 0
                     self._session_failed = False
                     self._session_error = None
                     self._session_model_started_time_s = None
+
+    def _abort_backend_session(self) -> None:
+        if self._backend_active:
+            self._backend_active = False
+            abort_backend = getattr(self.backend, "abort", None)
+            if callable(abort_backend):
+                try:
+                    abort_backend()
+                except Exception:
+                    pass
+        self._session_samples = 0
+        self._session_failed = False
+        self._session_error = None
+        self._session_model_started_time_s = None

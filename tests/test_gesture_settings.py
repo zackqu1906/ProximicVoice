@@ -7,14 +7,22 @@ from proximic_ring.voice_actions import voice_action_for_gesture
 from test_interaction_controls import _controller, _close
 
 
+@pytest.fixture(autouse=True)
+def isolate_settings(tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+    import proximic_ring.ui.controller as module
+    monkeypatch.setattr(module, "QSettings", lambda *args: QSettings(
+        str(tmp_path / "gestures.ini"), QSettings.IniFormat))
+
+
 def test_defaults_match_sdk_and_current_assignments():
-    from ring_python_sdk.gestures.classifier import GESTURE_NAMES
+    from proximic_ring.host_gestures import GESTURE_NAMES
 
     assert set(GESTURE_LABELS) == set(GESTURE_NAMES) - {"empty"}
     bindings = GestureBindings()
     assert bindings.confirm == ("tap", "")
-    assert bindings.undo == ("swipe-left", "swipe-down")
-    assert bindings.switch_mode == ("swipe-right", "swipe-up")
+    assert bindings.undo == ("swipe-left", "")
+    assert bindings.switch_mode == ("swipe-right", "")
     assert GestureBindings.from_json(bindings.to_json()) == bindings
 
 
@@ -22,7 +30,7 @@ def test_defaults_match_sdk_and_current_assignments():
     {"confirm": ("tap", "tap")},
     {"confirm": ("tap", "swipe-left")},
     {"undo": ("tap", "")},
-    {"switch_mode": ("swipe-down", "")},
+    {"switch_mode": ("swipe-left", "")},
     {"confirm": ("", "")},
     {"undo": ("snap", "", "")},
     {"undo": ("empty", "")},
@@ -72,9 +80,13 @@ def test_settings_save_restore_conflicts_and_immediate_dispatch(tmp_path, monkey
         controller._gestureRecognized.emit(SimpleNamespace(name="swipe-down"), controller._disconnect_event)
         controller._gestureRecognized.emit(SimpleNamespace(name="snap"), controller._disconnect_event)
         controller.dispatchVoiceAction("cancel")
-        assert calls == ["cancel", "cancel", "cancel"]
-        assert controller.setGestureBinding("confirm", 1, "swipe-up")
-        assert "上滑" in controller.transcriptText
+        assert calls == ["cancel", "cancel"]  # Down is no longer an undo alias.
+        assert not controller.setGestureBinding("confirm", 1, "swipe-up")  # Reserved by app send.
+        assert controller._app_gestures.setInputSourceGesture("swipe-down")
+        assert not controller.setGestureBinding("confirm", 1, "swipe-down")  # Reserved only after user binding.
+        assert controller._app_gestures.setInputSourceGesture("")
+        assert controller.setGestureBinding("confirm", 1, "swipe-down")
+        assert "下滑" in controller.transcriptText
 
         restarted = _controller(tmp_path, monkeypatch)
         assert restarted.gestureBindings == controller.gestureBindings

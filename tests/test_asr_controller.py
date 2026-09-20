@@ -44,6 +44,33 @@ class StreamingRecorder:
         return None
 
 
+def test_cancel_after_endpoint_reaches_worker_without_duplicate_audio_observation():
+    observed = []
+    recorder = StreamingRecorder()
+    cancellations = []
+    recorder.cancel_pending = lambda: cancellations.append(True)
+    fanout = SessionFanout([
+        RawAudioObserverSessionSink(lambda sid, audio: observed.append((sid, audio))),
+        recorder,
+    ])
+    controller = ProximityASRController(
+        fanout, start_on_gesture=True, end_on_tap=True, min_utterance_s=0.02,
+    )
+    block = np.ones(320, dtype=np.float32)
+    assert controller.request_gesture_toggle() == "start"
+    controller.process(block, [])
+    assert controller.request_gesture_toggle() == "end"
+    controller.process(block, [])
+    assert not controller.active
+    assert len(observed) == 1
+    controller.reset()  # The normal post-END reset must preserve final inference.
+    assert not cancellations
+    controller.discard_current()
+    controller.cancel_pending()
+    assert cancellations == [True]
+    assert len(observed) == 1
+
+
 def activate_event(sample_index: int):
     t = sample_index / 16_000
     return Stage2Event(
@@ -86,6 +113,21 @@ def make_gate(worker, **kwargs):
     )
     defaults.update(kwargs)
     return ProximityASRController(worker, **defaults)
+
+
+@pytest.mark.parametrize("end_on_tap", [False, True])
+def test_explicit_conversion_ends_one_active_sentence_in_each_endpoint_mode(end_on_tap):
+    sink = StreamingRecorder()
+    gate = make_gate(sink, end_on_tap=end_on_tap)
+    block = np.full(320, 0.2, dtype=np.float32)
+    assert not gate.request_user_end()
+    gate.process(block, [activate_event(320)])
+    assert gate.request_user_end()
+    assert not gate.request_user_end()
+    gate.process(block, [])
+    assert len(sink.ended) == 1
+    assert not gate.active
+    assert not gate.request_user_end()
 
 
 @pytest.mark.parametrize("evidence", ["rejects", "silence"])
@@ -566,3 +608,44 @@ def test_direct_abort_discards_partial_session():
 
     assert worker.items == []
     assert worker.closed
+
+
+def test_gesture_waits_for_input_method_without_buffering_preparation_audio():
+    sink = StreamingRecorder()
+    gate = make_gate(sink, start_on_gesture=True)
+    callbacks = []
+    assert gate.request_gesture_toggle(callbacks.append) == 'start'
+    for _ in range(10):
+        gate.process(np.full(320, .1, dtype=np.float32), [])
+    assert not gate.active and not sink.started
+    callbacks[0](True)
+    gate.process(np.full(320, .8, dtype=np.float32), [])
+    assert gate.active and len(sink.started) == 1
+    np.testing.assert_allclose(sink.started[0], .8)
+    callbacks[0](True)
+    assert gate.request_gesture_toggle(callbacks.append) == 'end'
+    gate.process(np.ones(320, dtype=np.float32), [])
+    assert not gate.active and len(sink.started) == 1
+
+
+@pytest.mark.parametrize('action', ['cancel', 'abort', 'failure'])
+def test_late_input_method_ack_cannot_start_cancelled_preparation(action):
+    sink = StreamingRecorder()
+    gate = make_gate(sink, start_on_gesture=True)
+    callbacks = []
+    gate.request_gesture_toggle(callbacks.append)
+    old = callbacks[0]
+    if action == 'cancel':
+        assert gate.request_gesture_toggle(callbacks.append) == 'cancel_start'
+        assert callbacks[-1] is None
+    elif action == 'abort':
+        gate.abort()
+    else:
+        old(False)
+    gate.request_gesture_toggle(callbacks.append)
+    old(True)
+    gate.process(np.ones(320, dtype=np.float32), [])
+    assert not gate.active and not sink.started
+    callbacks[-1](True)
+    gate.process(np.ones(320, dtype=np.float32), [])
+    assert gate.active and len(sink.started) == 1
